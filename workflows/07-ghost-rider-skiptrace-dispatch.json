@@ -1,0 +1,147 @@
+{
+  "name": "Ghost Rider to Tracerfy Skip Trace",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-1",
+      "name": "Run Skip Trace",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 304]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/ghost-rider/pending-without-contacts",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"limit\": 200, \"minScore\": 60}",
+        "options": { "response": { "response": { "responseFormat": "json" } } }
+      },
+      "id": "fetch-1",
+      "name": "Fetch Leads from Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [256, 304]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter distressed-property leads before skip tracing.\n// Removes corporate / government / bank owners, zero-value parcels,\n// standardizes addresses, and swaps to mailing address for absentee owners.\nvar items = $input.all();\nvar allLeads = [];\nfor (var i = 0; i < items.length; i++) { allLeads.push(items[i].json); }\n\nif (allLeads.length === 0) {\n  return [{ json: { hasLeads: false, leadsCount: 0, filteredOut: 0, reason: 'No pending leads in Convex', jsonData: null, parcelIds: [] } }];\n}\n\nvar corporatePattern = /\\b(LLC|INC|INCORPORATED|CORP|CORPORATION|LP|LTD|LIMITED|TRUST|REVOCABLE|IRREVOCABLE|ESTATE|ESTATES|PARTNERSHIP|HOLDING|HOLDINGS|PROPERTIES|PROPERTY|INVESTMENTS|INVEST|MANAGEMENT|REALTY|CAPITAL|VENTURES|FUND|GROUP|ASSOCIATES|PARTNERS|COMPANY|CO\\.|BANK|ENTERPRISES|DEVELOPMENT|RENTALS|ASSET|ASSETS|EQUITY|FINANCIAL|SERVICES|SOLUTIONS|ACQUISITION|CONSTRUCTION|CONTRACTING|FOUNDATION|PLUMBING|ELECTRIC|ROOFING|HVAC|RESTORATION|BUILDERS|CHURCH)\\b/i;\nvar governmentPattern = /\\b(CITY OF|STATE OF|COUNTY|LAND BANK|HUD|HOUSING AUTHORITY|REDEVELOPMENT|MUNICIPAL|TOWNSHIP|VILLAGE OF|BOARD OF|DEPARTMENT|AGENCY|COMMISSION|AUTHORITY|GOVERNMENT|PUBLIC|FEDERAL|METRO|DISTRICT)\\b/i;\nvar bankPattern = /\\b(FANNIE MAE|FREDDIE MAC|MORTGAGE CO|WELLS FARGO|JPMORGAN|CHASE BANK|BANK OF AMERICA|CITIBANK|US BANK|NATIONSTAR|OCWEN|CARRINGTON|CENLAR|LOANCARE|PHH MORTGAGE|SHELLPOINT|NEWREZ|FLAGSTAR)\\b/i;\n\nfunction standardizeAddress(addr) {\n  if (!addr) return '';\n  var s = addr.toUpperCase().trim();\n  s = s.replace(/\\bNORTH\\b/g, 'N').replace(/\\bSOUTH\\b/g, 'S').replace(/\\bEAST\\b/g, 'E').replace(/\\bWEST\\b/g, 'W');\n  s = s.replace(/\\bSTREET\\b/g, 'ST').replace(/\\bAVENUE\\b/g, 'AVE').replace(/\\bBOULEVARD\\b/g, 'BLVD').replace(/\\bDRIVE\\b/g, 'DR').replace(/\\bROAD\\b/g, 'RD').replace(/\\bLANE\\b/g, 'LN').replace(/\\bCOURT\\b/g, 'CT');\n  s = s.replace(/(\\d+)(ST|ND|RD|TH)\\b/g, '$1');\n  s = s.replace(/\\s+/g, ' ').trim();\n  s = s.replace(/\\s*(APT|UNIT|STE|SUITE|#)\\s*\\S*$/i, '');\n  return s;\n}\n\nvar filteredLeads = [], parcelIds = [], rejectedLeads = [];\nfor (var i = 0; i < allLeads.length; i++) {\n  var item = allLeads[i];\n  var prop = item.property || item;\n  var owner = (prop.ownerName || '').trim();\n  if (corporatePattern.test(owner)) { rejectedLeads.push({ owner: owner, reason: 'corporate' }); continue; }\n  if (governmentPattern.test(owner)) { rejectedLeads.push({ owner: owner, reason: 'government' }); continue; }\n  if (bankPattern.test(owner)) { rejectedLeads.push({ owner: owner, reason: 'bank' }); continue; }\n  if (!prop.totalValue || prop.totalValue === 0) { rejectedLeads.push({ owner: owner, reason: 'zero_value' }); continue; }\n\n  var firstName = '', lastName = '';\n  var ownerUpper = owner.toUpperCase();\n  if (ownerUpper.indexOf(',') !== -1) {\n    var np = ownerUpper.split(',');\n    lastName = np[0].trim();\n    firstName = (np[1] || '').trim().split(/\\s+/)[0] || '';\n  } else {\n    var parts = ownerUpper.split(/\\s+/);\n    firstName = parts[0] || '';\n    lastName = parts.slice(1).join(' ') || '';\n  }\n  lastName = lastName.replace(/\\s*ET\\s+AL\\s*/i, '').trim();\n  firstName = firstName.replace(/\\s*&.*$/i, '').trim();\n\n  var isAbsentee = prop.isAbsentee || false;\n  var hasMail = prop.mailAddress && prop.mailAddress.length > 2;\n  var addrParts = (prop.address || '').split(',');\n  var propStreet = (addrParts[0] || '').trim();\n  var propCity = prop.city || (addrParts[1] || '').trim();\n  var propState = prop.state || 'OH';\n  var propZip = prop.zip || (addrParts[3] || '').trim();\n\n  var primaryAddr = (isAbsentee && hasMail) ? prop.mailAddress : propStreet;\n  var primaryCity = (isAbsentee && hasMail) ? (prop.mailCity || propCity) : propCity;\n  var primaryState = (isAbsentee && hasMail) ? (prop.mailState || propState) : propState;\n  var primaryZip = (isAbsentee && hasMail) ? (prop.mailZip || propZip) : propZip;\n\n  filteredLeads.push({\n    address: standardizeAddress(primaryAddr),\n    city: primaryCity.toUpperCase().trim(),\n    state: primaryState.toUpperCase().trim(),\n    zip: (primaryZip || '').toString().trim().substring(0,5),\n    first_name: firstName, last_name: lastName,\n    mail_address: standardizeAddress(propStreet),\n    mail_city: propCity.toUpperCase().trim(),\n    mail_state: propState.toUpperCase().trim(),\n    mail_zip: (propZip || '').toString().trim().substring(0,5)\n  });\n  parcelIds.push(prop.parcelId);\n}\n\nreturn [{ json: {\n  hasLeads: filteredLeads.length > 0,\n  leadsCount: filteredLeads.length,\n  filteredOut: rejectedLeads.length,\n  totalFromConvex: allLeads.length,\n  rejectedLeads: rejectedLeads,\n  jsonData: filteredLeads,\n  parcelIds: parcelIds\n} }];"
+      },
+      "id": "filter-1",
+      "name": "Filter & Format Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [432, 304]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            { "id": "check-has-leads", "operator": { "type": "boolean", "operation": "true", "singleValue": true }, "leftValue": "={{ $json.hasLeads }}", "rightValue": "" }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-1",
+      "name": "Has Leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [752, 304]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://tracerfy.com/v1/api/trace/",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "Authorization", "value": "Bearer YOUR_TRACERFY_TOKEN" } ] },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "json_data", "value": "={{ JSON.stringify($json.jsonData) }}" },
+            { "name": "address_column", "value": "address" },
+            { "name": "city_column", "value": "city" },
+            { "name": "state_column", "value": "state" },
+            { "name": "zip_column", "value": "zip" },
+            { "name": "first_name_column", "value": "first_name" },
+            { "name": "last_name_column", "value": "last_name" },
+            { "name": "mail_address_column", "value": "mail_address" },
+            { "name": "mail_city_column", "value": "mail_city" },
+            { "name": "mail_state_column", "value": "mail_state" },
+            { "name": "mail_zip_column", "value": "mail_zip" }
+          ]
+        },
+        "options": { "timeout": 120000 }
+      },
+      "id": "tracerfy-1",
+      "name": "Upload to Tracerfy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1008, 208]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/ghost-rider/mark-sent-to-tracerfy",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ parcelIds: $('Filter & Format Leads').first().json.parcelIds, queueId: String($('Upload to Tracerfy').first().json.queue_id || '') }) }}",
+        "options": {}
+      },
+      "id": "marksent-1",
+      "name": "Mark Sent in Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1264, 208]
+    },
+    {
+      "parameters": {
+        "jsCode": "var tracerfyResponse = $('Upload to Tracerfy').first().json;\nvar filterData = $('Filter & Format Leads').first().json;\nvar jobId = tracerfyResponse.queue_id || tracerfyResponse.job_id || tracerfyResponse.id || 'unknown';\nreturn [{ json: {\n  status: 'submitted',\n  jobId: jobId,\n  leadsUploaded: filterData.leadsCount,\n  leadsFiltered: filterData.filteredOut,\n  totalFromConvex: filterData.totalFromConvex,\n  parcelIdsMarked: filterData.parcelIds.length,\n  cost: '$' + (filterData.leadsCount * 0.02).toFixed(2),\n  rejectedLeads: filterData.rejectedLeads,\n  note: 'Skip Trace Results Router will process phone numbers when ready'\n} }];"
+      },
+      "id": "summary-1",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1504, 208]
+    },
+    {
+      "parameters": {
+        "jsCode": "var filterData = $('Filter & Format Leads').first().json;\nreturn [{ json: {\n  status: 'no_leads',\n  reason: filterData.reason || 'All leads filtered out (corporate/govt/bank)',\n  totalFromConvex: filterData.totalFromConvex || 0,\n  filteredOut: filterData.filteredOut || 0,\n  rejectedLeads: filterData.rejectedLeads || []\n} }];"
+      },
+      "id": "noleads-1",
+      "name": "No Leads Found",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [752, 496]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/service-expenses/upsert-daily",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ serviceName: 'tracerfy', productId: 'propops', date: new Date().toISOString().split('T')[0], amount: $json.leadsUploaded * 0.02, units: $json.leadsUploaded, unitType: 'skip_traces', source: 'n8n' }) }}",
+        "options": { "response": { "response": { "responseFormat": "json" } } }
+      },
+      "id": "cc-cost-1",
+      "name": "Push Cost to Central Command",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 208]
+    }
+  ],
+  "connections": {
+    "Run Skip Trace": { "main": [[{ "node": "Fetch Leads from Convex", "type": "main", "index": 0 }]] },
+    "Fetch Leads from Convex": { "main": [[{ "node": "Filter & Format Leads", "type": "main", "index": 0 }]] },
+    "Filter & Format Leads": { "main": [[{ "node": "Has Leads?", "type": "main", "index": 0 }]] },
+    "Has Leads?": { "main": [[{ "node": "Upload to Tracerfy", "type": "main", "index": 0 }], [{ "node": "No Leads Found", "type": "main", "index": 0 }]] },
+    "Upload to Tracerfy": { "main": [[{ "node": "Mark Sent in Convex", "type": "main", "index": 0 }]] },
+    "Mark Sent in Convex": { "main": [[{ "node": "Summary", "type": "main", "index": 0 }]] },
+    "Summary": { "main": [[{ "node": "Push Cost to Central Command", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}

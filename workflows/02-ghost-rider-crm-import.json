@@ -1,0 +1,1256 @@
+{
+  "name": "Ghost Rider CRM Import (Lead Processor)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "trigger-weekly",
+      "name": "Weekly Sunday 6AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -768,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/ghost-rider/leads-for-crm",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"limit\": 200\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "fetch-tier-configs",
+      "name": "Fetch Pending Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -560,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract Ghost Rider leads from Convex response\nvar response = $input.first().json;\nvar leads = response.leads || [];\n\nif (leads.length === 0) {\n  return [{ json: { noLeads: true, message: 'No Ghost Rider leads ready for CRM' } }];\n}\n\nfunction titleCase(s) {\n  if (!s) return '';\n  return s.split(' ').map(function(word) {\n    if (!word) return '';\n    // Keep numbers and short words like 'AVE', 'ST' properly cased\n    if (/^\\d/.test(word)) return word; // starts with number, keep as-is\n    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();\n  }).join(' ');\n}\n\nconsole.log('Found ' + leads.length + ' Ghost Rider leads to process');\n\nreturn leads.map(function(lead) {\n  return {\n    json: {\n      _id: lead.parcelId,\n      parcelId: lead.parcelId,\n      firstName: titleCase(lead.firstName),\n      lastName: titleCase(lead.lastName),\n      phone: lead.phone,\n      address: titleCase(lead.street),\n      city: titleCase(lead.city || 'Cleveland'),\n      state: lead.state || 'OH',\n      zip: lead.zip || '',\n      county: 'Cuyahoga',\n      distressScore: lead.distressScore || 0,\n      primaryDistress: (lead.primaryDistress || '').toLowerCase().replace(/\\s+/g, '_'),\n      listingType: 'BRRRR',\n      tier: 'Ghost Rider',\n      tierName: 'Ghost Rider',\n      action: lead.action || 'call',\n      email: null\n    }\n  };\n});"
+      },
+      "id": "prepare-tiers",
+      "name": "Extract Leads Array",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -384,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "check-has-leads",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.noLeads }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-has-leads",
+      "name": "Has Leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        144,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/dnc-check?phone={{ encodeURIComponent($('Has Leads?').item.json.phone) }}",
+        "options": {
+          "response": {
+            "response": {}
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "dnc-check",
+      "name": "DNC Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        320,
+        432
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "check-not-dnc",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.isDnc }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-has-phones",
+      "name": "Not on DNC?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        496,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.close.com/api/v1/lead/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": \"{{ $('Prepare Lead Data').item.json._closeCRM.name }}\",\n  \"status_id\": \"stat_jvO29nNSfLjAGfLvZmMRGKYheyxjjHoMha0R0RyJdEX\",\n  \"contacts\": [{\n    \"name\": \"{{ $('Prepare Lead Data').item.json._closeCRM.name }}\",\n    \"phones\": [{\"phone\": \"{{ $('Prepare Lead Data').item.json.phone }}\", \"type\": \"mobile\"}],\n    \"emails\": {{ $('Prepare Lead Data').item.json.email ? '[{\"email\": \"' + $('Prepare Lead Data').item.json.email + '\", \"type\": \"office\"}]' : '[]' }}\n  }],\n  \"custom.cf_oYpMjF2AbqjJ9TTnn3BZgCNlductY17okbScR0MvrhD\": {{ $('Prepare Lead Data').item.json._closeCRM.address ? '\"' + $('Prepare Lead Data').item.json._closeCRM.address + '\"' : 'null' }},\n  \"custom.cf_V5lJPTCII754eYehZUytaQVlT2AhErHmoNfCRTLrBYp\": {{ $('Prepare Lead Data').item.json._closeCRM.city ? '\"' + $('Prepare Lead Data').item.json._closeCRM.city + '\"' : 'null' }},\n  \"custom.cf_saFSzrigpdmJraiY8Tj6PC2HYnieWXrxvlZ8ycUd3gp\": \"{{ $('Prepare Lead Data').item.json._closeCRM.state }}\",\n  \"custom.cf_BT2tCruHpFRG8IyUXao1H5EcTMTpAYKVJHM3eTcSG7j\": \"{{ $('Prepare Lead Data').item.json._closeCRM.county }}\",\n  \"custom.cf_ckQ2OJQdAlFvlSLw15sdQWaJEEUahGFoHSIrqQpn2FV\": {{ $('Prepare Lead Data').item.json._closeCRM.distressScore }},\n  \"custom.cf_12xW1CjB254VZJlmVtb98gmE7WbhjoGBLOAht3D2iRA\": {{ $('Prepare Lead Data').item.json._closeCRM.primaryDistress ? '\"' + $('Prepare Lead Data').item.json._closeCRM.primaryDistress + '\"' : 'null' }},\n  \"custom.cf_YmhOs0uDToP5c6cb2n5UNGu0NfOOaLSuANmpDe1gdS7\": \"BatchLeads\",\n  \"custom.cf_4Ijque0ihbMXlzeS4bqWU8QR1vSW9Xw0RA4ZJJadCHL\": \"Seller\",\n  \"custom.cf_2h4TV44lPusp8OneeqElCTYJfSJAvPDyrUQlv5Tk0Uu\": \"{{ $('Prepare Lead Data').item.json._closeCRM.listingType }}\",\n  \"custom.cf_cbbW5VEBpOx8PTGcaYyFTxOd7vT47tjG4iFYq6VtrEe\": {{ $('Prepare Lead Data').item.json._closeCRM.tierName ? '\"' + $('Prepare Lead Data').item.json._closeCRM.tierName + '\"' : 'null' }},\n  \"custom.cf_POWtXhMQwwrBsrlkocDvtA5Fs57DvdKjwomTTgTP5vW\": \"Blitz\",\n  \"custom.cf_cu1deNsnBPkD3h2sdAnxJbFcuXOX6zyCD4JEsEuVF7B\": \"GR\",\n  \"custom.cf_4k0rrTQ6pQUytyLp3T0lAthZ7AEFUKyRbndn59Hsu8U\": 1,\n  \"custom.cf_dNr5LbxwChSGZCGIH01fjAQxQ88Vk0CXhSuEQaLMF7h\": 8,\n  \"custom.cf_QgUEmGIweiQG45RF5GD09JJNCyhcIZf2uNqOL8zT0sl\": \"Blitz\",\n  \"custom.cf_IKdTtpAgEVychlXXkpLx9xVhd2wVAIrZN8bcw67AbiA\": {{ $('Prepare Lead Data').item.json._closeCRM.distressScore >= 80 ? '\"Urgent Call\"' : ($('Prepare Lead Data').item.json._closeCRM.distressScore >= 60 ? '\"Call\"' : ($('Prepare Lead Data').item.json._closeCRM.distressScore >= 50 ? '\"Text\"' : 'null')) }}\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 10
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "create-close-lead",
+      "name": "Create Close CRM Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1424,
+        448
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/ghost-rider/mark-in-crm",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"parcelId\": \"{{ $('Has Leads?').item.json.parcelId || '' }}\",\n  \"closeLeadId\": \"{{ $json.closeLeadId || $('Log SMS & Mark Processed').item.json.closeLeadId || '' }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "log-to-convex",
+      "name": "Lead Processed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2864,
+        448
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    status: 'no_leads',\n    message: 'No pending leads in Convex staging',\n    processed: 0\n  }\n}];"
+      },
+      "id": "handle-no-leads",
+      "name": "Handle No Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/ghost-rider/mark-in-crm",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"parcelId\": \"{{ $('Has Leads?').item.json.parcelId || '' }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "handle-dnc-filtered",
+      "name": "Mark as DNC Skipped",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -48,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all().map(item => item.json);\n\nconst stats = {\n  date: new Date().toISOString().split('T')[0],\n  processed: 0,\n  skippedDnc: 0,\n  failed: 0,\n  noLeads: false\n};\n\nfor (const item of allItems) {\n  if (item.noLeads) {\n    stats.noLeads = true;\n  } else if (item.status === 'skipped_dnc') {\n    stats.skippedDnc++;\n  } else if (item.status === 'failed') {\n    stats.failed++;\n  } else if (item.success || item.smsSent) {\n    stats.processed++;\n  }\n}\n\nstats.total = stats.processed + stats.skippedDnc + stats.failed;\nstats.successRate = stats.total > 0 ? ((stats.processed / stats.total) * 100).toFixed(1) + '%' : '0%';\n\nreturn [{ json: stats }];"
+      },
+      "id": "aggregate-stats",
+      "name": "Aggregate Daily Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/staged-leads-stats",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"date\": \"{{ $json.date }}\",\n  \"processed\": {{ $json.processed }},\n  \"skippedDnc\": {{ $json.skippedDnc }},\n  \"failed\": {{ $json.failed }},\n  \"total\": {{ $json.total }}\n}",
+        "options": {}
+      },
+      "id": "log-import-stats",
+      "name": "Log Daily Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        112,
+        -48
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-lead-created",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              },
+              "leftValue": "={{ $json.id }}"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-create-success",
+      "name": "Lead Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1600,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Ghost Rider - Fixed phone, Thompson Sampling templates\nvar CONVEX_URL = 'https://YOUR_CONVEX_DEPLOYMENT.convex.site';\nvar lead = $('Has Leads?').item.json;\nvar closeResponse = $('Create Close CRM Lead').item.json;\nvar assigned_phone_number = { phone: '+15555550100' };\nvar phone_source = 'ghost_rider_fixed';\nvar DISTRESS_MAP = {'pre_foreclosure':'Preforeclosure','preforeclosure':'Preforeclosure','probate':'Probate','inherited':'Probate','vacant':'Vacant','tax_delinquent':'Tax_Delinquent','tax_default':'Tax_Delinquent','lien':'Tax_Delinquent','absentee_owner':'Absentee','absentee':'Absentee','out_of_state':'Absentee','tired_landlord':'Absentee','high_equity':'High_Equity','senior_owner':'High_Equity','code_violation':'Code_Violation','code_violations':'Code_Violation'};\nvar listingType = 'BRRRR';\nvar distressType = null;\nvar distressSource = 'none';\nif (lead.primaryDistress && DISTRESS_MAP[lead.primaryDistress.toLowerCase()]) {\n  distressType = DISTRESS_MAP[lead.primaryDistress.toLowerCase()];\n  distressSource = 'primaryDistress';\n}\nvar template1_id = null;\nvar template1_variant = 'fallback';\nvar template1_source = 'fallback';\nvar templateBody = null;\nvar fallbackTemplates = ['Hey, got your message about {street_name}. What did you mean?','Hey, someone gave me this number for {street_name}. That you?','Hey, {street_name} - call me back when you get this','Hey, {street_name} came up. You still have it?'];\ntry {\n  var apiUrl = CONVEX_URL + '/api/template-select-thompson?position=1&listing_type=' + encodeURIComponent(listingType);\n  if (distressType) apiUrl += '&distress_type=' + encodeURIComponent(distressType);\n  var templateResp = await this.helpers.httpRequest({ method: 'GET', url: apiUrl, returnFullResponse: false });\n  if (templateResp && templateResp.selected && templateResp.selected.body) {\n    templateBody = templateResp.selected.body;\n    template1_id = templateResp.selected._id;\n    template1_variant = templateResp.selected.variant_name || 'thompson';\n    template1_source = 'thompson_sampling';\n  } else { throw new Error('No template returned'); }\n} catch (e) {\n  templateBody = fallbackTemplates[Math.floor(Math.random() * fallbackTemplates.length)];\n  template1_id = 'fallback_curiosity';\n}\nvar address = lead.address || 'your property';\nvar streetName = address.replace(/^\\d+\\s+/, '').split(',')[0].trim();\nvar sms_text = templateBody.replace(/\\{street_name\\}/gi, streetName).replace(/\\{street\\}/gi, streetName).replace(/\\{address\\}/gi, address).replace(/\\{city\\}/gi, lead.city || '').replace(/\\{firstName\\}/gi, lead.firstName || '').replace(/\\{first_name\\}/gi, lead.firstName || '').replace(/\\{\\{street_name\\}\\}/gi, streetName).replace(/\\{\\{street\\}\\}/gi, streetName).replace(/\\{\\{address\\}\\}/gi, address);\nvar now = new Date();\nvar tomorrow = new Date(now);\ntomorrow.setDate(tomorrow.getDate() + 1);\ntomorrow.setHours(9, 0, 0, 0);\nreturn [{json: {_id: lead._id, parcelId: lead.parcelId, stagedLeadId: lead._id, tier: lead.tier, tierName: lead.tierName, listingType: listingType, distressType: distressType, distressSource: distressSource, primaryDistress: lead.primaryDistress || 'none', closeLeadId: closeResponse.id, contactId: closeResponse.contacts && closeResponse.contacts[0] ? closeResponse.contacts[0].id : null, firstName: lead.firstName, lastName: lead.lastName, phone: lead.phone, address: lead.address, city: lead.city, state: lead.state || 'OH', zip: lead.zip, assigned_phone_number: assigned_phone_number, phone_source: phone_source, template1_id: template1_id, template1_variant: template1_variant, template1_source: template1_source, sms_text: sms_text, text1_sent: now.toISOString(), text2_scheduled: tomorrow.toISOString()}}];"
+      },
+      "id": "select-phone-template",
+      "name": "Select Phone & Template",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.close.com/api/v1/activity/sms/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"lead_id\": \"{{ $('Select Phone & Template').item.json.closeLeadId }}\",\n  \"contact_id\": \"{{ $('Select Phone & Template').item.json.contactId }}\",\n  \"local_phone\": \"{{ $('Select Phone & Template').item.json.assigned_phone_number.phone }}\",\n  \"remote_phone\": \"{{ $('Select Phone & Template').item.json.phone }}\",\n  \"text\": {{ JSON.stringify($('Select Phone & Template').item.json.sms_text) }},\n  \"direction\": \"outbound\",\n  \"status\": \"outbox\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send-sms",
+      "name": "Send Text 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2208,
+        272
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.close.com/api/v1/lead/{{ $('Select Phone & Template').item.json.closeLeadId }}/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"custom.cf_sEleJ5F3wkFxcVRQTN8Rvjn98wC5TRf3IbKeekHC2Zx\": \"{{ $('Select Phone & Template').item.json.assigned_phone_number.phone }}\",\n  \"custom.cf_hZRaLyj0UmOrFbgNbWN2lKMkpzRTrNAIcIzySHw18af\": \"{{ $('Select Phone & Template').item.json.text1_sent }}\",\n  \"custom.cf_yScuWVXn4Xs6JOSrzFSQQy279bmkgttywJ0P4ub8NeV\": \"{{ $('Select Phone & Template').item.json.text2_scheduled }}\",\n  \"custom.cf_mLLAy4ctJLqn2zhjECML593u8vs4lsIDtMjTQpHudtf\": \"{{ $('Select Phone & Template').item.json.text1_sent }}\",\n  \"custom.cf_d8OZm5MmRSchNbeJF4KXmrAm3JpjVscpyMKrAQ6ek9r\": \"{{ $('Select Phone & Template').item.json.text2_scheduled }}\",\n  \"custom.cf_vrVajMz5zvcWRSxoflOq1AbfxWT12lVCvQZD04hIPvG\": \"outbound\",\n  \"custom.cf_POWtXhMQwwrBsrlkocDvtA5Fs57DvdKjwomTTgTP5vW\": \"Blitz\",\n  \"custom.cf_QgUEmGIweiQG45RF5GD09JJNCyhcIZf2uNqOL8zT0sl\": \"Blitz\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "update-lead-fields",
+      "name": "Update Lead Fields",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2432,
+        272
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log SMS to Convex - Ghost Rider (no phone pool rotation)\nvar CONVEX_URL = 'https://YOUR_CONVEX_DEPLOYMENT.convex.site';\nvar selectData = $('Select Phone & Template').item.json;\nvar smsResponse = $('Send Text 1').item.json;\ntry {\n  await this.helpers.httpRequest({method: 'POST', url: CONVEX_URL + '/api/conversation-log', body: {lead_id: selectData.closeLeadId, phone: selectData.phone, direction: 'outbound', message_text: selectData.sms_text, template_id: selectData.template1_id || null, close_activity_id: smsResponse.id || null}, json: true, returnFullResponse: false});\n} catch (e) { console.log('Failed to log SMS:', e.message); }\nreturn [{json: {success: true, closeLeadId: selectData.closeLeadId, stagedLeadId: selectData.stagedLeadId, parcelId: selectData.parcelId, tier: selectData.tier, phone: selectData.phone, firstName: selectData.firstName, address: selectData.address, city: selectData.city, zip: selectData.zip, listingType: selectData.listingType, assigned_phone_number: selectData.assigned_phone_number, template1_id: selectData.template1_id, template1_variant: selectData.template1_variant, template1_source: selectData.template1_source, text2_scheduled: selectData.text2_scheduled, smsSent: true}}];"
+      },
+      "id": "log-sms-convex",
+      "name": "Log SMS & Mark Processed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2624,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/ghost-rider/mark-in-crm",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"parcelId\": \"{{ $('Has Leads?').item.json.parcelId || '' }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "handle-create-failed",
+      "name": "Mark as Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1408,
+        640
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/follow-up-queue-add",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"lead_id\": \"{{ $json.closeLeadId }}\",\n  \"phone\": \"{{ $json.phone }}\",\n  \"first_name\": \"{{ $json.firstName }}\",\n  \"address\": \"{{ $json.address }}\",\n  \"city\": \"{{ $json.city }}\",\n  \"zip\": \"{{ $json.zip }}\",\n  \"next_send_date\": {{ new Date($json.text2_scheduled).getTime() }},\n  \"sequence_position\": 2,\n  \"lead_type\": \"Seller\",\n  \"listing_type\": \"{{ $json.listingType || 'BRRRR' }}\",\n  \"tier\": \"{{ $json.tier }}\",\n  \"assigned_phone\": \"{{ $json.assigned_phone_number.phone }}\",\n  \"template_id\": \"{{ $json.template1_id || '' }}\",\n  \"status\": \"pending\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "add-follow-up-queue",
+      "name": "Add to Follow-Up Queue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        3072,
+        272
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst now = new Date();\nconst estString = now.toLocaleString('en-US', { timeZone: 'America/New_York' });\nconst estDate = new Date(estString);\nconst currentHourEST = estDate.getHours();\nconst dayOfWeekEST = estDate.getDay();\n\nlet canSend = true;\nlet skipReason = '';\n\nif (dayOfWeekEST === 0) {\n  canSend = false;\n  skipReason = 'Sunday - no SMS allowed';\n} else if (dayOfWeekEST === 6) {\n  if (currentHourEST < 10 || currentHourEST >= 18) {\n    canSend = false;\n    skipReason = 'Saturday outside 10AM-6PM EST';\n  }\n} else {\n  if (currentHourEST < 9 || currentHourEST >= 20) {\n    canSend = false;\n    skipReason = 'Outside 9AM-8PM EST window';\n  }\n}\n\nreturn [{\n  json: {\n    ...input,\n    tcpaCheck: { canSend, skipReason, checkedAt: now.toISOString(), currentHourEST, dayOfWeekEST }\n  }\n}];"
+      },
+      "id": "tcpa-check-daily",
+      "name": "TCPA Time Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "tcpa-ok",
+              "leftValue": "={{ $json.tcpaCheck.canSend }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "tcpa-branch-daily",
+      "name": "Within Send Window?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2192,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/follow-up-queue-add",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"lead_id\": \"{{ $json.closeLeadId }}\",\n  \"phone\": \"{{ $json.phone }}\",\n  \"first_name\": \"{{ $json.firstName }}\",\n  \"address\": \"{{ $json.address }}\",\n  \"city\": \"{{ $json.city }}\",\n  \"zip\": \"{{ $json.zip }}\",\n  \"next_send_date\": {{ Date.now() + 3600000 }},\n  \"sequence_position\": 1,\n  \"lead_type\": \"Seller\",\n  \"listing_type\": \"{{ $json.listingType || 'BRRRR' }}\",\n  \"tier\": \"{{ $json.tier }}\",\n  \"status\": \"pending\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "queue-for-later-daily",
+      "name": "Queue for Later (TCPA)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2432,
+        448
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('TCPA Time Check').item.json;\n\nreturn [{\n  json: {\n    success: true,\n    closeLeadId: input.closeLeadId,\n    stagedLeadId: input.stagedLeadId,\n    tier: input.tier,\n    smsSent: false,\n    tcpaDeferred: true,\n    reason: input.tcpaCheck?.skipReason || 'Outside TCPA window'\n  }\n}];"
+      },
+      "id": "log-tcpa-skip-daily",
+      "name": "Log TCPA Skip",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 200
+      },
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        -384,
+        224
+      ],
+      "id": "limit-node",
+      "name": "Limit"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.close.com/api/v1/lead/?query=phone%3A{{ encodeURIComponent($('Has Leads?').item.json.phone) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "check-close-dup",
+      "name": "Check Close Duplicate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1072,
+        432
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "check-no-results",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.data ? $json.data.length : 0 }}",
+              "rightValue": 0
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "if-not-duplicate",
+      "name": "Not Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1072,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/ghost-rider/mark-in-crm",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"parcelId\": \"{{ $('Has Leads?').item.json.parcelId || '' }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "mark-duplicate",
+      "name": "Mark as Duplicate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1600,
+        640
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "loop-leads",
+      "name": "Loop Each Lead",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -48,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/dedup-check?address={{ encodeURIComponent($('Has Leads?').item.json.address) }}&zip={{ encodeURIComponent($('Has Leads?').item.json.zip) }}&days=90",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "address-dedup-check",
+      "name": "Address Dedup Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        736,
+        416
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "check-not-address-dup",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.isDuplicate }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "not-address-dup",
+      "name": "Not Address Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        864,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/ghost-rider/mark-in-crm",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"parcelId\": \"{{ $('Has Leads?').item.json.parcelId || '' }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "mark-address-dup",
+      "name": "Mark as Address Duplicate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        864,
+        592
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## BatchData Import (Weekly Lead Processor)\n\n**Purpose:** Process new seller leads from Convex staging into Close CRM and send initial Text 1 (Curiosity Message)\n\n**Schedule:** Weekly on Sunday at 6AM EST\n- Allows leads to accumulate during the week\n- Processes up to 750 leads per run\n- Manual trigger available for testing\n\n**Data Flow:**\n```\nConvex Staging \u2192 DNC Check \u2192 Address Dedup \u2192 Close Dedup \u2192 Create Lead \u2192 Send SMS \u2192 Follow-Up Queue\n```\n\n**Key Features:**\n- \u2705 DNC Registry compliance\n- \u2705 90-day address deduplication\n- \u2705 Close CRM duplicate detection\n- \u2705 Thompson Sampling for template selection\n- \u2705 TCPA time window enforcement\n- \u2705 Distress-aware template matching\n\n**Convex Base URL:** `https://YOUR_CONVEX_DEPLOYMENT.convex.site`",
+        "height": 480,
+        "width": 380,
+        "color": 4
+      },
+      "id": "sticky-overview",
+      "name": "\ud83d\udccb Workflow Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -576,
+        -352
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Lead Validation Pipeline\n\n**Step 1: DNC Check**\n`GET /api/dnc-check?phone={phone}`\n- Checks Convex DNC registry\n- Returns `{ isDnc: true/false }`\n- If DNC \u2192 Mark as skipped, return to loop\n\n**Step 2: Address Deduplication**\n`GET /api/dedup-check?address={addr}&zip={zip}&days=90`\n- Prevents re-contacting same property within 90 days\n- Returns `{ isDuplicate: true/false }`\n\n**Step 3: Close CRM Duplicate Check**\n`GET /api/v1/lead/?query=phone:{phone}`\n- Queries Close CRM for existing lead with same phone\n- If found \u2192 Mark as duplicate, skip creation\n\n**Skip Reasons Logged:**\n- `dnc` - Phone on Do Not Call list\n- `address_duplicate` - Property contacted in last 90 days\n- `duplicate` - Lead already exists in Close CRM\n- `error` - Failed to create lead",
+        "height": 480,
+        "width": 380,
+        "color": 2
+      },
+      "id": "sticky-validation",
+      "name": "\ud83d\udd0d Lead Validation Pipeline",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        944,
+        -432
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Close CRM Integration\n\n**Create Lead with Custom Fields:**\n- Pipeline: `Seller`\n- Stage: `Blitz`\n- Phase: `Blitz`\n- Position: `1` (of 8-touch sequence)\n- Market Type: `BRRRR` or `ARV`\n- Source: `BatchLeads`\n\n**Phone Selection (Thompson Sampling):**\n`GET /api/phone-select`\n- Weighted random selection from phone pool\n- Fallback: `+15555550100`, `+15555550100`\n\n**Template Selection:**\n`GET /api/template-select-thompson?position=1&listing_type={type}`\n- Thompson Sampling (Multi-Armed Bandit)\n- Distress-aware: Preforeclosure, Vacant, Tax_Delinquent, etc.\n- Text 1 = Curiosity message with `{street_name}`\n\n**SMS via Close CRM:**\n`POST /api/v1/activity/sms/`\n- Direction: outbound\n- Status: outbox (queued for sending)\n\n**After SMS:**\n- Update lead: Stage=Blitz, Status=Text 1 Sent\n- Log to Convex conversation_history\n- Add to follow-up queue for Text 2-8",
+        "height": 520,
+        "width": 400,
+        "color": 5
+      },
+      "id": "sticky-close-crm",
+      "name": "\ud83d\udcf1 Close CRM & SMS Flow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1408,
+        -448
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## TCPA Time Windows (EST)\n\n**Weekdays (Mon-Fri):**\n- \u2705 9:00 AM - 8:00 PM EST\n\n**Saturday:**\n- \u2705 10:00 AM - 6:00 PM EST\n\n**Sunday:**\n- \u274c NO SMS ALLOWED\n\n**If Outside Window:**\n- SMS queued for later via `/api/follow-up-queue-add`\n- Lead marked as `tcpaDeferred: true`\n- Will be processed by Follow-Up Engine\n\n---\n\n## Follow-Up Queue\n\n`POST /api/follow-up-queue-add`\n- Schedules Text 2 for next day 9AM\n- Tracks: position, listing_type, assigned_phone\n- Processed by separate Follow-Up Engine workflow\n\n---\n\n## Slack Report\n\nChannel: `#test` (C0ABWBR67JL)\n- Total processed with Text 1 sent\n- Skipped (DNC count)\n- Failed count\n- Success rate percentage",
+        "height": 540,
+        "width": 340,
+        "color": 6
+      },
+      "id": "sticky-tcpa",
+      "name": "\u23f0 TCPA Compliance & Reporting",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1904,
+        -448
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 7
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3072,
+        448
+      ],
+      "id": "7e6fe925-d881-4501-8ed2-394bf2941f66",
+      "name": "Wait",
+      "webhookId": "456b124d-e2d0-4e3c-a8e5-708cdfbdfeda"
+    },
+    {
+      "parameters": {
+        "jsCode": "// PREPARE LEAD DATA - Tier lookup + null handling for Close CRM\nvar CONVEX_URL = 'https://YOUR_CONVEX_DEPLOYMENT.convex.site';\nvar lead = $('Has Leads?').item.json;\n\n// Get current tier info\nvar tier = lead.tier || '';\nvar tierName = lead.tierName || '';\nvar listingType = lead.listingType || '';\n\n// If tier is empty and we have a ZIP, try to lookup from tier_configs\nif (!tier && lead.zip) {\n  try {\n    var tierResp = await this.helpers.httpRequest({\n      method: 'GET',\n      url: CONVEX_URL + '/api/tier-configs/by-zip?zip=' + encodeURIComponent(lead.zip),\n      returnFullResponse: false\n    });\n    \n    if (tierResp && tierResp.tier) {\n      tier = tierResp.tier;\n      tierName = tierResp.name || tierResp.tierName || tier;\n      listingType = tierResp.listing_type || tierResp.listingType || 'BRRRR';\n      console.log('Tier lookup success: ' + tier + ' (' + tierName + ') for ZIP ' + lead.zip);\n    }\n  } catch (e) {\n    console.log('Tier lookup failed:', e.message);\n  }\n}\n\n// Default tier if still empty\nif (!tier) {\n  tier = 'General';\n  tierName = 'General Leads';\n  listingType = 'BRRRR';\n  console.log('Using default tier: General');\n}\n\n// Default listing type\nif (!listingType) {\n  listingType = 'BRRRR';\n}\n\n// Helper to convert empty strings to null for Close CRM\nvar nullIfEmpty = function(val) { return (val && val.trim && val.trim() !== '') ? val : null; };\n\n// Normalize distress type for Close CRM\nvar DISTRESS_NORMALIZE = {\n  'code_violations': 'code_violation',\n  'code_violation': 'code_violation',\n  'tax_delinquent': 'tax_delinquent',\n  'tax_default': 'tax_delinquent',\n  'vacant': 'vacant',\n  'pre_foreclosure': 'pre_foreclosure',\n  'preforeclosure': 'pre_foreclosure',\n  'probate': 'probate',\n  'inherited': 'probate',\n  'absentee_owner': 'absentee_owner',\n  'absentee': 'absentee_owner',\n  'out_of_state': 'out_of_state',\n  'tired_landlord': 'absentee_owner',\n  'lien': 'lien',\n  'high_equity': 'high_equity',\n  'senior_owner': 'senior_owner'\n};\nvar rawDistress = (lead.primaryDistress || '').toLowerCase().replace(/\\s+/g, '_');\nvar normalizedDistress = DISTRESS_NORMALIZE[rawDistress] || rawDistress || null;\n// Only null out if truly empty\nif (normalizedDistress === '') normalizedDistress = null;\n\n// Prepare the lead data with null handling\nreturn [{\n  json: {\n    // Original lead data\n    ...lead,\n    // Override with resolved tier info\n    tier: tier,\n    tierName: tierName,\n    listingType: listingType,\n    // Prepared Close CRM fields (null if empty)\n    _closeCRM: {\n      name: ((lead.firstName || '') + ' ' + (lead.lastName || '')).trim() || 'Unknown',\n      address: nullIfEmpty(lead.address),\n      city: nullIfEmpty(lead.city),\n      state: lead.state || 'OH',\n      county: nullIfEmpty(lead.county) || 'Cuyahoga',\n      tierName: nullIfEmpty(tierName),\n      listingType: listingType === 'HIGH_ARV' || listingType === 'High_ARV' ? 'ARV' : 'BRRRR',\n      primaryDistress: normalizedDistress,\n      distressScore: lead.distressScore || 0\n    }\n  }\n}];"
+      },
+      "id": "prepare-lead-data",
+      "name": "Prepare Lead Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/financial-event",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_type\": \"sms_cost\",\n  \"amount\": 0.02,\n  \"currency\": \"USD\",\n  \"lead_id\": \"{{ $json.lead_id || $json.leadId || '' }}\",\n  \"description\": \"SMS sent via Instantly\",\n  \"metadata\": {\n    \"workflow\": \"BatchData Import\",\n    \"phone\": \"{{ $json.phone || '' }}\",\n    \"template_id\": \"{{ $json.template_id || '' }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "log-sms-cost",
+      "name": "Log SMS Cost",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2432,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/log-lead-event",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_type\": \"live\",\n  \"workflow\": \"batchdata_import\",\n  \"lead_id\": \"{{ $('Log SMS & Mark Processed').item.json.closeLeadId || '' }}\",\n  \"phone\": \"{{ $('Log SMS & Mark Processed').item.json.phone || '' }}\",\n  \"address\": \"{{ $('Log SMS & Mark Processed').item.json.address || '' }}\",\n  \"tier\": \"{{ $('Log SMS & Mark Processed').item.json.tier || '' }}\"\n}",
+        "options": {}
+      },
+      "id": "log-pipeline-live",
+      "name": "Log Pipeline: Live",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3056,
+        80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/log-sms-sent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"workflow\": \"batchdata_import\",\n  \"text_position\": 1,\n  \"lead_id\": \"{{ $('Create Close CRM Lead').item.json.id || '' }}\",\n  \"phone\": \"{{ $('Select Phone & Template').item.json.phone || '' }}\",\n  \"address\": \"{{ $('Select Phone & Template').item.json.address || '' }}\",\n  \"template_id\": \"{{ $('Select Phone & Template').item.json.template1_id || '' }}\"\n}",
+        "options": {}
+      },
+      "id": "log-sms-sent-text1",
+      "name": "Log SMS Sent (Text 1)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2144,
+        128
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Weekly Sunday 6AM": {
+      "main": [
+        []
+      ]
+    },
+    "Fetch Pending Leads": {
+      "main": [
+        [
+          {
+            "node": "Extract Leads Array",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Leads Array": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Leads?": {
+      "main": [
+        [
+          {
+            "node": "DNC Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle No Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DNC Check": {
+      "main": [
+        [
+          {
+            "node": "Not on DNC?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not on DNC?": {
+      "main": [
+        [
+          {
+            "node": "Address Dedup Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark as DNC Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Created?": {
+      "main": [
+        [
+          {
+            "node": "Select Phone & Template",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark as Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Phone & Template": {
+      "main": [
+        [
+          {
+            "node": "TCPA Time Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TCPA Time Check": {
+      "main": [
+        [
+          {
+            "node": "Within Send Window?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Within Send Window?": {
+      "main": [
+        [
+          {
+            "node": "Send Text 1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue for Later (TCPA)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Text 1": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Fields",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log SMS Cost",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log SMS Sent (Text 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Lead Fields": {
+      "main": [
+        [
+          {
+            "node": "Log SMS & Mark Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log SMS & Mark Processed": {
+      "main": [
+        [
+          {
+            "node": "Add to Follow-Up Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to Follow-Up Queue": {
+      "main": [
+        [
+          {
+            "node": "Lead Processed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Pipeline: Live",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Processed": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue for Later (TCPA)": {
+      "main": [
+        [
+          {
+            "node": "Log TCPA Skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log TCPA Skip": {
+      "main": [
+        [
+          {
+            "node": "Lead Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle No Leads": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as DNC Skipped": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Failed": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Daily Stats": {
+      "main": [
+        [
+          {
+            "node": "Log Daily Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Daily Stats": {
+      "main": [
+        []
+      ]
+    },
+    "Create Close CRM Lead": {
+      "main": [
+        [
+          {
+            "node": "Lead Created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Close Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Not Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark as Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Each Lead": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Daily Stats",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Address Dedup Check": {
+      "main": [
+        [
+          {
+            "node": "Not Address Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Address Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Check Close Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark as Address Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Address Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Create Close CRM Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "binaryMode": "separate"
+  },
+  "active": false
+}

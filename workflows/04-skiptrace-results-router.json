@@ -1,0 +1,1138 @@
+{
+  "name": "Tracerfy Results Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tracerfy-results",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "wf2-webhook-trigger",
+      "name": "Tracerfy Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        128,
+        -208
+      ],
+      "webhookId": "d23a4e28-d68b-4da3-b86a-db508d957440"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Tracerfy Webhook').item.json.body.download_url || $('Tracerfy Webhook').item.json.download_url }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "wf2-download-from-url",
+      "name": "Download Results from URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        864,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Tracerfy skip trace results - BatchData ONLY\n// STRICT MOBILE-ONLY FILTER: Only import leads with confirmed mobile numbers\n// PHONELESS LEADS: Store landline/unknown/no-contact for future enrichment\nconst webhookData = $('Tracerfy Webhook').item.json.body || $('Tracerfy Webhook').item.json;\nconst jobDataFromConvex = $('Get Job from Convex').item.json;\nconst rawInput = $input.item.json;\n\nconst tracerfyResults = rawInput.data || rawInput;\nconst jobData = jobDataFromConvex.job || jobDataFromConvex || {};\nconst leadData = jobData.leadData || [];\nconst queueId = webhookData.id || jobData.jobId;\n\nlet records = [];\nif (typeof tracerfyResults === 'string') {\n  const lines = tracerfyResults.split('\\n');\n  const headers = lines[0].split(',').map(h => h.trim());\n  for (let i = 1; i < lines.length; i++) {\n    if (!lines[i].trim()) continue;\n    const values = lines[i].split(',');\n    const record = {};\n    headers.forEach((h, idx) => record[h] = values[idx]?.trim() || '');\n    records.push(record);\n  }\n} else {\n  records = tracerfyResults.records || tracerfyResults.results || tracerfyResults.data || [tracerfyResults];\n}\n\nconst formatPhone = (phone) => {\n  if (!phone) return '';\n  let cleaned = String(phone).replace(/\\D/g, '');\n  if (cleaned.startsWith('1') && cleaned.length === 11) cleaned = cleaned.slice(1);\n  cleaned = cleaned.slice(-10);\n  return cleaned.length === 10 ? `+1${cleaned}` : '';\n};\n\nconst isMobileType = (phoneType) => {\n  if (!phoneType) return false;\n  const type = phoneType.toLowerCase().trim();\n  return type === 'mobile' || type === 'wireless' || type === 'cell' || type === 'cellular';\n};\n\nconst processedLeads = [];\nconst emailOnlyLeads = [];\nconst phonelessLeads = [];\nlet leadsWithMobile = 0;\nlet landlineFiltered = 0;\nlet unknownPhoneFiltered = 0;\nlet leadsNoContact = 0;\n\nfor (let i = 0; i < records.length; i++) {\n  const record = records[i];\n  const originalLead = leadData[i] || {};\n  const propertyData = originalLead.propertyData || {};\n  \n  const mobile1 = formatPhone(record['Mobile-1'] || record['mobile_1'] || record['mobile1']);\n  const mobile2 = formatPhone(record['Mobile-2'] || record['mobile_2'] || record['mobile2']);\n  const mobile3 = formatPhone(record['Mobile-3'] || record['mobile_3'] || record['mobile3']);\n  const primaryEmail = record['Email-1'] || record['email_1'] || record['email'] || '';\n  \n  const primaryPhoneType = (record['primary_phone_type'] || record['phone_type'] || '').toLowerCase();\n  const primaryPhone = record['primary_phone'] || record['phone'] || '';\n  \n  if (primaryPhoneType === 'landline') {\n    landlineFiltered++;\n  } else if (primaryPhone && !mobile1 && !isMobileType(primaryPhoneType)) {\n    unknownPhoneFiltered++;\n  }\n  \n  let phone1 = mobile1;\n  if (!phone1 && primaryPhone && isMobileType(primaryPhoneType)) {\n    phone1 = formatPhone(primaryPhone);\n  }\n  \n  const addr = propertyData.address || {};\n  const owner = propertyData.owner || {};\n  const ownerName = owner.names?.[0] || {};\n  const building = propertyData.building || {};\n  const valuation = propertyData.valuation || {};\n  const general = propertyData.general || {};\n  \n  const distressIndicators = propertyData.distressIndicators || [];\n  const distressScore = propertyData.distressScore || 0;\n  const primaryDistress = propertyData.primaryDistress || distressIndicators[0] || 'general';\n  const isAbsentee = propertyData.absenteeOwner === true;\n  const isOutOfState = propertyData.outOfState === true;\n  \n  const stagedLead = {\n    firstName: record['first_name'] || ownerName.first || originalLead.ownerName?.split(' ')[0] || '',\n    lastName: record['last_name'] || ownerName.last || originalLead.ownerName?.split(' ').slice(1).join(' ') || '',\n    email: primaryEmail,\n    address: originalLead.address || record['address'] || addr.street || '',\n    city: originalLead.city || record['city'] || addr.city || '',\n    state: originalLead.state || record['state'] || addr.state || 'OH',\n    zip: originalLead.zip || addr.zip || '',\n    county: addr.county || '',\n    ownerType: owner.type || 'individual',\n    absenteeOwner: isAbsentee,\n    outOfState: isOutOfState,\n    tier: jobData.tier || '',\n    tierName: jobData.tierName || '',\n    listingType: jobData.listingType || '',\n    importId: jobData.importId || '',\n    importDate: jobData.importDate || new Date().toISOString().split('T')[0],\n    status: 'pending',\n    propertyType: general.propertyTypeDetail || general.propertyType || '',\n    bedrooms: Number(building.bedroomCount || 0),\n    bathrooms: Number(building.bathroomCount || 0),\n    sqft: Number(building.livingAreaSquareFeet || 0),\n    yearBuilt: Number(building.yearBuilt || 0),\n    estimatedValue: Number(valuation.estimatedValue || 0),\n    equity: Number(valuation.equity || 0),\n    distressScore: distressScore,\n    primaryDistress: primaryDistress,\n    distressIndicators: distressIndicators\n  };\n  \n  const emailLead = {\n    firstName: record['first_name'] || ownerName.first || originalLead.ownerName?.split(' ')[0] || '',\n    lastName: record['last_name'] || ownerName.last || originalLead.ownerName?.split(' ').slice(1).join(' ') || '',\n    email: primaryEmail,\n    address: originalLead.address || record['address'] || addr.street || '',\n    city: originalLead.city || record['city'] || addr.city || '',\n    state: originalLead.state || record['state'] || addr.state || 'OH',\n    zip: originalLead.zip || addr.zip || '',\n    county: addr.county || '',\n    ownerType: owner.type || 'individual',\n    absenteeOwner: isAbsentee,\n    outOfState: isOutOfState,\n    tier: jobData.tier || '',\n    tierName: jobData.tierName || '',\n    listingType: jobData.listingType || '',\n    importId: jobData.importId || '',\n    importDate: jobData.importDate || new Date().toISOString().split('T')[0],\n    propertyType: general.propertyTypeDetail || general.propertyType || '',\n    bedrooms: Number(building.bedroomCount || 0),\n    bathrooms: Number(building.bathroomCount || 0),\n    sqft: Number(building.livingAreaSquareFeet || 0),\n    yearBuilt: Number(building.yearBuilt || 0),\n    estimatedValue: Number(valuation.estimatedValue || 0),\n    distressScore: distressScore,\n    primaryDistress: primaryDistress,\n    distressIndicators: distressIndicators,\n    source: 'batchdata_weekly'\n  };\n  \n  if (phone1) {\n    leadsWithMobile++;\n    processedLeads.push({ ...stagedLead, phone: phone1, phone2: mobile2, phone3: mobile3 });\n  } else if (primaryEmail) {\n    emailOnlyLeads.push(emailLead);\n  } else {\n    leadsNoContact++;\n    \n    let reason = 'no_contact';\n    let src = 'tracerfy_no_contact';\n    if (primaryPhoneType === 'landline') {\n      reason = 'landline';\n      src = 'tracerfy_landline';\n    } else if (primaryPhone) {\n      reason = 'unknown_type';\n      src = 'tracerfy_unknown';\n    }\n    \n    phonelessLeads.push({\n      firstName: stagedLead.firstName,\n      lastName: stagedLead.lastName,\n      landlinePhone: (reason === 'landline') ? formatPhone(primaryPhone) : undefined,\n      unknownPhone: (reason === 'unknown_type') ? formatPhone(primaryPhone) : undefined,\n      email: primaryEmail || undefined,\n      address: stagedLead.address,\n      city: stagedLead.city,\n      state: stagedLead.state,\n      zip: stagedLead.zip,\n      county: stagedLead.county || undefined,\n      propertyType: stagedLead.propertyType || undefined,\n      bedrooms: stagedLead.bedrooms || undefined,\n      bathrooms: stagedLead.bathrooms || undefined,\n      sqft: stagedLead.sqft || undefined,\n      yearBuilt: stagedLead.yearBuilt || undefined,\n      estimatedValue: stagedLead.estimatedValue || undefined,\n      distressScore: stagedLead.distressScore || undefined,\n      primaryDistress: stagedLead.primaryDistress || undefined,\n      distressIndicators: stagedLead.distressIndicators || undefined,\n      ownerType: stagedLead.ownerType || 'individual',\n      absenteeOwner: stagedLead.absenteeOwner || undefined,\n      outOfState: stagedLead.outOfState || undefined,\n      tier: jobData.tier || '',\n      tierName: jobData.tierName || '',\n      listingType: jobData.listingType || '',\n      importId: jobData.importId || '',\n      importDate: jobData.importDate || new Date().toISOString().split('T')[0],\n      skipTraceJobId: String(queueId),\n      phonelessReason: reason,\n      source: src\n    });\n  }\n}\n\nconsole.log('=== MOBILE-ONLY FILTER STATS ===');\nconsole.log(`Total records: ${records.length}`);\nconsole.log(`Leads with MOBILE: ${leadsWithMobile}`);\nconsole.log(`Landlines filtered: ${landlineFiltered}`);\nconsole.log(`Unknown phone type filtered: ${unknownPhoneFiltered}`);\nconsole.log(`Email-only leads: ${emailOnlyLeads.length}`);\nconsole.log(`Phoneless leads (stored): ${phonelessLeads.length}`);\nconsole.log(`No contact info: ${leadsNoContact}`);\n\nreturn [{ json: { \n  jobId: String(queueId), \n  tier: jobData.tier || '', \n  tierName: jobData.tierName || '', \n  listingType: jobData.listingType || '', \n  importId: jobData.importId || '', \n  importDate: jobData.importDate || new Date().toISOString().split('T')[0], \n  leadsReceived: records.length, \n  leadsWithPhone: leadsWithMobile,\n  leadsEmailOnly: emailOnlyLeads.length, \n  leadsNoContact, \n  leadsPhoneless: phonelessLeads.length,\n  landlineFiltered,\n  unknownPhoneFiltered,\n  leads: processedLeads, \n  emailOnlyLeads,\n  phonelessLeads\n} }];"
+      },
+      "id": "wf2-process-results",
+      "name": "Process Skip Trace Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "check-phone-count",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "leftValue": "={{ $json.leadsWithPhone }}",
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "wf2-check-phone-leads",
+      "name": "Has Phone Leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1248,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/staged-leads-bulk",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ leads: $('Process Skip Trace Results').first().json.leads, tier: $('Process Skip Trace Results').first().json.tier, tierName: $('Process Skip Trace Results').first().json.tierName, listingType: $('Process Skip Trace Results').first().json.listingType, leadsTarget: $('Process Skip Trace Results').first().json.leadsReceived, leadsReceived: $('Process Skip Trace Results').first().json.leadsReceived, leadsAfterFilter: $('Process Skip Trace Results').first().json.leadsWithPhone, importId: $('Process Skip Trace Results').first().json.importId, importDate: $('Process Skip Trace Results').first().json.importDate }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "wf2-stage-to-convex",
+      "name": "Stage Leads to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1248,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "check-email-count",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "leftValue": "={{ $('Process Skip Trace Results').first().json.emailOnlyLeads.length }}",
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "wf2-check-email-leads",
+      "name": "Has Email-Only Leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/email-leads",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ leads: $('Process Skip Trace Results').first().json.emailOnlyLeads }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "wf2-stage-email-leads",
+      "name": "Stage Email-Only Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1680,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/skip-trace-jobs/complete",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Process Skip Trace Results').first().json.jobId, leadsReturned: $('Process Skip Trace Results').first().json.leadsReceived, leadsWithPhone: $('Process Skip Trace Results').first().json.leadsWithPhone, leadsStaged: $json.inserted || $('Process Skip Trace Results').first().json.leadsWithPhone }) }}",
+        "options": {}
+      },
+      "id": "wf2-complete-job",
+      "name": "Complete Job in Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2320,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const processedData = $('Process Skip Trace Results').item.json;\nconsole.log(`=== JOB COMPLETED ===`);\nconsole.log(`Job ID: ${processedData.jobId}`);\nconsole.log(`Tier: ${processedData.tier}`);\nconsole.log(`Leads Received: ${processedData.leadsReceived}`);\nconsole.log(`Leads With Phone: ${processedData.leadsWithPhone}`);\nreturn [{ json: { jobId: processedData.jobId, tier: processedData.tier, tierName: processedData.tierName, listingType: processedData.listingType, importId: processedData.importId, status: 'completed', stats: { leadsReceived: processedData.leadsReceived, leadsWithPhone: processedData.leadsWithPhone, landlineFiltered: processedData.landlineFiltered } } }];"
+      },
+      "id": "wf2-log-job-result",
+      "name": "Log Job Completion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2528,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/financial-event",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_type\": \"tracerfy_return\",\n  \"amount\": {{ $('Process Skip Trace Results').item.json.leadsWithPhone * 0.02 }},\n  \"currency\": \"USD\",\n  \"description\": \"Tracerfy skip trace results returned\",\n  \"metadata\": {\n    \"workflow\": \"Tracerfy Results Handler\",\n    \"job_id\": \"{{ $('Process Skip Trace Results').item.json.jobId }}\",\n    \"total_records\": {{ $('Process Skip Trace Results').item.json.leadsReceived || 0 }},\n    \"with_phone\": {{ $('Process Skip Trace Results').item.json.leadsWithPhone || 0 }},\n    \"with_email\": {{ $('Process Skip Trace Results').item.json.leadsEmailOnly || 0 }},\n    \"cost_per_lead\": 0.02\n  }\n}",
+        "options": {}
+      },
+      "id": "log-tracerfy-return",
+      "name": "Log Tracerfy Return Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1008,
+        -256
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/log-lead-event",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_type\": \"staged\",\n  \"workflow\": \"tracerfy_results_handler\",\n  \"count\": {{ $json.inserted || $('Process Skip Trace Results').first().json.leadsWithPhone || 0 }},\n  \"tier\": \"{{ $('Process Skip Trace Results').first().json.tier }}\"\n}",
+        "options": {}
+      },
+      "id": "log-pipeline-staged",
+      "name": "Log Pipeline: Staged",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        -400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Tracerfy results for VoiceSDR - titleCompany table\nvar rawInput = $input.first().json;\nvar records = [];\nif (typeof rawInput === 'string' || rawInput.data) {\n  var csvData = typeof rawInput === 'string' ? rawInput : rawInput.data;\n  var lines = csvData.split('\\n').filter(function(l) { return l.trim(); });\n  if (lines.length < 2) { return [{ json: { error: 'No data rows', processed: 0 } }]; }\n  var headers = lines[0].split(',').map(function(h) { return h.trim().replace(/\\\"/g, ''); });\n  for (var i = 1; i < lines.length; i++) {\n    var line = lines[i].trim();\n    if (!line) continue;\n    var values = []; var current = ''; var inQuotes = false;\n    for (var c = 0; c < line.length; c++) {\n      var ch = line[c];\n      if (ch === '\"') { inQuotes = !inQuotes; }\n      else if (ch === ',' && !inQuotes) { values.push(current.trim()); current = ''; }\n      else { current += ch; }\n    }\n    values.push(current.trim());\n    var record = {};\n    for (var h = 0; h < headers.length; h++) { record[headers[h]] = (values[h] || '').replace(/^\\\"|\\\"$/g, ''); }\n    records.push(record);\n  }\n} else { records = rawInput.records || rawInput.results || [rawInput]; }\nfunction formatPhone(phone) {\n  if (!phone) return '';\n  var cleaned = String(phone).replace(/[^0-9]/g, '');\n  if (cleaned.length === 11 && cleaned[0] === '1') cleaned = cleaned.slice(1);\n  cleaned = cleaned.slice(-10);\n  return cleaned.length === 10 ? '+1' + cleaned : '';\n}\nfunction isMobileType(phoneType) {\n  if (!phoneType) return false;\n  var type = phoneType.toLowerCase().trim();\n  return type === 'mobile' || type === 'wireless' || type === 'cell';\n}\nvar results = [];\nfor (var r = 0; r < records.length; r++) {\n  var rec = records[r];\n  var mobile1 = formatPhone(rec['Mobile-1']);\n  var mobile2 = formatPhone(rec['Mobile-2']);\n  var primaryPhone = rec['primary_phone'] || '';\n  var primaryPhoneType = (rec['primary_phone_type'] || '').toLowerCase();\n  var personalPhone = mobile1 || mobile2;\n  if (!personalPhone && isMobileType(primaryPhoneType)) { personalPhone = formatPhone(primaryPhone); }\n  var hasPhone = !!personalPhone;\n  var firstName = (rec['first_name'] || '').trim();\n  var lastName = (rec['last_name'] || '').trim();\n  console.log(firstName + ' ' + lastName + ': ' + (personalPhone || 'NO MOBILE') + ' (type: ' + primaryPhoneType + ')');\n  results.push({ json: { firstName: firstName, lastName: lastName, state: (rec['state'] || '').trim(), personPhone: personalPhone, hasPhone: hasPhone, phoneSource: 'tracerfy' } });\n}\nvar withPhone = results.filter(function(r) { return r.json.hasPhone; }).length;\nvar noPhone = results.filter(function(r) { return !r.json.hasPhone; }).length;\nconsole.log('Processed ' + results.length + ': ' + withPhone + ' with mobile, ' + noPhone + ' no mobile');\nreturn results.length > 0 ? results : [{ json: { error: 'No records', processed: 0 } }];"
+      },
+      "id": "tv_process",
+      "name": "Process VoiceSDR Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/title-company/update-by-name",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"firstName\": \"{{ $json.firstName }}\",\n  \"lastName\": \"{{ $json.lastName }}\"\n  {{ $json.hasPhone ? ',\"personPhone\": \"' + $json.personPhone + '\",\"phoneSource\": \"tracerfy\"' : '' }}\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "tv_update",
+      "name": "Update VoiceSDR Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1088,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "tv_done",
+      "name": "VoiceSDR Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1312,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Tracerfy Webhook').item.json.body.download_url }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "tv_download",
+      "name": "Download for VoiceSDR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        688,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "4fe09531-3c0b-4034-b6d9-badc3fb40c80",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "Job not found",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        -16
+      ],
+      "id": "2d66dc64-9542-4d15-ac16-6a8e5ccd28c7",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "url": "=https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/skip-trace-jobs/get?job_id={{ $json.body.id || $json.id }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "wf2-get-job-from-convex",
+      "name": "Get Job from Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        -16
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "phoneless-check",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "leftValue": "={{ $('Process Skip Trace Results').first().json.leadsPhoneless }}",
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf2-check-phoneless",
+      "name": "Has Phoneless Leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1888,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/phoneless-leads",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ leads: $('Process Skip Trace Results').first().json.phonelessLeads }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "wf2-stage-phoneless",
+      "name": "Stage Phoneless Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2112,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/ghost-rider/check-tracerfy-queue?queue_id={{ $json.body.id || $json.id }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "gr_check_queue",
+      "name": "Check Ghost Rider Queue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        304,
+        464
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-gr",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.isGhostRider }}",
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "gr_is_ghost_rider",
+      "name": "Is Ghost Rider?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        464,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Tracerfy Webhook').item.json.body.download_url }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "gr_download",
+      "name": "Download GR Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        688,
+        464
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Tracerfy results for Ghost Rider \u2014 MOBILE ONLY\nvar rawInput = $input.first().json;\nvar grData = $('Check Ghost Rider Queue').first().json;\nvar parcelIds = grData.parcelIds || [];\n\nvar records = [];\nif (typeof rawInput === 'string' || rawInput.data) {\n  var csvData = typeof rawInput === 'string' ? rawInput : rawInput.data;\n  var lines = csvData.split('\\n').filter(function(l) { return l.trim(); });\n  if (lines.length < 2) { return [{ json: { error: 'No data rows', processed: 0 } }]; }\n  var headers = lines[0].split(',').map(function(h) { return h.trim().replace(/\"/g, ''); });\n  for (var i = 1; i < lines.length; i++) {\n    var line = lines[i].trim();\n    if (!line) continue;\n    var values = []; var current = ''; var inQuotes = false;\n    for (var c = 0; c < line.length; c++) {\n      var ch = line[c];\n      if (ch === '\"') { inQuotes = !inQuotes; }\n      else if (ch === ',' && !inQuotes) { values.push(current.trim()); current = ''; }\n      else { current += ch; }\n    }\n    values.push(current.trim());\n    var record = {};\n    for (var h = 0; h < headers.length; h++) { record[headers[h]] = (values[h] || '').replace(/^\"|\"$/g, ''); }\n    records.push(record);\n  }\n} else { records = rawInput.records || rawInput.results || [rawInput]; }\n\nfunction formatPhone(phone) {\n  if (!phone) return '';\n  var cleaned = String(phone).replace(/[^0-9]/g, '');\n  if (cleaned.length === 11 && cleaned[0] === '1') cleaned = cleaned.slice(1);\n  cleaned = cleaned.slice(-10);\n  return cleaned.length === 10 ? '+1' + cleaned : '';\n}\n\nfunction isMobileType(phoneType) {\n  if (!phoneType) return false;\n  var t = phoneType.toLowerCase().trim();\n  return t === 'mobile' || t === 'wireless' || t === 'cell';\n}\n\nvar results = [];\nvar withPhone = 0;\nvar noPhone = 0;\nvar skippedLandline = 0;\n\nfor (var r = 0; r < records.length; r++) {\n  var rec = records[r];\n  var parcelId = parcelIds[r] || '';\n  var mobile1 = formatPhone(rec['Mobile-1'] || rec['mobile_1'] || '');\n  var mobile2 = formatPhone(rec['Mobile-2'] || rec['mobile_2'] || '');\n  var mobile3 = formatPhone(rec['Mobile-3'] || rec['mobile_3'] || '');\n  var primaryPhone = rec['primary_phone'] || rec['phone'] || '';\n  var primaryPhoneType = (rec['primary_phone_type'] || rec['phone_type'] || '').toLowerCase();\n\n  // MOBILE ONLY \u2014 use Mobile-1/2/3 columns first\n  var phone = mobile1 || mobile2 || mobile3;\n  var phoneType = 'mobile';\n\n  // Fallback to primary_phone ONLY if it is mobile type\n  if (!phone && primaryPhone && isMobileType(primaryPhoneType)) {\n    phone = formatPhone(primaryPhone);\n    phoneType = 'mobile';\n  }\n\n  // Skip landline/unknown primary phones\n  if (!phone && primaryPhone) {\n    skippedLandline++;\n  }\n\n  var firstName = (rec['first_name'] || '').trim();\n  var lastName = (rec['last_name'] || '').trim();\n\n  if (phone && parcelId) {\n    withPhone++;\n    results.push({ json: { parcelId: parcelId, phone: phone, phoneType: phoneType, firstName: firstName, lastName: lastName, source: 'tracerfy' } });\n  } else {\n    noPhone++;\n  }\n}\n\nconsole.log('=== GHOST RIDER TRACERFY RESULTS ===');\nconsole.log('Total records: ' + records.length);\nconsole.log('With mobile: ' + withPhone + ', No mobile: ' + noPhone + ', Skipped landline: ' + skippedLandline);\nconsole.log('ParcelIds available: ' + parcelIds.length);\n\nreturn results.length > 0 ? results : [{ json: { error: 'No mobile numbers found', processed: records.length } }];"
+      },
+      "id": "gr_process",
+      "name": "Process GR Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/ghost-rider/save-contact",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ parcelId: $json.parcelId, phone: $json.phone, phoneType: $json.phoneType, firstName: $json.firstName, lastName: $json.lastName, source: $json.source || 'tracerfy' }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "gr_save_contact",
+      "name": "Save GR Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1088,
+        464
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cm1",
+              "leftValue": "={{ $('Get Job from Convex').item.json.source }}",
+              "rightValue": "dishcraft",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cm_check",
+      "name": "Is DishCraft?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        464,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Get Job from Convex').item.json.result_url }}",
+        "options": {}
+      },
+      "id": "cm_download",
+      "name": "Download CM Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        688,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Tracerfy results for DishCraft leads\nvar items = $input.all();\nvar jobData = $('Get Job from Convex').first().json;\nvar leadMapping = JSON.parse(jobData.lead_mapping || '[]');\n\nvar results = [];\n\nfor (var i = 0; i < items.length; i++) {\n  var row = items[i].json;\n  var mapping = leadMapping[i] || {};\n  \n  // Skip if no phone found\n  var phone = row.phone1 || row.mobile1 || row.phone2 || '';\n  if (!phone) continue;\n  \n  results.push({json: {\n    leadId: mapping.leadId,\n    restaurantName: mapping.restaurantName,\n    ownerFirstName: row.first_name || '',\n    ownerLastName: row.last_name || '',\n    ownerPhone: phone,\n    ownerEmail: row.email1 || row.email2 || '',\n    phoneType: row.phone1_type || 'unknown'\n  }});\n}\n\nreturn results;"
+      },
+      "id": "cm_process",
+      "name": "Process CM Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/dishcraft/leads/enrich",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ id: $json.leadId, ownerFirstName: $json.ownerFirstName, ownerLastName: $json.ownerLastName, ownerPhone: $json.ownerPhone, ownerEmail: $json.ownerEmail || undefined, enrichmentSource: 'tracerfy' }) }}",
+        "options": {}
+      },
+      "id": "cm_update",
+      "name": "Update DishCraft Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1136,
+        704
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "cm_done",
+      "name": "DishCraft Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        704
+      ]
+    },
+    {
+      "id": "arn_check",
+      "name": "Is ARN?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        464,
+        960
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-arn",
+              "leftValue": "={{ $('Tracerfy Webhook').first().json.body.source || $('Tracerfy Webhook').first().json.source || '' }}",
+              "rightValue": "arn",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "arn_download",
+      "name": "Download ARN Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        688,
+        944
+      ],
+      "parameters": {
+        "url": "={{ $('Tracerfy Webhook').first().json.body.result_url || $('Tracerfy Webhook').first().json.result_url }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "arn_process",
+      "name": "Process ARN Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        944
+      ],
+      "parameters": {
+        "jsCode": "// Process Tracerfy results for ARN agents\nvar results = $input.all();\nvar agents = [];\n\nfor (var i = 0; i < results.length; i++) {\n  var row = results[i].json;\n  \n  // Skip if no mobile phone\n  var phones = row.phones || [];\n  var mobilePhone = null;\n  \n  for (var j = 0; j < phones.length; j++) {\n    var p = phones[j];\n    var pType = (p.type || p.phone_type || '').toLowerCase();\n    if (pType === 'mobile' || pType === 'cell' || pType === 'wireless') {\n      mobilePhone = (p.phone || p.number || '').replace(/[^0-9]/g, '');\n      if (mobilePhone.length === 11 && mobilePhone[0] === '1') {\n        mobilePhone = mobilePhone.substring(1);\n      }\n      break;\n    }\n  }\n  \n  // Skip if no mobile found\n  if (!mobilePhone || mobilePhone.length !== 10) continue;\n  \n  // Build agent record\n  agents.push({\n    json: {\n      name: ((row.first_name || '') + ' ' + (row.last_name || '')).trim(),\n      phone: '+1' + mobilePhone,\n      brokerage: row.brokerage || row.company || '',\n      triggerPropertyAddress: row.address || '',\n      triggerPropertyCity: row.city || '',\n      triggerPropertyZip: row.zip || '',\n      scrapeSource: row.scrape_source || 'manual',\n      source: 'tracerfy_arn'\n    }\n  });\n}\n\nreturn agents.length > 0 ? agents : [{json: {skip: true, reason: 'no_mobile_phones'}}];"
+      }
+    },
+    {
+      "id": "arn_has_agents",
+      "name": "Has ARN Agents?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1136,
+        944
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "arn_create",
+      "name": "Create ARN Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        880
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/arn-agent-create",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.name, phone: $json.phone, brokerage: $json.brokerage, triggerPropertyAddress: $json.triggerPropertyAddress, triggerPropertyCity: $json.triggerPropertyCity, triggerPropertyZip: $json.triggerPropertyZip, scrapeSource: $json.scrapeSource, source: $json.source }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    },
+    {
+      "id": "arn_done",
+      "name": "ARN Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        944
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Tracerfy Webhook": {
+      "main": [
+        [
+          {
+            "node": "Check Ghost Rider Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Ghost Rider Queue": {
+      "main": [
+        [
+          {
+            "node": "Is Ghost Rider?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Ghost Rider?": {
+      "main": [
+        [
+          {
+            "node": "Download GR Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Job from Convex",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is DishCraft?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Job from Convex": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Download Results from URL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download for VoiceSDR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Results from URL": {
+      "main": [
+        [
+          {
+            "node": "Process Skip Trace Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Skip Trace Results": {
+      "main": [
+        [
+          {
+            "node": "Has Phone Leads?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Tracerfy Return Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Phone Leads?": {
+      "main": [
+        [
+          {
+            "node": "Stage Leads to Convex",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Email-Only Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage Leads to Convex": {
+      "main": [
+        [
+          {
+            "node": "Has Phoneless Leads?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Pipeline: Staged",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Email-Only Leads?": {
+      "main": [
+        [
+          {
+            "node": "Stage Email-Only Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Phoneless Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage Email-Only Leads": {
+      "main": [
+        [
+          {
+            "node": "Has Phoneless Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Phoneless Leads?": {
+      "main": [
+        [
+          {
+            "node": "Stage Phoneless Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Complete Job in Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage Phoneless Leads": {
+      "main": [
+        [
+          {
+            "node": "Complete Job in Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Job in Convex": {
+      "main": [
+        [
+          {
+            "node": "Log Job Completion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download for VoiceSDR": {
+      "main": [
+        [
+          {
+            "node": "Process VoiceSDR Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process VoiceSDR Results": {
+      "main": [
+        [
+          {
+            "node": "Update VoiceSDR Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update VoiceSDR Lead": {
+      "main": [
+        [
+          {
+            "node": "VoiceSDR Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download GR Results": {
+      "main": [
+        [
+          {
+            "node": "Process GR Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process GR Results": {
+      "main": [
+        [
+          {
+            "node": "Save GR Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is DishCraft?": {
+      "main": [
+        [
+          {
+            "node": "Download CM Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Job from Convex",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is ARN?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download CM Results": {
+      "main": [
+        [
+          {
+            "node": "Process CM Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process CM Results": {
+      "main": [
+        [
+          {
+            "node": "Update DishCraft Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update DishCraft Lead": {
+      "main": [
+        [
+          {
+            "node": "DishCraft Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is ARN?": {
+      "main": [
+        [
+          {
+            "node": "Download ARN Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Job from Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download ARN Results": {
+      "main": [
+        [
+          {
+            "node": "Process ARN Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process ARN Results": {
+      "main": [
+        [
+          {
+            "node": "Has ARN Agents?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has ARN Agents?": {
+      "main": [
+        [
+          {
+            "node": "Create ARN Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ARN Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create ARN Agent": {
+      "main": [
+        [
+          {
+            "node": "ARN Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "binaryMode": "separate"
+  },
+  "active": false
+}

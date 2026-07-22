@@ -1,0 +1,916 @@
+{
+  "name": "BatchData Weekly Staging (Convex)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "id": "73d40104-e6ee-4c23-ab04-a3d76ece639a",
+      "name": "Weekly Sunday 6AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -4800,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Clear any previous run data\nconst staticData = $getWorkflowStaticData('global');\nstaticData.tierResults = [];\n\nreturn $input.all();"
+      },
+      "id": "889b50e8-eb42-4aff-b41e-234c3913a44c",
+      "name": "Initialize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4592,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/tier-configs?active_only=true",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "f79ae6a2-5940-4b74-b3d5-6c858d3ba040",
+      "name": "Fetch Tier Configs from Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -4352,
+        -928
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "var allItems = $input.all();\nvar convexTiers = allItems.map(function(item) { return item.json; });\n\nvar TEST_MODE = true;\nvar TEST_LEADS_PER_TIER = 5;\n\n// === FILTER OVERRIDES ===\n// Convex tier_configs is source of truth (deployed 2026-05-02).\nvar FILTER_OVERRIDES = {};\n\n// === ZIP CODE OVERRIDES ===\nvar ZIP_OVERRIDES = {};\n\nif (!convexTiers || convexTiers.length === 0) {\n  console.log('WARNING: No tier configs from Convex');\n  return [{ json: { tier: 'tier_1_premium_suburbs', name: 'Fallback', leadsTarget: TEST_LEADS_PER_TIER, listingType: 'High_ARV', zipCodes: ['44136'], filters: { price_min: 200000, price_max: 800000, property_types: ['Single Family', 'Duplex'], distress_pre_foreclosure: true, distress_tax_default: true, distress_has_lien: true }, importDate: new Date().toISOString().split('T')[0], importId: 'import_fallback_' + Date.now() } }];\n}\n\nvar importDate = new Date().toISOString().split('T')[0];\nvar importId = 'import_' + importDate + '_' + Date.now();\nvar batchDataTiers = convexTiers.filter(function(tier) { return tier.tier !== 'cleveland_311'; });\n\n// === EXPIRED TIER MERGING ===\nvar expiredTiers = [];\nvar nonExpiredTiers = [];\nfor (var e = 0; e < batchDataTiers.length; e++) {\n  if (batchDataTiers[e].listing_type && batchDataTiers[e].listing_type.indexOf('Expired') === 0) {\n    expiredTiers.push(batchDataTiers[e]);\n  } else {\n    nonExpiredTiers.push(batchDataTiers[e]);\n  }\n}\n\nif (expiredTiers.length > 0) {\n  var totalExpiredTarget = 0;\n  var expiredTierConfigs = [];\n  for (var ei = 0; ei < expiredTiers.length; ei++) {\n    var et = expiredTiers[ei];\n    var etTarget = TEST_MODE ? TEST_LEADS_PER_TIER : et.leads_target;\n    totalExpiredTarget += etTarget;\n    expiredTierConfigs.push({\n      tier: et.tier,\n      name: et.name,\n      listingType: et.listing_type,\n      leadsTarget: etTarget\n    });\n  }\n  nonExpiredTiers.push({\n    tier: 'expired_combined',\n    name: 'All Expired Listings',\n    leads_target: totalExpiredTarget,\n    listing_type: 'Expired',\n    zip_codes: expiredTiers[0].zip_codes,\n    filters: expiredTiers[0].filters,\n    isExpired: true,\n    expiredTierConfigs: expiredTierConfigs\n  });\n  console.log('EXPIRED: Merged ' + expiredTiers.length + ' tiers into 1 combined entry (target: ' + totalExpiredTarget + ' leads)');\n}\nbatchDataTiers = nonExpiredTiers;\n\nconsole.log((TEST_MODE ? 'TEST' : 'PROD') + ' MODE: ' + batchDataTiers.length + ' tiers x ' + (TEST_MODE ? TEST_LEADS_PER_TIER : 'target') + ' leads');\n\nreturn batchDataTiers.map(function(tier) {\n  var filters = {};\n  var keys = Object.keys(tier.filters || {});\n  for (var i = 0; i < keys.length; i++) filters[keys[i]] = tier.filters[keys[i]];\n\n  var overrides = FILTER_OVERRIDES[tier.tier];\n  if (overrides) {\n    var oKeys = Object.keys(overrides);\n    for (var j = 0; j < oKeys.length; j++) {\n      var key = oKeys[j];\n      var value = overrides[key];\n      if (value === undefined) {\n        delete filters[key];\n        console.log('OVERRIDE ' + tier.tier + ': REMOVED ' + key);\n      } else {\n        filters[key] = value;\n        console.log('OVERRIDE ' + tier.tier + ': ' + key + ' -> ' + value);\n      }\n    }\n  }\n\n  var zipCodes = tier.zip_codes;\n  if (ZIP_OVERRIDES[tier.tier]) {\n    zipCodes = ZIP_OVERRIDES[tier.tier];\n    console.log('ZIP OVERRIDE ' + tier.tier + ': ' + (tier.zip_codes ? tier.zip_codes.length : 0) + ' -> ' + zipCodes.length + ' zips');\n  }\n\n  return {\n    json: {\n      tier: tier.tier,\n      name: tier.name,\n      leadsTarget: tier.isExpired ? tier.leads_target : (TEST_MODE ? TEST_LEADS_PER_TIER : tier.leads_target),\n      listingType: tier.listing_type,\n      zipCodes: zipCodes,\n      filters: filters,\n      importDate: importDate,\n      importId: importId,\n      isExpired: tier.isExpired || false,\n      expiredTierConfigs: tier.expiredTierConfigs || null\n    }\n  };\n});"
+      },
+      "id": "c4b22b90-133f-4ec9-ba60-b892f26fb037",
+      "name": "Define Tier Configs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4144,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 1
+      },
+      "id": "dfb42b21-2b0d-41ad-bde9-9ed52469221c",
+      "name": "Limit",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        -3968,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "61ec6d8e-3555-43ba-bf91-1cf2c25b23d8",
+      "name": "Loop Each Tier",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -3728,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "var tier = $input.first().json;\nvar filters = tier.filters || {};\n\n// === EXPIRED LISTING DETECTION ===\nvar isExpired = tier.isExpired || (tier.listingType && tier.listingType.indexOf('Expired') === 0);\n\nvar orQuickLists = [];\nvar quickLists = [];\n\nif (isExpired) {\n  // Expired listings: pull from expired/failed/canceled MLS lists\n  orQuickLists = ['expired-listing', 'failed-listing', 'canceled-listing'];\n  // Still apply corporate/trust exclusion filters\n  if (filters.exclude_corporate) quickLists.push('not-corporate-owned');\n  if (filters.exclude_trust) quickLists.push('not-trust-owned');\n} else {\n  // === EXISTING DISTRESS LOGIC (UNCHANGED) ===\n  if (filters.distress_pre_foreclosure) orQuickLists.push('preforeclosure');\n  if (filters.distress_tax_default) orQuickLists.push('tax-default');\n  if (filters.distress_has_lien) orQuickLists.push('involuntary-lien');\n  if (filters.vacant) orQuickLists.push('vacant');\n  if (filters.high_equity) orQuickLists.push('high-equity');\n  if (filters.senior_owner) orQuickLists.push('senior-owner');\n  if (filters.tired_landlord) orQuickLists.push('tired-landlord');\n  if (filters.inherited) orQuickLists.push('inherited');\n  if (filters.absentee_owner) orQuickLists.push('absentee-owner');\n\n  if (filters.exclude_corporate) quickLists.push('not-corporate-owned');\n  if (filters.exclude_trust) quickLists.push('not-trust-owned');\n\n  if (filters.occupancy && filters.occupancy !== 'any') {\n    if (filters.occupancy === 'absentee') {\n      quickLists.push('absentee-owner');\n    } else if (filters.occupancy === 'out_of_state_absentee') {\n      quickLists.push('out-of-state-absentee-owner');\n    }\n  }\n\n  if (filters.distress_operator === 'AND') {\n    var distressItems = ['preforeclosure', 'tax-default', 'involuntary-lien'];\n    distressItems.forEach(function(item) {\n      var idx = orQuickLists.indexOf(item);\n      if (idx !== -1) {\n        orQuickLists.splice(idx, 1);\n        quickLists.push(item);\n      }\n    });\n  }\n}\n\nvar propertyTypes = filters.property_types && filters.property_types.length > 0 ? filters.property_types : ['Single Family', 'Duplex', 'Triplex', 'Quadplex'];\nvar priceMin = filters.price_min || 80000;\nvar priceMax = filters.price_max || 800000;\nvar sessionId = 'session_' + tier.importId + '_' + tier.tier;\n\nvar requestBody = {\n  searchCriteria: {\n    address: { zip: { inList: tier.zipCodes } },\n    general: { propertyTypeDetail: { inList: propertyTypes } },\n    estimatedValue: { min: priceMin, max: priceMax }\n  },\n  options: { skip: 0, take: tier.leadsTarget, sessionId: sessionId }\n};\n\nif (orQuickLists.length > 0) requestBody.searchCriteria.orQuickLists = orQuickLists;\nif (quickLists.length > 0) requestBody.searchCriteria.quickLists = quickLists;\nif (filters.equity_min_pct) requestBody.searchCriteria.equity = { min: filters.equity_min_pct };\nif (filters.years_owned_min) requestBody.searchCriteria.yearsOwned = { min: filters.years_owned_min };\nif (filters.lot_size_min_acres || filters.lot_size_max_acres) {\n  requestBody.searchCriteria.lot = {};\n  if (filters.lot_size_min_acres) requestBody.searchCriteria.lot.lotSizeAcresMin = filters.lot_size_min_acres;\n  if (filters.lot_size_max_acres) requestBody.searchCriteria.lot.lotSizeAcresMax = filters.lot_size_max_acres;\n}\n\nconsole.log('=== BUILD BATCHDATA REQUEST ===');\nconsole.log('Tier: ' + tier.tier + ' | Props: ' + JSON.stringify(propertyTypes));\nconsole.log('quickLists: ' + JSON.stringify(quickLists));\nconsole.log('orQuickLists: ' + JSON.stringify(orQuickLists));\nif (isExpired) console.log('MODE: EXPIRED LISTING (1 API call for all expired tiers)');\n\nreturn [{ json: {\n  tier: tier.tier, tierName: tier.name, listingType: tier.listingType,\n  leadsTarget: tier.leadsTarget, importDate: tier.importDate, importId: tier.importId,\n  sessionId: sessionId, requestBody: requestBody, filters: filters,\n  isExpired: isExpired, expiredTierConfigs: tier.expiredTierConfigs || null\n} }];"
+      },
+      "id": "0abaa89e-9ef1-4ac7-9e8d-a6481d11c68e",
+      "name": "Build BatchData Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3520,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/query",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ path: 'functions/stagedLeads:getPaginationState', args: { tier: $json.tier }, format: 'json' }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "ea0b151b-d8b8-4fbb-9947-14d16ed5cb4a",
+      "name": "Get Pagination State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3360,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.batchdata.com/api/v1/property/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (function() { var tierData = $('Build BatchData Request').item.json; var paginationResponse = $json.value || $json; var skipValue = paginationResponse.currentSkip || 0; var requestBody = tierData.requestBody; requestBody.options.skip = skipValue; return JSON.stringify(requestBody); })() }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "4e1cc2c0-1c31-49ea-a513-8971b452c05d",
+      "name": "Call BatchData API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3184,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-results-count",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "leftValue": "={{ ($json.results && $json.results.properties) ? $json.results.properties.length : 0 }}",
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1391d07b-31f1-4e89-a9c4-526659e6adea",
+      "name": "Has Results?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3008,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/query",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ path: 'functions/stagedLeads:checkBulkAddresses', args: { addresses: ($json.results && $json.results.properties ? $json.results.properties : []).map(function(p) { var addr = p.address || {}; return { address: addr.street || '', city: addr.city || '', state: addr.state || 'OH', zip: addr.zip || '' }; }) }, format: 'json' }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "2e754729-9fe4-4c45-a02e-ead6bfd1d428",
+      "name": "Check Duplicates via Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2800,
+        -944
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get BatchData results and Convex duplicate check results\nconst batchDataResponse = $('Call BatchData API').item.json;\nconst batchDataResults = (batchDataResponse.results && batchDataResponse.results.properties) || [];\nconst duplicateCheck = $input.item.json;\n\n// Get tier info from the Build BatchData Request node\nconst tierInfo = $('Build BatchData Request').item.json;\n\n// CRITICAL: Track original count for pagination (before any filtering)\nconst originalCount = batchDataResults.length;\n\n// Get the new address indices from Convex response\nconst convexValue = duplicateCheck.value || duplicateCheck;\nconst newAddressIndices = new Set(\n  (convexValue.newAddresses || []).map(function(a) { return a.index; })\n);\n\n// ========== LLC/CORPORATE FILTER ==========\nconst corporatePatterns = /\\b(LLC|L\\.?L\\.?C|INC|INCORPORATED|CORP|CORPORATION|LP|L\\.?P|LTD|LIMITED|TRUST|REVOCABLE|IRREVOCABLE|ESTATE|PARTNERSHIP|HOLDING|HOLDINGS|PROPERTIES|INVESTMENTS|MANAGEMENT|REALTY|CAPITAL|VENTURES|FUND|GROUP|ASSOCIATES|PARTNERS|COMPANY|CO\\.|BANK|DAO|ASSOC|ENTERPRISES|DEVELOPMENT|RENTALS|ASSET|ASSETS|EQUITY|FINANCIAL|SERVICES|SOLUTIONS|ACQUISITION|ACQUISITIONS)\\b/i;\n\nlet llcSkipped = 0;\nlet llcSkippedNames = [];\n\n// Filter to only include new (non-duplicate) AND non-LLC properties\nconst newProperties = batchDataResults.filter(function(prop, index) {\n  if (!newAddressIndices.has(index)) {\n    return false;\n  }\n  \n  const owner = prop.owner || {};\n  const ownerNames = owner.names || [];\n  const ownerName = ownerNames[0]?.full || ownerNames[0]?.first + ' ' + ownerNames[0]?.last || owner.fullName || '';\n  \n  if (corporatePatterns.test(ownerName)) {\n    llcSkipped++;\n    llcSkippedNames.push(ownerName.substring(0, 50));\n    console.log(`SKIPPING LLC (saves $0.02): ${ownerName}`);\n    return false;\n  }\n  \n  return true;\n});\n\nconst duplicatesRemoved = batchDataResults.length - newAddressIndices.size;\nconst savedFromDuplicates = duplicatesRemoved * 0.02;\nconst savedFromLLC = llcSkipped * 0.02;\nconst totalSaved = savedFromDuplicates + savedFromLLC;\n\nconsole.log(`Filter stats: ${batchDataResults.length} total -> ${newAddressIndices.size} after dedup -> ${newProperties.length} after LLC filter`);\nconsole.log(`Cost saved: $${savedFromDuplicates.toFixed(2)} (duplicates) + $${savedFromLLC.toFixed(2)} (LLC) = $${totalSaved.toFixed(2)}`);\n\nreturn [{\n  json: {\n    results: { properties: newProperties },\n    tierInfo: tierInfo,\n    deduplicationStats: {\n      originalCount: originalCount,  // CRITICAL for pagination\n      afterDeduplication: newAddressIndices.size,\n      afterLLCFilter: newProperties.length,\n      duplicatesRemoved: duplicatesRemoved,\n      llcSkipped: llcSkipped,\n      llcSkippedNames: llcSkippedNames.slice(0, 10),\n      savedSkipTraceCost: '$' + totalSaved.toFixed(2)\n    }\n  }\n}];"
+      },
+      "id": "59c8912a-ce85-44ec-a99f-0574214dba93",
+      "name": "Filter New Leads Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2608,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build JSON data for Tracerfy batch upload\n// FIX (Mar 14): Swap addresses \u2014 send MAILING address as primary\n// FIX (Mar 16): 3-Layer address quality filter\n// FIX (Mar 17): Expired listing support \u2014 date splitting for E1/E2/E3 tiers\n// FIX (Mar 19): Layer 4 (Commercial/Suite) + Layer 5 (Invalid Address) filters\nconst inputData = $input.first().json;\nconst tierInfo = inputData.tierInfo || $('Build BatchData Request').first().json;\nconst properties = (inputData.results && inputData.results.properties) || [];\nconst deduplicationStats = inputData.deduplicationStats || {};\n\nconst tierFilters = tierInfo.filters || $('Build BatchData Request').first().json.filters || {};\n\nconsole.log('=== DISTRESS SCORE CALCULATION ===');\nconsole.log('Tier:', tierInfo.tier);\nconsole.log('Filters:', JSON.stringify(tierFilters));\n\nconst originalBatchDataCount = deduplicationStats.originalCount || properties.length;\n\nif (properties.length === 0) {\n  return [{ json: { \n    hasLeads: false, \n    tier: tierInfo.tier, \n    tierName: tierInfo.tierName, \n    listingType: tierInfo.listingType, \n    importId: tierInfo.importId, \n    importDate: tierInfo.importDate, \n    leadsCount: 0, \n    originalBatchDataCount: originalBatchDataCount,\n    jsonData: null, \n    leadData: [] \n  } }];\n}\n\nconst jsonRecords = [];\nconst leadData = [];\n\n// Build distress indicators from tier filters\nconst tierDistressIndicators = [];\nlet tierDistressScore = 0;\n\nif (tierFilters.distress_pre_foreclosure) { tierDistressIndicators.push('pre_foreclosure'); tierDistressScore += 30; }\nif (tierFilters.distress_tax_default) { tierDistressIndicators.push('tax_delinquent'); tierDistressScore += 25; }\nif (tierFilters.vacant) { tierDistressIndicators.push('vacant'); tierDistressScore += 15; }\nif (tierFilters.distress_has_lien) { tierDistressIndicators.push('has_lien'); tierDistressScore += 20; }\nif (tierFilters.high_equity) { tierDistressIndicators.push('high_equity'); tierDistressScore += 5; }\n\n// EXPIRED LISTING scoring\nif (tierInfo.isExpired || (tierInfo.listingType && tierInfo.listingType.indexOf('Expired') === 0)) {\n  tierDistressIndicators.push('expired_listing');\n  tierDistressScore += 20;\n}\n\n// ABSENTEE OWNER LOGIC\nconst isAbsentee = tierFilters.occupancy === 'absentee' || tierFilters.occupancy === 'out_of_state_absentee';\nconst isOutOfState = tierFilters.occupancy === 'out_of_state_absentee';\n\nif (isAbsentee) { tierDistressIndicators.push('absentee'); tierDistressScore += 10; }\nif (isOutOfState) { tierDistressIndicators.push('out_of_state'); tierDistressScore += 15; }\n\nconsole.log('Tier ' + tierInfo.tier + ': absenteeOwner=' + isAbsentee + ', outOfState=' + isOutOfState);\nconsole.log('Tier distress indicators:', tierDistressIndicators, 'Score:', tierDistressScore);\n\n// === COUNTERS ===\nlet invalidAddressCount = 0;\nlet emptyAddressCount = 0;\nlet noMailingCount = 0;\nlet noMailingZipCount = 0;\nlet poBoxCount = 0;\nlet commercialCount = 0;\nlet batchdataInvalidCount = 0;\nlet mailSameAsPropCount = 0;\n\nconst poBoxPattern = /^\\s*P\\.?\\s*O\\.?\\s*BOX\\b/i;\nconst commercialPattern = /\\b(Ste|Suite|Floor|Fl|Unit|Dept|Bldg|Rm|Room|Ofc|Office|Attn|C\\/O)\\b/i;\nconst addressQualityLog = [];\n\nproperties.forEach((prop, index) => {\n  const addr = prop.address || {};\n  const owner = prop.owner || {};\n  const ownerNames = owner.names || [];\n  \n  const streetAddress = addr.street || addr.full || addr.line1 || '';\n  const cleanAddress = streetAddress.trim();\n  \n  if (!cleanAddress || cleanAddress.length < 3) {\n    emptyAddressCount++;\n    console.log('SKIP [' + index + ']: Empty/invalid property address');\n    return;\n  }\n  \n  const propCity = (addr.city || '').trim();\n  const propState = (addr.state || 'OH').trim().toUpperCase();\n  const propZip = (addr.zip || '').trim();\n  \n  if (!propCity || propCity.length < 2) {\n    invalidAddressCount++;\n    console.log('SKIP [' + index + ']: Invalid city - ' + cleanAddress);\n    return;\n  }\n  \n  if (!propState || propState.length !== 2) {\n    invalidAddressCount++;\n    console.log('SKIP [' + index + ']: Invalid state - ' + cleanAddress);\n    return;\n  }\n  \n  let firstName = ownerNames[0]?.first || '';\n  let lastName = ownerNames[0]?.last || '';\n  \n  if (!firstName && !lastName) {\n    const fullName = ownerNames[0]?.full || owner.fullName || '';\n    const parts = fullName.trim().split(/\\s+/);\n    firstName = parts[0] || '';\n    lastName = parts.slice(1).join(' ') || '';\n  }\n  \n  const ownerLabel = (firstName + ' ' + lastName).trim() || 'UNKNOWN';\n  \n  const mailAddr = owner.mailingAddress || {};\n  const hasMailingAddress = !!(mailAddr.street || mailAddr.full || mailAddr.line1);\n  const mailStreet = (mailAddr.street || mailAddr.full || mailAddr.line1 || '').trim();\n  const mailCity = (mailAddr.city || '').trim();\n  const mailState = (mailAddr.state || '').trim().toUpperCase();\n  const mailZip = (mailAddr.zip || '').trim();\n  \n  if (isAbsentee && !hasMailingAddress) {\n    noMailingCount++;\n    addressQualityLog.push({ i: index, owner: ownerLabel, reason: 'no_mailing_addr', prop: cleanAddress });\n    return;\n  }\n  \n  if (isAbsentee && mailStreet.length < 3) {\n    noMailingCount++;\n    addressQualityLog.push({ i: index, owner: ownerLabel, reason: 'empty_mail_street', mail: mailStreet });\n    return;\n  }\n  \n  if (isAbsentee && !mailZip) {\n    noMailingZipCount++;\n    addressQualityLog.push({ i: index, owner: ownerLabel, reason: 'no_mail_zip', mail: mailStreet + ', ' + mailCity + ', ' + mailState });\n    return;\n  }\n  \n  if (isAbsentee && poBoxPattern.test(mailStreet)) {\n    poBoxCount++;\n    addressQualityLog.push({ i: index, owner: ownerLabel, reason: 'po_box', mail: mailStreet });\n    return;\n  }\n  \n  // Layer 4: Commercial/Suite address filter\n  if (isAbsentee && commercialPattern.test(mailStreet)) {\n    commercialCount++;\n    console.log('SKIP [' + index + ']: Commercial mailing address (saves $0.02) - ' + mailStreet + ' (' + ownerLabel + ')');\n    addressQualityLog.push({ i: index, owner: ownerLabel, reason: 'commercial_address', mail: mailStreet });\n    return;\n  }\n  \n  // Layer 5: BatchData addressValidity filter\n  var mailValidity = mailAddr.addressValidity || (prop.mailingAddress && prop.mailingAddress.addressValidity) || '';\n  if (isAbsentee && mailValidity && mailValidity.toLowerCase() === 'invalid') {\n    batchdataInvalidCount++;\n    console.log('SKIP [' + index + ']: Invalid mailing address per BatchData (saves $0.02) - ' + mailStreet + ' (' + ownerLabel + ')');\n    addressQualityLog.push({ i: index, owner: ownerLabel, reason: 'invalid_address', mail: mailStreet });\n    return;\n  }\n  \n  const mailNorm = (mailStreet + mailCity + mailState).toLowerCase().replace(/[^a-z0-9]/g, '');\n  const propNorm = (cleanAddress + propCity + propState).toLowerCase().replace(/[^a-z0-9]/g, '');\n  const isSameAddress = isAbsentee && mailNorm === propNorm;\n  if (isSameAddress) {\n    mailSameAsPropCount++;\n    addressQualityLog.push({ i: index, owner: ownerLabel, reason: 'mail_equals_prop', addr: mailStreet });\n  }\n  \n  if (isAbsentee && hasMailingAddress) {\n    jsonRecords.push({\n      address: mailStreet,\n      city: mailCity || propCity,\n      state: mailState || propState,\n      zip: mailZip,\n      first_name: firstName,\n      last_name: lastName,\n      mail_address: cleanAddress,\n      mail_city: propCity,\n      mail_state: propState,\n      mail_zip: propZip\n    });\n  } else {\n    jsonRecords.push({\n      address: cleanAddress,\n      city: propCity,\n      state: propState,\n      zip: propZip,\n      first_name: firstName,\n      last_name: lastName,\n      mail_address: '',\n      mail_city: '',\n      mail_state: '',\n      mail_zip: ''\n    });\n  }\n  \n  const qualityGrade = isSameAddress ? 'C' : (mailCity && mailState && mailZip ? 'A' : 'B');\n  addressQualityLog.push({ i: index, owner: ownerLabel, reason: 'uploaded', grade: qualityGrade, mail: isAbsentee ? (mailStreet + ', ' + mailCity + ', ' + mailState + ' ' + mailZip) : 'N/A (owner-occupied)' });\n  \n  const { source: _, ...propWithoutSource } = prop;\n  \n  leadData.push({\n    index: jsonRecords.length - 1,\n    address: cleanAddress,\n    city: propCity,\n    state: propState,\n    zip: propZip,\n    ownerName: ownerLabel,\n    propertyData: {\n      ...propWithoutSource,\n      distressIndicators: tierDistressIndicators,\n      distressScore: tierDistressScore,\n      primaryDistress: tierDistressIndicators[0] || 'general',\n      absenteeOwner: isAbsentee,\n      outOfState: isOutOfState,\n      listingExpiredDate: (prop.listing || {}).failedListingDate || null,\n      listingPrice: (prop.listing || {}).price || (prop.listing || {}).listPrice || null,\n      daysOnMarket: (prop.listing || {}).daysOnMarket || null,\n      campaignType: tierInfo.isExpired ? 'expired' : 'distressed',\n      tierFilters: {\n        occupancy: tierFilters.occupancy,\n        vacant: tierFilters.vacant,\n        distress_pre_foreclosure: tierFilters.distress_pre_foreclosure,\n        distress_tax_default: tierFilters.distress_tax_default,\n        distress_has_lien: tierFilters.distress_has_lien\n      }\n    }\n  });\n});\n\nconst validLeadCount = jsonRecords.length;\n\n// === ADDRESS QUALITY REPORT ===\nconst totalFiltered = emptyAddressCount + invalidAddressCount + noMailingCount + noMailingZipCount + poBoxCount + commercialCount + batchdataInvalidCount;\nconst creditsSaved = totalFiltered * 0.02;\nconst gradeA = addressQualityLog.filter(function(r) { return r.grade === 'A'; }).length;\nconst gradeB = addressQualityLog.filter(function(r) { return r.grade === 'B'; }).length;\nconst gradeC = addressQualityLog.filter(function(r) { return r.grade === 'C'; }).length;\n\nconsole.log('=== ADDRESS QUALITY REPORT ===');\nconsole.log('Tier: ' + tierInfo.tier);\nconsole.log('Total records: ' + properties.length);\nconsole.log('Filtered out: ' + totalFiltered + ' (saves $' + creditsSaved.toFixed(2) + ')');\nconsole.log('  - Empty property addr: ' + emptyAddressCount);\nconsole.log('  - Invalid city/state: ' + invalidAddressCount);\nconsole.log('  - No mailing address: ' + noMailingCount);\nconsole.log('  - No mailing ZIP:     ' + noMailingZipCount);\nconsole.log('  - PO Box address:     ' + poBoxCount);\nconsole.log('  - Commercial/Suite:   ' + commercialCount + ' [NEW Layer 4]');\nconsole.log('  - BatchData Invalid:  ' + batchdataInvalidCount + ' [NEW Layer 5]');\nconsole.log('Uploaded: ' + validLeadCount);\nconsole.log('  - Grade A: ' + gradeA + ' | Grade B: ' + gradeB + ' | Grade C: ' + gradeC);\nif (addressQualityLog.length > 0 && addressQualityLog.length <= 20) {\n  console.log('Per-record detail:');\n  addressQualityLog.forEach(function(r) { console.log('  [' + r.i + '] ' + r.owner + ' -> ' + r.reason + (r.grade ? ' (' + r.grade + ')' : '') + (r.mail ? ' | ' + r.mail : '')); });\n}\n\nif (validLeadCount === 0) {\n  return [{ json: { \n    hasLeads: false, \n    tier: tierInfo.tier, \n    tierName: tierInfo.tierName, \n    listingType: tierInfo.listingType, \n    importId: tierInfo.importId, \n    importDate: tierInfo.importDate, \n    leadsCount: 0, \n    originalBatchDataCount: originalBatchDataCount,\n    jsonData: null, \n    leadData: [],\n    validationStats: {\n      totalRecords: properties.length,\n      emptyAddresses: emptyAddressCount,\n      invalidCityState: invalidAddressCount,\n      noMailingAddress: noMailingCount,\n      noMailingZip: noMailingZipCount,\n      poBoxFiltered: poBoxCount,\n      commercialFiltered: commercialCount,\n      batchdataInvalid: batchdataInvalidCount,\n      validRecords: 0,\n      creditsSaved: creditsSaved\n    }\n  } }];\n}\n\n// === EXPIRED TIER DATE SPLIT ===\nif (tierInfo.isExpired && tierInfo.expiredTierConfigs) {\n  const now = new Date();\n  const tierDateRanges = [\n    { tier: 'expired_hot_0_90', listingType: 'Expired_Hot', name: 'Hot Expireds (0-90 Days)', minDays: 0, maxDays: 90 },\n    { tier: 'expired_warm_91_365', listingType: 'Expired_Warm', name: 'Warm Expireds (3-12 Months)', minDays: 91, maxDays: 365 },\n    { tier: 'expired_cold_366_730', listingType: 'Expired_Cold', name: 'Cold Expireds (1-2 Years)', minDays: 366, maxDays: 730 }\n  ];\n  \n  const buckets = {};\n  for (const range of tierDateRanges) {\n    buckets[range.tier] = { records: [], leads: [] };\n  }\n  \n  let outsideRange = 0;\n  let noDateCount = 0;\n  \n  for (let i = 0; i < jsonRecords.length; i++) {\n    const propData = leadData[i]?.propertyData || {};\n    const listing = propData.listing || {};\n    const failedDate = listing.failedListingDate || listing.originalListingDate || null;\n    \n    let daysSinceExpired = -1;\n    if (failedDate) {\n      const expDate = new Date(failedDate);\n      daysSinceExpired = Math.floor((now - expDate) / (1000 * 60 * 60 * 24));\n    } else {\n      noDateCount++;\n      daysSinceExpired = 200;\n    }\n    \n    let assigned = false;\n    for (const range of tierDateRanges) {\n      if (daysSinceExpired >= range.minDays && daysSinceExpired <= range.maxDays) {\n        buckets[range.tier].records.push(jsonRecords[i]);\n        const enrichedLead = JSON.parse(JSON.stringify(leadData[i]));\n        enrichedLead.propertyData.listingExpiredDate = failedDate;\n        enrichedLead.propertyData.daysSinceExpired = daysSinceExpired;\n        enrichedLead.propertyData.expiredTier = range.tier;\n        enrichedLead.propertyData.campaignType = 'expired';\n        if (range.tier === 'expired_hot_0_90') enrichedLead.propertyData.distressScore += 15;\n        else if (range.tier === 'expired_warm_91_365') enrichedLead.propertyData.distressScore += 10;\n        else enrichedLead.propertyData.distressScore += 5;\n        buckets[range.tier].leads.push(enrichedLead);\n        assigned = true;\n        break;\n      }\n    }\n    \n    if (!assigned) {\n      outsideRange++;\n      console.log('SKIP: Expired ' + daysSinceExpired + ' days ago (outside 0-730)');\n    }\n  }\n  \n  console.log('=== EXPIRED DATE SPLIT ===');\n  for (const range of tierDateRanges) {\n    const tc = tierInfo.expiredTierConfigs.find(function(c) { return c.tier === range.tier; }) || {};\n    console.log('  ' + range.tier + ': ' + buckets[range.tier].records.length + ' records (target: ' + (tc.leadsTarget || '?') + ')');\n  }\n  if (noDateCount > 0) console.log('  No date (defaulted to warm): ' + noDateCount);\n  if (outsideRange > 0) console.log('  Outside 0-730 range: ' + outsideRange);\n  \n  const results = [];\n  for (const range of tierDateRanges) {\n    const bucket = buckets[range.tier];\n    if (bucket.records.length > 0) {\n      const tc = tierInfo.expiredTierConfigs.find(function(c) { return c.tier === range.tier; }) || {};\n      results.push({\n        json: {\n          hasLeads: true,\n          tier: range.tier,\n          tierName: tc.name || range.name,\n          listingType: range.listingType,\n          importId: tierInfo.importId,\n          importDate: tierInfo.importDate,\n          leadsCount: bucket.records.length,\n          originalBatchDataCount: originalBatchDataCount,\n          jsonData: bucket.records,\n          leadData: bucket.leads,\n          deduplicationStats: deduplicationStats,\n          campaignType: 'expired',\n          validationStats: {\n            totalRecords: properties.length,\n            emptyAddresses: emptyAddressCount,\n            invalidCityState: invalidAddressCount,\n            noMailingAddress: noMailingCount,\n            noMailingZip: noMailingZipCount,\n            poBoxFiltered: poBoxCount,\n            commercialFiltered: commercialCount,\n            batchdataInvalid: batchdataInvalidCount,\n            validRecords: bucket.records.length,\n            creditsSaved: creditsSaved\n          },\n          distressInfo: { indicators: ['expired_listing'], score: tierDistressScore }\n        }\n      });\n    }\n  }\n  \n  if (results.length === 0) {\n    return [{ json: { \n      hasLeads: false, tier: 'expired_combined', tierName: 'All Expired Listings',\n      listingType: 'Expired', importId: tierInfo.importId, importDate: tierInfo.importDate, \n      leadsCount: 0, originalBatchDataCount: originalBatchDataCount, jsonData: null, leadData: []\n    } }];\n  }\n  \n  return results;\n}\n\n// === EXISTING RETURN (NON-EXPIRED TIERS \u2014 UNCHANGED) ===\nconsole.log('=== ADDRESS SWAP APPLIED ===');\nconsole.log('Tracerfy PRIMARY address = mailing (where owner lives)');\nconsole.log('Tracerfy SECONDARY address = property (investment)');\n\nreturn [{ json: {\n  hasLeads: true,\n  tier: tierInfo.tier,\n  tierName: tierInfo.tierName,\n  listingType: tierInfo.listingType,\n  importId: tierInfo.importId,\n  importDate: tierInfo.importDate,\n  leadsCount: validLeadCount,\n  originalBatchDataCount: originalBatchDataCount,\n  jsonData: jsonRecords,\n  leadData: leadData,\n  deduplicationStats: deduplicationStats,\n  validationStats: {\n    totalRecords: properties.length,\n    emptyAddresses: emptyAddressCount,\n    invalidCityState: invalidAddressCount,\n    noMailingAddress: noMailingCount,\n    noMailingZip: noMailingZipCount,\n    poBoxFiltered: poBoxCount,\n    commercialFiltered: commercialCount,\n    batchdataInvalid: batchdataInvalidCount,\n    validRecords: validLeadCount,\n    creditsSaved: creditsSaved,\n    qualityGrades: { A: gradeA, B: gradeB, C: gradeC }\n  },\n  distressInfo: {\n    indicators: tierDistressIndicators,\n    score: tierDistressScore\n  }\n} }];"
+      },
+      "id": "e0995de5-af8d-48b8-a5a2-a33c8c2447df",
+      "name": "Build JSON Data for Tracerfy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2416,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://tracerfy.com/v1/api/trace/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_API_TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "json_data",
+              "value": "={{ JSON.stringify($json.jsonData) }}"
+            },
+            {
+              "name": "address_column",
+              "value": "address"
+            },
+            {
+              "name": "city_column",
+              "value": "city"
+            },
+            {
+              "name": "state_column",
+              "value": "state"
+            },
+            {
+              "name": "zip_column",
+              "value": "zip"
+            },
+            {
+              "name": "first_name_column",
+              "value": "first_name"
+            },
+            {
+              "name": "last_name_column",
+              "value": "last_name"
+            },
+            {
+              "name": "mail_address_column",
+              "value": "mail_address"
+            },
+            {
+              "name": "mail_city_column",
+              "value": "mail_city"
+            },
+            {
+              "name": "mail_state_column",
+              "value": "mail_state"
+            },
+            {
+              "name": "mail_zip_column",
+              "value": "mail_zip"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "7f401a78-6340-453f-a8ff-a5c5773148a7",
+      "name": "Upload CSV to Tracerfy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2208,
+        -1088
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/skip-trace-jobs",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: String($json.queue_id || $json.job_id || $json.id || 'job_' + Date.now()), tier: $('Build JSON Data for Tracerfy').first().json.tier, tierName: $('Build JSON Data for Tracerfy').first().json.tierName, listingType: $('Build JSON Data for Tracerfy').first().json.listingType, importId: $('Build JSON Data for Tracerfy').first().json.importId, importDate: $('Build JSON Data for Tracerfy').first().json.importDate, source: 'batchdata_weekly', leadsSubmitted: $('Build JSON Data for Tracerfy').first().json.leadsCount, leadData: $('Build JSON Data for Tracerfy').first().json.leadData }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f7e98b99-339c-4897-9d32-ffd72204ffbb",
+      "name": "Store Job in Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2016,
+        -1088
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const jsonData = $('Build JSON Data for Tracerfy').first().json;\nconst tracerfyResponse = $('Upload CSV to Tracerfy').first().json;\nconst convexResponse = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.tierResults) staticData.tierResults = [];\n\nconst result = {\n  tier: jsonData.tier,\n  tierName: jsonData.tierName,\n  listingType: jsonData.listingType,\n  importId: jsonData.importId,\n  leadsSubmitted: jsonData.leadsCount,\n  jobId: tracerfyResponse.queue_id || tracerfyResponse.job_id || tracerfyResponse.id || 'unknown',\n  convexJobId: convexResponse.jobId || convexResponse.id || 'unknown',\n  status: 'submitted_to_tracerfy',\n  success: true,\n  async: true\n};\n\nstaticData.tierResults.push(result);\nconsole.log(`Tier ${jsonData.tier}: Submitted ${jsonData.leadsCount} leads to Tracerfy, jobId: ${result.jobId}`);\n\nreturn [{ json: result }];"
+      },
+      "id": "e15bb01c-634f-4d31-bffa-f0cc15ff8ba8",
+      "name": "Log Job Submission",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1808,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// NO-LEADS PATH: Do NOT advance pagination when BatchData returns 0 results.\n// Previously this called pagination-update which advanced the skip counter,\n// causing the workflow to skip past all available leads permanently.\n// Now we just log and move to the next tier.\n\nconst tierData = $('Build BatchData Request').first().json;\nconst batchDataResponse = $('Call BatchData API').first().json;\n\nconst resultsFound = (batchDataResponse.results && batchDataResponse.results.meta && batchDataResponse.results.meta.results) \n  ? batchDataResponse.results.meta.results.resultsFound \n  : 0;\n\nconsole.log(`Tier ${tierData.tier}: 0 results returned. Pagination NOT advanced (will retry same offset next run).`);\nconsole.log(`BatchData meta: resultsFound=${resultsFound}`);\n\nreturn [{ json: { \n  tier: tierData.tier, \n  action: 'pagination_skipped', \n  reason: 'no_results_returned',\n  resultsFound: resultsFound\n} }];"
+      },
+      "id": "28c50ae9-7450-4226-bb93-9730b8f141bb",
+      "name": "Skip Pagination (No Leads)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2784,
+        -752
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle no leads from BatchData API (0 results)\nconst tierData = $('Build BatchData Request').first().json;\nconst batchDataResponse = $('Call BatchData API').first().json;\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.tierResults) staticData.tierResults = [];\n\n// Get results found from BatchData response\nconst resultsFound = (batchDataResponse.results && batchDataResponse.results.meta && batchDataResponse.results.meta.results) \n  ? batchDataResponse.results.meta.results.resultsFound \n  : 0;\nconst resultCount = (batchDataResponse.results && batchDataResponse.results.properties) \n  ? batchDataResponse.results.properties.length \n  : 0;\n\nconst result = {\n  tier: tierData.tier,\n  tierName: tierData.tierName,\n  listingType: tierData.listingType,\n  importId: tierData.importId,\n  leadsSubmitted: 0,\n  resultsFound: resultsFound,\n  resultCount: resultCount,\n  status: resultCount === 0 ? 'no_results_from_batchdata' : 'no_leads_after_filtering',\n  success: false,\n  async: false\n};\n\nstaticData.tierResults.push(result);\nconsole.log(`Tier ${tierData.tier}: No leads - BatchData returned ${resultCount} results (${resultsFound} found)`);\n\nreturn [{ json: result }];"
+      },
+      "id": "400636da-ad84-4d5a-a2d5-faae5b3ca641",
+      "name": "Log No Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2016,
+        -752
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get all tier results from static data\nconst staticData = $getWorkflowStaticData('global');\nconst allResults = staticData.tierResults || [];\n\n// Clear for next run\nstaticData.tierResults = [];\n\n// Calculate totals\nlet totalLeadsSubmitted = 0;\nlet totalJobsCreated = 0;\nlet tiersWithNoLeads = 0;\n\nconst tiers = {};\nconst jobs = [];\n\nfor (const result of allResults) {\n  if (result.tier) {\n    tiers[result.tier] = {\n      name: result.tierName,\n      listingType: result.listingType,\n      leadsSubmitted: result.leadsSubmitted || 0,\n      jobId: result.jobId || null,\n      status: result.status,\n      success: result.success\n    };\n    \n    totalLeadsSubmitted += result.leadsSubmitted || 0;\n    \n    if (result.success && result.jobId) {\n      totalJobsCreated++;\n      jobs.push({\n        tier: result.tier,\n        jobId: result.jobId,\n        leadsSubmitted: result.leadsSubmitted\n      });\n    } else {\n      tiersWithNoLeads++;\n    }\n  }\n}\n\nconst summary = {\n  importId: allResults[0]?.importId || 'import_' + Date.now(),\n  importDate: new Date().toISOString().split('T')[0],\n  source: 'tracerfy_async',\n  tiers: tiers,\n  // FIXED: Match Convex createImportLog schema EXACTLY\n  // Only include fields that are in the validator\n  totals: {\n    leadsTarget: totalLeadsSubmitted,\n    leadsReceived: totalLeadsSubmitted,\n    leadsStaged: 0\n  },\n  // Store extra info outside totals for Slack report\n  meta: {\n    tiersProcessed: allResults.length,\n    jobsCreated: totalJobsCreated,\n    tiersWithNoLeads: tiersWithNoLeads\n  },\n  jobs: jobs,\n  status: 'jobs_submitted'\n};\n\nconsole.log('=== ASYNC IMPORT SUMMARY ===');\nconsole.log(`Tiers: ${allResults.length}, Leads: ${totalLeadsSubmitted}, Jobs: ${totalJobsCreated}`);\n\nreturn [{ json: summary }];"
+      },
+      "id": "72f73224-3d71-4cca-8dde-d90cd4fb6648",
+      "name": "Aggregate All Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3696,
+        -1136
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/import-log",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ importId: $json.importId, importDate: $json.importDate, source: $json.source, tiers: $json.tiers, totals: $json.totals, jobs: $json.jobs, status: $json.status || 'jobs_submitted' }) }}",
+        "options": {}
+      },
+      "id": "78289cae-ccb8-4374-9a22-9c026e2262dd",
+      "name": "Log Import to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3504,
+        -1136
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0ABWBR67JL",
+          "mode": "list",
+          "cachedResultName": "test"
+        },
+        "text": "=\ud83d\udcca *Tracerfy Async Import Started*\n\n*Import ID:* {{ $('Aggregate All Results').item.json.importId }}\n*Date:* {{ $('Aggregate All Results').item.json.importDate }}\n\n*Jobs Submitted:*\n\u2022 Tiers Processed: {{ $('Aggregate All Results').item.json.meta.tiersProcessed }}\n\u2022 Total Leads: {{ $('Aggregate All Results').item.json.totals.leadsTarget }}\n\u2022 Jobs Created: {{ $('Aggregate All Results').item.json.meta.jobsCreated }}\n\u2022 Tiers Skipped: {{ $('Aggregate All Results').item.json.meta.tiersWithNoLeads }}\n\n_Note: Results will be processed by Tracerfy Results Handler workflow when jobs complete._",
+        "otherOptions": {},
+        "resource": "message",
+        "operation": "post"
+      },
+      "id": "019e429d-6a30-4eae-8c31-73c3f8a76195",
+      "name": "Slack Report",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        -3328,
+        -1136
+      ],
+      "webhookId": "2ad7118f-b2e1-44b9-8948-39352b7c0f87"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/pagination-update",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ tier: $('Build JSON Data for Tracerfy').first().json.tier, leadsReceived: $('Build JSON Data for Tracerfy').first().json.originalBatchDataCount || $('Build JSON Data for Tracerfy').first().json.leadsCount, take: $('Build JSON Data for Tracerfy').first().json.originalBatchDataCount || $('Build JSON Data for Tracerfy').first().json.leadsCount, importId: $('Build JSON Data for Tracerfy').first().json.importId, importDate: $('Build JSON Data for Tracerfy').first().json.importDate }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "9fedb90b-bb4f-4e9c-b304-f6b254e8f04b",
+      "name": "Update Pagination State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1808,
+        -1088
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-has-leads",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.hasLeads }}",
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1ccd6a9e-93ce-4034-b1c0-c4ef9bd5075f",
+      "name": "Has 5+ Leads to Upload?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2208,
+        -928
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -1616,
+        -928
+      ],
+      "id": "6214bccb-db6a-472d-8926-67795f79ca68",
+      "name": "Wait 2 Minutes",
+      "webhookId": "d3a1a0c2-9fa2-4a18-b636-78b2d9502e3b"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/financial-event",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_type\": \"batchdata_scrape\",\n  \"amount\": {{ ($json.results && $json.results.properties) ? $json.results.properties.length * 0.01 : 0 }},\n  \"currency\": \"USD\",\n  \"description\": \"BatchData property scrape\",\n  \"metadata\": {\n    \"workflow\": \"BatchData Weekly Staging\",\n    \"tier\": \"{{ $('Build BatchData Request').item.json.tier }}\",\n    \"leads_count\": {{ ($json.results && $json.results.properties) ? $json.results.properties.length : 0 }},\n    \"import_id\": \"{{ $('Build BatchData Request').item.json.importId }}\",\n    \"cost_per_lead\": 0.01\n  }\n}",
+        "options": {}
+      },
+      "id": "96d556f4-5e80-4460-b62e-6985477814bf",
+      "name": "Log Scrape Cost",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2448,
+        -1216
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/financial-event",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_type\": \"tracerfy_skip_trace\",\n  \"amount\": {{ $('Build JSON Data for Tracerfy').first().json.leadsCount * 0.02 }},\n  \"currency\": \"USD\",\n  \"description\": \"Tracerfy skip trace upload\",\n  \"metadata\": {\n    \"workflow\": \"BatchData Weekly Staging\",\n    \"tier\": \"{{ $('Build JSON Data for Tracerfy').first().json.tier }}\",\n    \"leads_uploaded\": {{ $('Build JSON Data for Tracerfy').first().json.leadsCount }},\n    \"import_id\": \"{{ $('Build JSON Data for Tracerfy').first().json.importId }}\",\n    \"cost_per_lead\": 0.02\n  }\n}",
+        "options": {}
+      },
+      "id": "2862a482-8ee1-4258-bb12-e1c42d45af42",
+      "name": "Log Tracerfy Cost",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1808,
+        -1216
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/log-lead-event",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_type\": \"uploaded\",\n  \"workflow\": \"batchdata_weekly_staging\",\n  \"count\": {{ $('Build JSON Data for Tracerfy').first().json.leadsCount }},\n  \"tier\": \"{{ $('Build JSON Data for Tracerfy').first().json.tier }}\"\n}",
+        "options": {}
+      },
+      "id": "a3a78ca2-dd6d-44f5-b012-d1ca8c601e04",
+      "name": "Log Pipeline: Uploaded",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1616,
+        -1216
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/log-lead-event",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_type\": \"scraped\",\n  \"workflow\": \"batchdata_weekly_staging\",\n  \"count\": {{ ($json.results && $json.results.properties) ? $json.results.properties.length : 0 }},\n  \"tier\": \"{{ $('Build BatchData Request').item.json.tier }}\"\n}",
+        "options": {}
+      },
+      "id": "0ad4af7c-1b7d-4711-b218-169775a15d4e",
+      "name": "Log Pipeline: Scraped",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2848,
+        -1120
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Weekly Sunday 6AM": {
+      "main": [
+        [
+          {
+            "node": "Initialize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize": {
+      "main": [
+        [
+          {
+            "node": "Fetch Tier Configs from Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Tier Configs from Convex": {
+      "main": [
+        [
+          {
+            "node": "Define Tier Configs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Define Tier Configs": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Tier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Each Tier": {
+      "main": [
+        [
+          {
+            "node": "Aggregate All Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build BatchData Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build BatchData Request": {
+      "main": [
+        [
+          {
+            "node": "Get Pagination State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pagination State": {
+      "main": [
+        [
+          {
+            "node": "Call BatchData API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call BatchData API": {
+      "main": [
+        [
+          {
+            "node": "Has Results?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Pipeline: Scraped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Results?": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicates via Convex",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Pagination (No Leads)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicates via Convex": {
+      "main": [
+        [
+          {
+            "node": "Filter New Leads Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New Leads Only": {
+      "main": [
+        [
+          {
+            "node": "Build JSON Data for Tracerfy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build JSON Data for Tracerfy": {
+      "main": [
+        [
+          {
+            "node": "Has 5+ Leads to Upload?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Scrape Cost",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has 5+ Leads to Upload?": {
+      "main": [
+        [
+          {
+            "node": "Upload CSV to Tracerfy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Pagination (No Leads)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload CSV to Tracerfy": {
+      "main": [
+        [
+          {
+            "node": "Store Job in Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Job in Convex": {
+      "main": [
+        [
+          {
+            "node": "Update Pagination State",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Tracerfy Cost",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Pagination State": {
+      "main": [
+        [
+          {
+            "node": "Log Job Submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Job Submission": {
+      "main": [
+        [
+          {
+            "node": "Wait 2 Minutes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Tier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Pagination (No Leads)": {
+      "main": [
+        [
+          {
+            "node": "Log No Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log No Leads": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Tier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate All Results": {
+      "main": [
+        [
+          {
+            "node": "Log Import to Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Import to Convex": {
+      "main": [
+        [
+          {
+            "node": "Slack Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Tracerfy Cost": {
+      "main": [
+        [
+          {
+            "node": "Log Pipeline: Uploaded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

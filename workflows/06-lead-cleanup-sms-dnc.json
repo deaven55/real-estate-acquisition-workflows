@@ -1,0 +1,1625 @@
+{
+  "name": "Lead Cleanup - SMS Errors & DNC",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://api.close.com/api/v1/lead/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=date_created > {{ $now.minus({hours: 24}).toISO() }}"
+            },
+            {
+              "name": "_limit",
+              "value": "200"
+            },
+            {
+              "name": "_fields",
+              "value": "id,display_name,contacts,custom,status_label"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "9df5d2be-d6d6-4a3a-a2d3-53495cc52d74",
+      "name": "Fetch All Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1152,
+        -4688
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.close.com/api/v1/activity/sms/?lead_id={{ $json.data[0].contacts[0].lead_id }}&_order_by=-date_created&_limit=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {}
+      },
+      "id": "07f87daf-8352-4810-88c7-b2ec5512c71e",
+      "name": "Get Last 5 Messages1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -736,
+        -4672
+      ],
+      "notes": "Gets custom field IDs to map correctly"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "88aaba0a-3693-4850-a227-86525b705311",
+              "leftValue": "={{ $json.data[0].error_message }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -560,
+        -4672
+      ],
+      "id": "759bfb23-7af7-4ce1-aecc-179e93eb56db",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.close.com/api/v1/lead/{{ $json.data[0].lead_id }}/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "f677b429-282a-4f0e-badd-311bc4eaa990",
+      "name": "Delete Lead1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -352,
+        -4688
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -960,
+        -4688
+      ],
+      "id": "8124c97c-e4f8-47a1-9991-87a79d69635f",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "notice": "Click 'Test workflow' to run this one-time cleanup of Blitz leads with SMS errors"
+      },
+      "id": "cd43b031-dde4-4d24-ab5f-28600b8b50d2",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1184,
+        -4320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate page numbers for all Blitz leads\n// API limit is 100 per request\nconst pages = [];\nfor (let i = 0; i < 80; i++) {\n  pages.push({ json: { page: i + 1, skip: i * 100 } });\n}\nreturn pages;"
+      },
+      "id": "b5aa4618-df94-4cb7-a82a-29f21cc7809a",
+      "name": "Generate Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1008,
+        -4320
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.close.com/api/v1/lead/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "cf_cu1deNsnBPkD3h2sdAnxJbFcuXOX6zyCD4JEsEuVF7B:\"GR\" AND custom.cf_POWtXhMQwwrBsrlkocDvtA5Fs57DvdKjwomTTgTP5vW:\"Blitz\""
+            },
+            {
+              "name": "_limit",
+              "value": "100"
+            },
+            {
+              "name": "_skip",
+              "value": "={{ $json.skip }}"
+            },
+            {
+              "name": "_fields",
+              "value": "id,display_name,contacts"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "e25566e4-d20f-469d-97dd-b6f614913ede",
+      "name": "Fetch Blitz Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -832,
+        -4320
+      ],
+      "notes": "Fetch 100 leads per page"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine all pages into single lead list\nconst allItems = $input.all();\nconst allLeads = [];\n\nfor (const item of allItems) {\n  const leads = item.json.data || [];\n  allLeads.push(...leads);\n}\n\nif (allLeads.length === 0) {\n  return [{ json: { noLeads: true, count: 0 } }];\n}\n\nconsole.log(`Found ${allLeads.length} total Blitz leads to check`);\n\nreturn allLeads.map(lead => ({\n  json: {\n    leadId: lead.id,\n    leadName: lead.display_name\n  }\n}));"
+      },
+      "id": "2c40585c-c5c7-4b82-922f-2b68fb76a039",
+      "name": "Extract Blitz Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -688,
+        -4320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-leads",
+              "leftValue": "={{ $json.leadId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "619c4952-fba0-4d16-a3ad-d898fb3f5a63",
+      "name": "Has Blitz Leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -224,
+        -4320
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "a8aae79c-fa24-45a9-b6bb-87b6beb31606",
+      "name": "Loop Leads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -16,
+        -4336
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "id": "276ebb23-e2b4-43b5-ada5-e4b852dedac4",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        192,
+        -4336
+      ],
+      "webhookId": "blitz-rate-limit"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.close.com/api/v1/activity/sms/?lead_id={{ $json.leadId }}&_order_by=-date_created&_limit=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "a17886ff-ba1c-493f-a9a1-684b7378859b",
+      "name": "Get SMS Activities",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        384,
+        -4336
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if OUTBOUND SMS has error_message - Process ALL items in batch\nconst allItems = $input.all();\nconst loopItems = $('Loop Leads').all();\nconst results = [];\n\nfor (let i = 0; i < allItems.length; i++) {\n  const smsResponse = allItems[i].json;\n  const loopData = loopItems[i]?.json || {};\n  const smsActivities = smsResponse.data || [];\n  \n  const leadId = loopData.leadId;\n  const leadName = loopData.leadName;\n  \n  // Find the last OUTBOUND SMS only\n  const lastOutboundSms = smsActivities.find(sms => sms.direction === 'outbound');\n  \n  if (!lastOutboundSms) {\n    results.push({ json: { hasError: false, noSmsFound: true, leadId, leadName } });\n    continue;\n  }\n  \n  const hasError = lastOutboundSms.error_message && lastOutboundSms.error_message.trim() !== '';\n  \n  results.push({\n    json: {\n      leadId,\n      leadName,\n      hasError,\n      errorMessage: hasError ? lastOutboundSms.error_message : ''\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "b6cb5975-f27d-42bc-9c9d-2163a101244f",
+      "name": "Check SMS Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        -4336
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-error",
+              "leftValue": "={{ $json.hasError }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ecc6590a-fb16-4cc0-9ae5-4a4d709719ef",
+      "name": "Has Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        784,
+        -4336
+      ]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.close.com/api/v1/lead/{{ $json.leadId }}/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "37db8098-3137-4ed2-8e77-713e70fb0b96",
+      "name": "Delete Error Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1008,
+        -4352
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log delete result - Process ALL items in batch\nconst allItems = $input.all();\nconst checkItems = $('Has Error?').all();\nconst results = [];\n\nfor (let i = 0; i < allItems.length; i++) {\n  const deleteResponse = allItems[i].json;\n  const checkData = checkItems[i]?.json || {};\n  \n  const statusCode = deleteResponse.statusCode || 204;\n  const success = statusCode >= 200 && statusCode < 300;\n  \n  results.push({\n    json: {\n      status: success ? 'deleted' : 'failed',\n      leadId: checkData.leadId,\n      leadName: checkData.leadName,\n      errorMessage: checkData.errorMessage,\n      httpStatus: statusCode\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "c563209e-4423-489c-bdc5-8ef4c6105688",
+      "name": "Log Delete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1216,
+        -4352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compile Blitz Cleanup Report\nconst allItems = $input.all();\n\nlet deleted = 0;\nlet failed = 0;\nconst deletedNames = [];\nconst errorMessages = [];\n\nfor (const item of allItems) {\n  const d = item.json;\n  if (d.status === 'deleted') {\n    deleted++;\n    deletedNames.push(d.leadName);\n    if (d.errorMessage) errorMessages.push(d.errorMessage);\n  } else if (d.status === 'failed') {\n    failed++;\n  }\n}\n\nreturn [{\n  json: {\n    totalDeleted: deleted,\n    totalFailed: failed,\n    deletedLeads: deletedNames.slice(0, 30),\n    sampleErrors: [...new Set(errorMessages)].slice(0, 5)\n  }\n}];"
+      },
+      "id": "232a1e71-1ba6-4cd5-8f44-be73b032befe",
+      "name": "Compile Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        -4480
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0A6HUXQC67",
+          "mode": "list",
+          "cachedResultName": "daily-reports"
+        },
+        "messageType": "block",
+        "blocksUi": "={\n  \"text\": \":zap: Blitz Cleanup - No Leads Found\",\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \":white_check_mark: *Blitz Cleanup* - No Blitz leads found to check\"\n      }\n    }\n  ]\n}",
+        "otherOptions": {}
+      },
+      "id": "70315dcf-454c-4fe1-9121-07ba53d10bfb",
+      "name": "Slack No Leads",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        -672,
+        -4176
+      ],
+      "webhookId": "1936d863-6218-4703-9b5f-02512f124f35"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10,16 * * *"
+            }
+          ]
+        }
+      },
+      "id": "8046f800-f1c8-43bd-89d7-b965fa70ab05",
+      "name": "10AM & 4PM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1216,
+        -3840
+      ],
+      "notes": "SMS Error Cleanup: Runs at 10 AM (after 9AM sends) and 4 PM (after 3PM sends)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 21 * * *"
+            }
+          ]
+        }
+      },
+      "id": "35b5c294-3a68-4930-afa2-09719faf3389",
+      "name": "9PM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1216,
+        -3360
+      ],
+      "notes": "DNC Cleanup: Runs once daily at 9 PM EST"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate 3 pages for up to 300 leads\n// API limit is 100 per request\nconst pages = [];\nfor (let i = 0; i < 50; i++) {\n  pages.push({ json: { page: i + 1, skip: i * 100 } });\n}\nreturn pages;"
+      },
+      "id": "401086ea-1fba-47c4-a9ff-2d419335e3da",
+      "name": "Generate SMS Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1024,
+        -3840
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.close.com/api/v1/lead/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "custom.cf_cu1deNsnBPkD3h2sdAnxJbFcuXOX6zyCD4JEsEuVF7B:\"New\""
+            },
+            {
+              "name": "_limit",
+              "value": "100"
+            },
+            {
+              "name": "_skip",
+              "value": "={{ $json.skip }}"
+            },
+            {
+              "name": "_fields",
+              "value": "id,display_name,contacts"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "065ff15f-d97d-46f2-aaac-bb247f1c8964",
+      "name": "Fetch Leads Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -784,
+        -3840
+      ],
+      "notes": "Fetch 100 leads per page"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine all pages into single lead list\nconst allItems = $input.all();\nconst allLeads = [];\n\nfor (const item of allItems) {\n  const leads = item.json.data || [];\n  allLeads.push(...leads);\n}\n\nif (allLeads.length === 0) {\n  return [{ json: { noLeads: true, count: 0 } }];\n}\n\nconsole.log(`Found ${allLeads.length} total leads created today`);\n\nreturn allLeads.map(lead => ({\n  json: {\n    leadId: lead.id,\n    leadName: lead.display_name\n  }\n}));"
+      },
+      "id": "1bd7a9e3-7cdb-43ab-b686-f8bc152de170",
+      "name": "Extract Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -544,
+        -3840
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-leads",
+              "leftValue": "={{ $json.leadId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "14ab5c0b-d896-467a-acc1-235803604090",
+      "name": "Has Leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -320,
+        -3840
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "43132b37-09fd-4a82-932c-c7b3d1c1acaa",
+      "name": "Loop SMS Leads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -128,
+        -3856
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "id": "eda68ed0-f408-47a4-9d3e-57942a215ca2",
+      "name": "Wait SMS",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        64,
+        -3856
+      ],
+      "webhookId": "sms-cleanup-rate-limit"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.close.com/api/v1/activity/sms/?lead_id={{ $json.leadId }}&_order_by=-date_created&_limit=5",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "f71e5614-c98f-4597-9288-fcebcdbb2111",
+      "name": "Get Last SMS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        -3856
+      ]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.close.com/api/v1/lead/{{ $json.leadId }}/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "1b2e12ff-6e49-4d85-a3db-af5c5dd6cb71",
+      "name": "Delete SMS Error Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        864,
+        -3872
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log delete result - Process ALL items in batch\nconst allItems = $input.all();\nconst checkItems = $('Has Error?1').all();\nconst results = [];\n\nfor (let i = 0; i < allItems.length; i++) {\n  const deleteResponse = allItems[i].json;\n  const checkData = checkItems[i]?.json || {};\n  \n  const statusCode = deleteResponse.statusCode || 204;\n  const success = statusCode >= 200 && statusCode < 300;\n  \n  results.push({\n    json: {\n      status: success ? 'deleted' : 'failed',\n      leadId: checkData.leadId,\n      leadName: checkData.leadName,\n      errorMessage: checkData.errorMessage,\n      httpStatus: statusCode\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "922302f8-c2e7-496d-a3ef-ca3f320c606e",
+      "name": "Log SMS Delete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        -3872
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compile SMS Error Report\nconst allItems = $input.all();\n\nlet deleted = 0;\nlet failed = 0;\nconst deletedNames = [];\n\nfor (const item of allItems) {\n  const d = item.json;\n  if (d.status === 'deleted') {\n    deleted++;\n    deletedNames.push(d.leadName);\n  } else if (d.status === 'failed') {\n    failed++;\n  }\n}\n\nconst hour = new Date().getHours();\nconst runTime = hour < 12 ? '10 AM' : '4 PM';\n\nreturn [{\n  json: {\n    runTime,\n    totalDeleted: deleted,\n    totalFailed: failed,\n    deletedLeads: deletedNames.slice(0, 20)\n  }\n}];"
+      },
+      "id": "6680d713-1320-41fd-8b0a-b1ab3efe906d",
+      "name": "Compile SMS Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        -4016
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate 3 pages for up to 300 DNC leads\n// API limit is 100 per request\nconst pages = [];\nfor (let i = 0; i < 3; i++) {\n  pages.push({ json: { page: i + 1, skip: i * 100 } });\n}\nreturn pages;"
+      },
+      "id": "eb79208b-5d8e-46e6-ac2f-67111f58135f",
+      "name": "Generate DNC Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1024,
+        -3360
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.close.com/api/v1/lead/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "custom.cf_cu1deNsnBPkD3h2sdAnxJbFcuXOX6zyCD4JEsEuVF7B:\"New\" AND custom.cf_POWtXhMQwwrBsrlkocDvtA5Fs57DvdKjwomTTgTP5vW:\"DNC\""
+            },
+            {
+              "name": "_limit",
+              "value": "100"
+            },
+            {
+              "name": "_skip",
+              "value": "={{ $json.skip }}"
+            },
+            {
+              "name": "_fields",
+              "value": "id,display_name,contacts"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "1c97067f-513e-4b0c-aab9-27cf85ac8956",
+      "name": "Fetch DNC Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -848,
+        -3360
+      ],
+      "notes": "Fetch 100 DNC leads per page"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine all pages into single DNC lead list\nconst allItems = $input.all();\nconst allLeads = [];\n\nfor (const item of allItems) {\n  const leads = item.json.data || [];\n  allLeads.push(...leads);\n}\n\nif (allLeads.length === 0) {\n  return [{ json: { noLeads: true } }];\n}\n\nconsole.log(`Found ${allLeads.length} total DNC leads`);\n\nreturn allLeads.map(lead => ({\n  json: {\n    leadId: lead.id,\n    leadName: lead.display_name\n  }\n}));"
+      },
+      "id": "0e88848f-ad4b-4f20-880b-89ef1311dc98",
+      "name": "Extract DNC Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        -3360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-dnc-leads",
+              "leftValue": "={{ $json.leadId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9c8cd699-8566-4a49-afce-e56dcaf69207",
+      "name": "Has DNC Leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -160,
+        -3360
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "a0f6538e-a193-4393-97c3-8e0b8a4f803d",
+      "name": "Loop DNC Leads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        80,
+        -3376
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "id": "b6a48b99-5cac-4aac-b507-8971dddbccc1",
+      "name": "Wait DNC",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        272,
+        -3376
+      ],
+      "webhookId": "dnc-cleanup-rate-limit"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=https://api.close.com/api/v1/lead/{{ $json.leadId }}/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "536d8ee0-b30e-4c64-9c8d-03219d8e8b31",
+      "name": "Delete DNC Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        -3376
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log DNC delete result - Process ALL items in batch\nconst allItems = $input.all();\nconst loopItems = $('Loop DNC Leads').all();\nconst results = [];\n\nfor (let i = 0; i < allItems.length; i++) {\n  const deleteResponse = allItems[i].json;\n  const loopData = loopItems[i]?.json || {};\n  \n  const statusCode = deleteResponse.statusCode || 204;\n  const success = statusCode >= 200 && statusCode < 300;\n  \n  results.push({\n    json: {\n      status: success ? 'deleted' : 'failed',\n      leadId: loopData.leadId,\n      leadName: loopData.leadName,\n      httpStatus: statusCode\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "8ec37fca-1241-469a-9ca0-e6b2573f52d2",
+      "name": "Log DNC Delete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        -3376
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compile DNC Report\nconst allItems = $input.all();\n\nlet deleted = 0;\nlet failed = 0;\n\nfor (const item of allItems) {\n  const d = item.json;\n  if (d.status === 'deleted') deleted++;\n  else if (d.status === 'failed') failed++;\n}\n\nreturn [{\n  json: {\n    totalDeleted: deleted,\n    totalFailed: failed\n  }\n}];"
+      },
+      "id": "4ad33a72-1210-4342-93cb-436d8c9adbb5",
+      "name": "Compile DNC Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        96,
+        -3520
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0A6HUXQC67",
+          "mode": "list",
+          "cachedResultName": "daily-reports"
+        },
+        "messageType": "block",
+        "blocksUi": "={\n  \"text\": \":no_entry_sign: DNC Cleanup Report\",\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": \":no_entry_sign: DNC Cleanup - 9 PM EST\"\n      }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"{{ $now.format('cccc, LLLL d, yyyy') }}\"\n        }\n      ]\n    },\n    {\n      \"type\": \"divider\"\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \":wastebasket: *DNC Deleted:*\\n{{ $json.totalDeleted }}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \":warning: *Failed:*\\n{{ $json.totalFailed }}\"\n        }\n      ]\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"_Removed leads with Pipeline Stage = DNC_\"\n        }\n      ]\n    }\n  ]\n}",
+        "otherOptions": {}
+      },
+      "id": "f50555c4-8e6a-40b0-94a0-58a12f865aea",
+      "name": "Slack DNC Report",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        288,
+        -3520
+      ],
+      "webhookId": "918e52f3-4820-4ca7-931c-fd36c985881f"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0A6HUXQC67",
+          "mode": "list",
+          "cachedResultName": "daily-reports"
+        },
+        "messageType": "block",
+        "blocksUi": "={\n  \"text\": \":no_entry_sign: DNC Cleanup - None Found\",\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \":white_check_mark: *DNC Cleanup* - No DNC leads to remove\"\n      }\n    }\n  ]\n}",
+        "otherOptions": {}
+      },
+      "id": "49a09b72-cd19-4680-ae92-9db23dd0aa40",
+      "name": "Slack No DNC",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        -160,
+        -3184
+      ],
+      "webhookId": "234ac5aa-8dd9-4aaa-be36-cd6efddfd3f7"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if OUTBOUND SMS has error_message - Process ALL items in batch\nconst allItems = $input.all();\nconst loopItems = $('Loop SMS Leads').all();\nconst results = [];\n\nfor (let i = 0; i < allItems.length; i++) {\n  const smsResponse = allItems[i].json;\n  const loopData = loopItems[i]?.json || {};\n  const smsActivities = smsResponse.data || [];\n  \n  const leadId = loopData.leadId;\n  const leadName = loopData.leadName;\n  \n  // Find the last OUTBOUND SMS only\n  const lastOutboundSms = smsActivities.find(sms => sms.direction === 'outbound');\n  \n  if (!lastOutboundSms) {\n    results.push({ json: { hasError: false, noSmsFound: true, leadId, leadName } });\n    continue;\n  }\n  \n  const hasError = lastOutboundSms.error_message && lastOutboundSms.error_message.trim() !== '';\n  \n  results.push({\n    json: {\n      leadId,\n      leadName,\n      hasError,\n      errorMessage: hasError ? lastOutboundSms.error_message : ''\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "63e677ab-2c85-4a0b-8e8d-37f696d34e92",
+      "name": "Check SMS Error1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        432,
+        -3856
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-error",
+              "leftValue": "={{ $json.hasError }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0e32eadb-9e88-4d6a-b34d-c9ae32736769",
+      "name": "Has Error?1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        -3856
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0A6HUXQC67",
+          "mode": "list",
+          "cachedResultName": "daily-reports"
+        },
+        "messageType": "block",
+        "blocksUi": "={\n  \"text\": \":broom: SMS Cleanup - No Leads\",\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \":white_check_mark: *SMS Cleanup* - No leads created today\"\n      }\n    }\n  ]\n}",
+        "otherOptions": {}
+      },
+      "id": "536b836b-7599-4a50-b7fb-8bc683eb947f",
+      "name": "Slack No Leads1",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        -336,
+        -3616
+      ],
+      "webhookId": "8b691912-26ba-41b2-b26f-01c46b5cf0f8"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        80,
+        -4016
+      ],
+      "id": "41e75630-ad8d-41ef-a86c-12fee41a53fc",
+      "name": "Limit1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/lead-full-cleanup",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"lead_id\": \"{{ $('Has Error?').first().json.leadId }}\",\n  \"reason\": \"sms_error_blitz_cleanup\"\n}",
+        "options": {}
+      },
+      "id": "cancel-queue-blitz",
+      "name": "Cleanup Convex (Blitz)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1408,
+        -4352
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/lead-full-cleanup",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"lead_id\": \"{{ $('Has Error?1').first().json.leadId }}\",\n  \"reason\": \"sms_error_cleanup\"\n}",
+        "options": {}
+      },
+      "id": "cancel-queue-sms",
+      "name": "Cleanup Convex (SMS Error)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1392,
+        -3872
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/lead-full-cleanup",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"lead_id\": \"{{ $('Loop DNC Leads').first().json.leadId }}\",\n  \"reason\": \"dnc_cleanup\"\n}",
+        "options": {}
+      },
+      "id": "cancel-queue-dnc",
+      "name": "Cleanup Convex (DNC)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        832,
+        -3376
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Fetch All Leads": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Last 5 Messages1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Delete Lead1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Get Last 5 Messages1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Lead1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Blitz Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Blitz Page": {
+      "main": [
+        [
+          {
+            "node": "Extract Blitz Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Blitz Leads": {
+      "main": [
+        [
+          {
+            "node": "Has Blitz Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Blitz Leads?": {
+      "main": [
+        [
+          {
+            "node": "Loop Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack No Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Leads": {
+      "main": [
+        [
+          {
+            "node": "Compile Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Get SMS Activities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get SMS Activities": {
+      "main": [
+        [
+          {
+            "node": "Check SMS Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check SMS Error": {
+      "main": [
+        [
+          {
+            "node": "Has Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Error?": {
+      "main": [
+        [
+          {
+            "node": "Delete Error Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Error Lead": {
+      "main": [
+        [
+          {
+            "node": "Log Delete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Delete": {
+      "main": [
+        [
+          {
+            "node": "Loop Leads",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Cleanup Convex (Blitz)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile Report": {
+      "main": [
+        []
+      ]
+    },
+    "10AM & 4PM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate SMS Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate SMS Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch Leads Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9PM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate DNC Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate DNC Pages": {
+      "main": [
+        [
+          {
+            "node": "Fetch DNC Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Leads Page": {
+      "main": [
+        [
+          {
+            "node": "Extract Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Leads": {
+      "main": [
+        [
+          {
+            "node": "Has Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Leads?": {
+      "main": [
+        [
+          {
+            "node": "Loop SMS Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack No Leads1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop SMS Leads": {
+      "main": [
+        [
+          {
+            "node": "Compile SMS Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait SMS": {
+      "main": [
+        [
+          {
+            "node": "Get Last SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Last SMS": {
+      "main": [
+        [
+          {
+            "node": "Check SMS Error1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete SMS Error Lead": {
+      "main": [
+        [
+          {
+            "node": "Log SMS Delete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log SMS Delete": {
+      "main": [
+        [
+          {
+            "node": "Loop SMS Leads",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Cleanup Convex (SMS Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile SMS Report": {
+      "main": [
+        [
+          {
+            "node": "Limit1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch DNC Page": {
+      "main": [
+        [
+          {
+            "node": "Extract DNC Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract DNC Leads": {
+      "main": [
+        [
+          {
+            "node": "Has DNC Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has DNC Leads?": {
+      "main": [
+        [
+          {
+            "node": "Loop DNC Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack No DNC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop DNC Leads": {
+      "main": [
+        [
+          {
+            "node": "Compile DNC Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait DNC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait DNC": {
+      "main": [
+        [
+          {
+            "node": "Delete DNC Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete DNC Lead": {
+      "main": [
+        [
+          {
+            "node": "Log DNC Delete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log DNC Delete": {
+      "main": [
+        [
+          {
+            "node": "Loop DNC Leads",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Cleanup Convex (DNC)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile DNC Report": {
+      "main": [
+        [
+          {
+            "node": "Slack DNC Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check SMS Error1": {
+      "main": [
+        [
+          {
+            "node": "Has Error?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Error?1": {
+      "main": [
+        [
+          {
+            "node": "Delete SMS Error Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop SMS Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit1": {
+      "main": [
+        []
+      ]
+    },
+    "Cleanup Convex (Blitz)": {
+      "main": [
+        [
+          {
+            "node": "Loop Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cleanup Convex (SMS Error)": {
+      "main": [
+        [
+          {
+            "node": "Loop SMS Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cleanup Convex (DNC)": {
+      "main": [
+        [
+          {
+            "node": "Loop DNC Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "America/New_York",
+    "callerPolicy": "workflowsFromSameOwner",
+    "binaryMode": "separate"
+  },
+  "active": false
+}

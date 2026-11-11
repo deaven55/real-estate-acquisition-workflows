@@ -1,5 +1,3 @@
-<div align="center">
-
 # Real Estate Acquisition. Wholesaling Seller-Side Automation (n8n)
 
 ### 7 production n8n workflows. 341 nodes. The operations backbone of a real estate wholesaling business, from raw property data to a booked seller conversation.
@@ -8,8 +6,6 @@
 [![Nodes](https://img.shields.io/badge/total_nodes-341-6366F1?style=for-the-badge)](#)
 [![Workflows](https://img.shields.io/badge/workflows-7-10B981?style=for-the-badge)](#)
 [![Status](https://img.shields.io/badge/status-production-success?style=for-the-badge)](#)
-
-</div>
 
 ---
 
@@ -38,14 +34,46 @@ Tracerfy skip trace (corporate/govt/bank filter, address standardization)
 Phone / email / phoneless lead staging back to Convex
       │
       ▼  02-ghost-rider-crm-import
-Close CRM lead creation (dedup, DNC, TCPA guard) + first outbound text
+Seller lead processing
+      │
+      ├──▶  00-insula-crm-lead-upsert-adapter
+      │         │
+      │         └──▶ InsulaCRM canonical seller/property record
       │
       ├──▶  03-seller-followup-engine (multi-day drip, rate-limited)
-      │
       └──▶  01-seller-response-handler (20+ intent classifier on inbound replies)
                                     │
-                                    ▼  06-lead-cleanup-sms-dnc (continuous hygiene)
+                                    ▼
+                         06-lead-cleanup-sms-dnc
 ```
+
+---
+
+## InsulaCRM Integration
+
+InsulaCRM is the target canonical CRM for this acquisition stack. The integration is being introduced without immediately removing the existing staging and messaging services.
+
+### Reusable adapter
+
+`workflows/00-insula-crm-lead-upsert-adapter.json`
+
+This workflow is designed to be called by the acquisition workflows after lead normalization. It:
+
+- normalizes first/last name, phone, email, source, parcel ID, distress metadata, and property address;
+- sends `POST /api/v1/leads` to InsulaCRM;
+- authenticates with `X-API-Key`;
+- sends a deterministic `Idempotency-Key`;
+- returns the InsulaCRM `lead_id` and `property_id`;
+- treats the source parcel ID as the stable external identity.
+
+Configure these n8n environment variables:
+
+- `INSULA_CRM_BASE_URL`
+- `INSULA_CRM_API_KEY`
+
+The API key must stay in n8n credentials/environment configuration and must not be committed to Git.
+
+See `docs/INSULA_CRM_INTEGRATION.md` for the complete field mapping, migration order, and cutover criteria.
 
 ---
 
@@ -58,61 +86,37 @@ The largest workflow in the stack. Classifies every inbound seller SMS reply int
 
 **What it does:** dedup check, reply logging to Convex, intent classification, hot-lead Slack alert, DNC registration on opt-out, follow-up scheduling. Handles the messy reality that sellers never reply in clean categories.
 
-**Patterns:** multi-branch intent routing, Convex-backed dedup and state, Slack hot-lead alerting, opt-out compliance.
-
 ### 02. Ghost Rider CRM Import (Lead Processor) — 40 nodes
 `workflows/02-ghost-rider-crm-import.json`
 
-Weekly job that takes skip-traced leads and imports them into Close CRM, then fires the first outbound text, all with layered deduplication and TCPA compliance.
+Weekly job that takes skip-traced leads through DNC, address deduplication, CRM duplicate protection, TCPA checks, first-message preparation, SMS delivery, and follow-up scheduling.
 
-**What it does:** fetch pending leads, DNC check, address-level dedup, Close-CRM duplicate check, create lead, TCPA send-window guard (queues for later if outside hours), send Text 1, log SMS cost, enqueue for follow-up, aggregate daily stats.
-
-**Patterns:** three-layer dedup (DNC + address + CRM), TCPA time-window enforcement, per-lead rate limiting with Wait, cost tracking to a central ledger, sticky-note documented canvas.
+**Migration note:** this workflow is the first major cutover target. During migration, Close CRM remains the existing messaging dependency while InsulaCRM becomes the canonical seller/property system.
 
 ### 03. Seller Follow-Up Engine (Enhanced) — 44 nodes
 `workflows/03-seller-followup-engine.json`
 
-The multi-day drip. Pulls due follow-ups from a Convex queue, verifies the lead still exists and is in a sendable status, builds the message, sends via Close, and schedules the next touch, with stalled-conversation detection and stale-lead cleanup.
-
-**What it does:** fetch due items, rate-limit to 1 per second, verify lead in Close, check status exclusions, build message, send SMS, calculate next follow-up, handle phase transitions, detect stalled conversations, delete stale leads from the queue, track phone-health stats and cost.
-
-**Patterns:** durable queue + cron (no in-workflow sleeping), 1-per-second rate limiter, phase-based cadence, stale-record cleanup, API-error handling, phone deliverability stats.
+The multi-day drip. Pulls due follow-ups from a Convex queue, verifies the lead still exists and is in a sendable status, builds the message, sends SMS, and schedules the next touch.
 
 ### 04. Tracerfy Results Router — 35 nodes
 `workflows/04-skiptrace-results-router.json`
 
-A webhook receiver that catches skip-trace results and routes them by source product (Ghost Rider, VoiceSDR, DishCraft, agent network), because one skip-trace vendor feeds multiple products.
+A webhook receiver that catches skip-trace results and routes them by source product, then stages phone/email/phoneless results.
 
-**What it does:** receive Tracerfy webhook, identify the source queue, download results, split into phone / email-only / phoneless buckets, stage each back to Convex, complete the job, log return stats and pipeline progress.
-
-**Patterns:** single webhook multiplexed across products, result bucketing by data quality, idempotent job completion, pipeline-stage logging.
-
-### 05. BatchData Weekly Staging (Convex) — 28 nodes
+### 05. BatchData Weekly Staging — 28 nodes
 `workflows/05-batchdata-weekly-staging.json`
 
-The top of the funnel. Every Sunday it scrapes distressed-property records from BatchData across configurable tiers, dedupes against Convex, and uploads new leads to Tracerfy for skip tracing.
-
-**What it does:** load tier configs, loop each tier, build the BatchData request with pagination state, call the API, filter to new leads only, batch-upload to Tracerfy (only if 5+ leads), store the job, advance pagination, wait between tiers, and post a Slack report with cost.
-
-**Patterns:** tier-based configurable scraping, stateful pagination across runs, dedup-before-spend, minimum-batch threshold, inter-tier throttling, cost reporting.
+The top of the funnel. Scrapes distressed-property records from BatchData across configurable tiers, dedupes against staging, and uploads new leads to Tracerfy for skip tracing.
 
 ### 06. Lead Cleanup - SMS Errors & DNC — 49 nodes
 `workflows/06-lead-cleanup-sms-dnc.json`
 
-Continuous list hygiene on three schedules. Removes leads whose texts bounced (bad numbers) and leads who opted out, keeping the CRM clean and compliant.
-
-**What it does:** three triggers (manual blitz, 10am/4pm SMS-error sweep, 9pm DNC sweep), paginated fetch of leads, inspect recent SMS activities for delivery errors, delete error and DNC leads, clean up the Convex queue, and post per-run Slack reports.
-
-**Patterns:** multi-trigger single workflow, paginated batch processing, delivery-error detection, compliance-driven deletion, Convex queue cleanup, per-segment reporting.
+Continuous list hygiene for bounced numbers and opt-outs.
 
 ### 07. Ghost Rider to Tracerfy Skip Trace — 9 nodes
 `workflows/07-ghost-rider-skiptrace-dispatch.json`
 
-The dispatcher that turns raw scanned properties into skip-trace jobs. Small but does the heavy filtering: strips corporate, government, and bank-owned parcels, standardizes addresses, and handles absentee-owner mailing-address swaps before spending a cent on skip tracing.
-
-**What it does:** fetch pending leads from Convex, apply corporate/government/bank owner filters, standardize address formatting, swap to mailing address for absentee owners, upload the clean batch to Tracerfy, mark sent, push cost to the central ledger.
-
-**Patterns:** filter-before-spend, regex owner classification, USPS-style address standardization, absentee detection.
+Filters raw property leads before skip-trace spend, standardizes addresses, and submits clean batches to Tracerfy.
 
 ---
 
@@ -121,8 +125,9 @@ The dispatcher that turns raw scanned properties into skip-trace jobs. Small but
 | Layer | Tool |
 |-------|------|
 | Orchestration | n8n |
-| State + backend | Convex (HTTP actions) |
-| CRM | Close CRM |
+| Canonical CRM | InsulaCRM |
+| State + backend during migration | Convex |
+| Messaging during migration | Existing provider |
 | Property data | BatchData API |
 | Skip tracing | Tracerfy |
 | Alerts + reports | Slack |
@@ -130,28 +135,20 @@ The dispatcher that turns raw scanned properties into skip-trace jobs. Small but
 
 ---
 
-## Setup (to actually run these)
+## Setup
 
-1. Import a workflow JSON into your n8n instance (Workflows → Import from File).
-2. Replace the placeholders:
-   - `YOUR_CONVEX_DEPLOYMENT` with your Convex deployment name / URL
-   - `YOUR_API_TOKEN` / `YOUR_TRACERFY_TOKEN` with your Tracerfy token
-   - `YOUR_CLOSE_API_KEY` with your Close CRM key
-   - `YOUR_SLACK_WEBHOOK` / `YOUR_SLACK_TOKEN` with your Slack credentials
-3. Add the matching n8n credentials (credentials were stripped for publishing).
-4. Point the Convex HTTP endpoints at your own backend (schemas not included here).
-
----
-
-## About
-
-Built by **Rafiul Islam**. AI Voice Agent Systems Architect and Full-Stack Automation Engineer.
-
-- Portfolio: [rafiul-dev.vercel.app](https://rafiul-dev.vercel.app)
-- These 7 are a slice of 200+ production workflows across 15+ products. Full architecture walkthroughs available on request.
+1. Import the required workflow JSON into n8n.
+2. Configure the existing Convex, Tracerfy, BatchData, Slack, and messaging credentials as required by the workflows.
+3. Configure:
+   - `INSULA_CRM_BASE_URL`
+   - `INSULA_CRM_API_KEY`
+4. Import `00-insula-crm-lead-upsert-adapter.json`.
+5. Call the adapter from the lead-processing workflow with the normalized lead object.
+6. Store the returned `lead_id` / `property_id` in the staging state so later workflows can operate against InsulaCRM identity.
+7. Do not remove existing DNC/TCPA controls during the migration.
 
 ---
 
 ## License
 
-Shared for portfolio and reference. The Real Estate Acquisition product, brand, and backend (Convex schemas, CRM configuration, business logic) are proprietary.
+Shared for portfolio and reference. The original Real Estate Acquisition product, brand, and backend are proprietary.

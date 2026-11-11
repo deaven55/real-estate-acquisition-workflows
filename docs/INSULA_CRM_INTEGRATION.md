@@ -36,7 +36,7 @@ Endpoints used by acquisition:
 Every acquisition lead sent to InsulaCRM should include:
 
 - `external_id`: stable source identifier, preferably the source parcel ID
-- `external_source`: stable source name, for example `ghost_rider` or `batchdata`
+- `external_source`: stable source name, for example `ghost_rider` or `batchdata_weekly`
 
 The pair is tenant-scoped and idempotent in InsulaCRM.
 
@@ -97,12 +97,12 @@ Retries must be safe. Do not create a second seller/property record merely becau
 
 ## Acquisition workflow migration order
 
-1. `02-ghost-rider-crm-import.json` — seller lead/property ingestion.
-2. `04-skiptrace-results-router.json` — enriched contact data backfill.
-3. `03-seller-followup-engine.json` — follow-up reads/writes.
-4. `01-seller-response-handler.json` — inbound intent, DNC, and activities.
-5. `06-lead-cleanup-sms-dnc.json` — compliance/hygiene.
-6. `05-batchdata-weekly-staging.json` and `07-ghost-rider-skiptrace-dispatch.json` — preserve staging but attach Insula identity once a lead becomes CRM-eligible.
+1. `02-ghost-rider-crm-import.json` — **implemented**: seller lead/property ingestion.
+2. `04-skiptrace-results-router.json` — **implemented**: Tracerfy mobile/email/phoneless enrichment backfill.
+3. `03-seller-followup-engine.json` — **implemented**: outbound follow-up activity sync.
+4. `01-seller-response-handler.json` — **implemented**: inbound intent, DNC, and opt-out activity sync.
+5. `06-lead-cleanup-sms-dnc.json` — **implemented**: DNC state is synchronized before legacy Close deletion.
+6. `05-batchdata-weekly-staging.json` and `07-ghost-rider-skiptrace-dispatch.json` — staging/dispatch remain intentionally unchanged; Insula identity is established when records become CRM-eligible.
 
 ## Cutover criteria
 

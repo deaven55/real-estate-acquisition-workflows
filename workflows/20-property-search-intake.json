@@ -28,7 +28,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const input=$input.first().json.body||$input.first().json; const required=['state']; const missing=required.filter(k=>!input[k]); let state=String(input.state||'').trim().toUpperCase(); const aliases={'NORTH CAROLINA':'NC','SOUTH CAROLINA':'SC','NEW YORK':'NY','NEW JERSEY':'NJ','NEW MEXICO':'NM','NEW HAMPSHIRE':'NH','WEST VIRGINIA':'WV','WASHINGTON':'WA','DISTRICT OF COLUMBIA':'DC'}; state=aliases[state]||state; const criteria=Array.isArray(input.criteria)?input.criteria:[]; return [{json:{valid:missing.length===0&&/^[A-Z]{2}$/.test(state),errors:missing.length?missing:(/^[A-Z]{2}$/.test(state)?[]:['state']),state,county:String(input.county||'').trim(),city:String(input.city||'').trim(),zip:String(input.zip||'').trim(),criteria,property_type:input.property_type||null,limit:Math.min(25,Math.max(1,Number(input.limit||10))),search_notes:String(input.search_notes||'').trim(),request_id:String(input.request_id||('search-'+Date.now()))}}];"
+        "jsCode": "const input=$input.first().json.body||$input.first().json; const required=['state']; const missing=required.filter(k=>!input[k]); let state=String(input.state||'').trim().toUpperCase(); const aliases={'NORTH CAROLINA':'NC','SOUTH CAROLINA':'SC','NEW YORK':'NY','NEW JERSEY':'NJ','NEW MEXICO':'NM','NEW HAMPSHIRE':'NH','WEST VIRGINIA':'WV','WASHINGTON':'WA','DISTRICT OF COLUMBIA':'DC'}; state=aliases[state]||state; const rawCriteria=Array.isArray(input.criteria)?input.criteria:[]; const aliasesCriteria={'tax delinquent':'tax_delinquent','tax-delinquent':'tax_delinquent','vacant':'vacant','vacant property':'vacant','vacant land':'vacant_land','absentee':'absentee','absentee owner':'absentee','high equity':'high_equity','high-equity':'high_equity','probate':'probate','pre foreclosure':'pre_foreclosure','pre-foreclosure':'pre_foreclosure','foreclosure':'pre_foreclosure','fixer upper':'fixer_upper','fixer-upper':'fixer_upper','distressed':'distressed'}; const criteria=[...new Set(rawCriteria.map(v=>aliasesCriteria[String(v).trim().toLowerCase()]||String(v).trim().toLowerCase().replace(/\\s+/g,'_')).filter(Boolean))]; return [{json:{valid:missing.length===0&&/^[A-Z]{2}$/.test(state),errors:missing.length?missing:(/^[A-Z]{2}$/.test(state)?[]:['state']),state,county:String(input.county||'').trim(),city:String(input.city||'').trim(),zip:String(input.zip||'').trim(),criteria,property_type:input.property_type||null,limit:Math.min(25,Math.max(1,Number(input.limit||10))),search_notes:String(input.search_notes||'').trim(),request_id:String(input.request_id||('search-'+Date.now()))}}];"
       }
     },
     {
@@ -126,7 +126,58 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const ctx=$(\"Prepare Search Request\").first().json; const raw=$input.first().json; let content=raw.output_text??raw.choices?.[0]?.message?.content??raw.content??''; if(typeof content!=='string') content=JSON.stringify(content); content=content.replace(/^\\`\\`\\`(?:json)?\\\\s*/i,'').replace(/\\\\s*\\`\\`\\`$/,'').trim(); let parsed; try{parsed=JSON.parse(content);}catch(e){return [{json:{success:false,error:'Research provider returned non-JSON candidate data',raw:content,request_id:ctx.request_id}}];} const candidates=(Array.isArray(parsed.candidates)?parsed.candidates:[]).filter(c=>c&&c.owner_name&&c.property_address&&c.state&&(c.source_url||c.source_record_id)).slice(0,ctx.limit); return candidates.map((c,i)=>({json:{request_id:ctx.request_id,candidate_index:i+1,...c,state:String(c.state).toUpperCase(),county:c.county||ctx.county,city:c.city||ctx.city,zip:c.zip||ctx.zip,external_id:c.source_record_id||('property:'+String(c.property_address).toLowerCase().replace(/[^a-z0-9]+/g,'-')),external_source:'public_record_search'}}));"
+        "jsCode": "const ctx=$(\"Prepare Search Request\").first().json; const raw=$input.first().json; let content=raw.output_text??raw.choices?.[0]?.message?.content??raw.content??''; if(typeof content!=='string') content=JSON.stringify(content); content=content.replace(/^\\`\\`\\`(?:json)?\\s*/i,'').replace(/\\s*\\`\\`\\`$/,'').trim(); let parsed; try{parsed=JSON.parse(content);}catch(e){return [{json:{success:false,error:'Research provider returned non-JSON candidate data',raw:content,request_id:ctx.request_id,no_results:false,parse_error:true}}];} const candidates=(Array.isArray(parsed.candidates)?parsed.candidates:[]).filter(c=>c&&c.owner_name&&c.property_address&&c.state&&(c.source_url||c.source_record_id)).slice(0,ctx.limit); if(candidates.length===0){return [{json:{success:true,no_results:true,request_id:ctx.request_id,criteria:ctx.criteria,jurisdiction:{state:ctx.state,county:ctx.county,city:ctx.city,zip:ctx.zip},limitations:Array.isArray(parsed.limitations)?parsed.limitations:[],search_notes:parsed.search_notes||ctx.search_notes,message:'No qualifying candidate properties were found for the requested jurisdiction and criteria.'}}];} return candidates.map((c,i)=>({json:{request_id:ctx.request_id,candidate_index:i+1,...c,state:String(c.state).toUpperCase(),county:c.county||ctx.county,city:c.city||ctx.city,zip:c.zip||ctx.zip,external_id:c.source_record_id||('property:'+String(c.property_address).toLowerCase().replace(/[^a-z0-9]+/g,'-')),external_source:'public_record_search',no_results:false}}));"
+      }
+    },
+    {
+      "id": "ifCandidates",
+      "name": "IF Candidates Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1160,
+        -80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "leftValue": ""
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hasCandidates",
+              "leftValue": "={{ $json.no_results }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "noResults",
+      "name": "Respond No Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1400,
+        120
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success:true,request_id:$json.request_id,results:[],message:$json.message,criteria:$json.criteria,jurisdiction:$json.jurisdiction,limitations:$json.limitations||[],search_notes:$json.search_notes||''}) }}",
+        "options": {
+          "responseCode": 200
+        }
       }
     },
     {
@@ -371,7 +422,7 @@
       "main": [
         [
           {
-            "node": "Candidate Items",
+            "node": "IF Candidates Found",
             "type": "main",
             "index": 0
           }
@@ -460,6 +511,24 @@
         [
           {
             "node": "Respond Search Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Candidates Found": {
+      "main": [
+        [
+          {
+            "node": "Candidate Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Results",
             "type": "main",
             "index": 0
           }

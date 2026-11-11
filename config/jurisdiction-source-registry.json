@@ -26,13 +26,15 @@
           "name": "NC OneMap Parcel Data",
           "type": "state_parcel",
           "url": "https://www.nconemap.gov/pages/parcels",
-          "machine_readable": true
+          "machine_readable": true,
+          "commercial_live_query_allowed": true
         },
         {
           "name": "NC OneMap ArcGIS Services",
           "type": "state_parcel",
           "url": "https://services.nconemap.gov/secure/rest/services",
-          "machine_readable": true
+          "machine_readable": true,
+          "commercial_live_query_allowed": true
         }
       ],
       "counties": {
@@ -45,13 +47,8 @@
               "name": "Catawba County GIS",
               "type": "county_gis",
               "url": "https://www.catawbacountync.gov/county-services/information-technology/gis/",
-              "machine_readable": false
-            },
-            {
-              "name": "Catawba County GIS/Parcel Services",
-              "type": "county_gis",
-              "url": "https://www.catawbacountync.gov/county-services/information-technology/gis/",
-              "machine_readable": true
+              "machine_readable": true,
+              "commercial_live_query_allowed": true
             }
           ]
         },
@@ -63,8 +60,9 @@
             {
               "name": "Caldwell County GIS",
               "type": "county_gis",
-              "url": "https://www.caldwellcountync.org/departments/gis",
-              "machine_readable": false
+              "url": "https://gis.caldwellcountync.org/",
+              "machine_readable": true,
+              "commercial_live_query_allowed": true
             }
           ]
         },
@@ -77,7 +75,9 @@
               "name": "Mecklenburg County GIS",
               "type": "county_gis",
               "url": "https://gis.mecknc.gov/",
-              "machine_readable": true
+              "machine_readable": true,
+              "commercial_live_query_allowed": false,
+              "commercial_use_note": "County states live data services may not be relied on, integrated, or continuously consumed by commercial applications; commercial users should download and host copies."
             }
           ]
         },
@@ -90,7 +90,8 @@
               "name": "Wake County iMAPS",
               "type": "county_gis",
               "url": "https://maps.raleighnc.gov/iMAPS/",
-              "machine_readable": true
+              "machine_readable": true,
+              "commercial_live_query_allowed": true
             }
           ]
         },
@@ -102,8 +103,9 @@
             {
               "name": "New Hanover County GIS",
               "type": "county_gis",
-              "url": "https://www.nhcgov.com/government/departments/gis",
-              "machine_readable": false
+              "url": "https://finance.nhcgov.com/844/GIS-Maps-Data",
+              "machine_readable": true,
+              "commercial_live_query_allowed": true
             }
           ]
         }

@@ -116,6 +116,39 @@
       }
     },
     {
+      "id": "sourceDiscover",
+      "name": "Discover Official Jurisdiction Sources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        940,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PERPLEXITY_API_URL || 'https://api.perplexity.ai/chat/completions' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.PERPLEXITY_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({model:$env.PERPLEXITY_PROPERTY_MODEL || 'sonar',messages:[{role:'system',content:'You are a public-record source discovery agent for real estate research. Identify official government sources for the requested state/county/city. Prefer county assessor/tax property search, county GIS/parcel data, Register of Deeds/land records, delinquent tax records, probate/estate records, foreclosure/court records, permits/code enforcement, and official open-data portals. Do not return commercial lead vendors as primary sources. Return JSON only: {sources:[{name,type,evidence_type,url,scope,notes}],limitations:[]}. URLs must be official government domains or official county/state GIS services. If a source type is unavailable, omit it rather than inventing a URL.'},{role:'user',content:'Jurisdiction: '+$json.state+' '+($json.county||'')+' '+($json.city||'')+' '+($json.zip||'')+'\\\\nRequested lead criteria: '+JSON.stringify($json.criteria)+'\\\\nProperty type: '+($json.property_type||'any')+'\\\\nFind official public-record sources that can support these criteria.'}],temperature:0.1}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
       "id": "sourceParse",
       "name": "Parse Jurisdiction Sources",
       "type": "n8n-nodes-base.code",

@@ -28,7 +28,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const body=$input.first().json.body||$input.first().json; const sources=Array.isArray(body.official_sources)?body.official_sources:[]; const machine=sources.filter(s=>s&&typeof s.url==='string'&&/(FeatureServer|MapServer)/i.test(s.url)); return [{json:{request_id:String(body.request_id||('gis-'+Date.now())),state:String(body.state||'').toUpperCase(),county:String(body.county||''),city:String(body.city||''),zip:String(body.zip||''),criteria:Array.isArray(body.criteria)?body.criteria:[],limit:Math.min(100,Math.max(1,Number(body.limit||25))),sources:machine.slice(0,10)}}];"
+        "jsCode": "const body=$input.first().json.body||$input.first().json; const sources=Array.isArray(body.official_sources)?body.official_sources:[]; const machine=sources.filter(s=>s&&typeof s.url==='string'&&/(FeatureServer|MapServer)/i.test(s.url)); return [{json:{request_id:String(body.request_id||('gis-'+Date.now())),state:String(body.state||'').toUpperCase(),county:String(body.county||'').trim(),city:String(body.city||'').trim(),zip:String(body.zip||'').trim(),criteria:Array.isArray(body.criteria)?body.criteria:[],limit:Math.min(100,Math.max(1,Number(body.limit||25))),sources:machine.slice(0,10)}}];"
       }
     },
     {
@@ -95,8 +95,8 @@
       }
     },
     {
-      "id": "query",
-      "name": "Query ArcGIS Source",
+      "id": "metadata",
+      "name": "Read ArcGIS Layer Metadata",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
@@ -105,13 +105,53 @@
       ],
       "parameters": {
         "method": "GET",
-        "url": "={{ (() => { const u=String($json.source.url).replace(/\\\\/$/,''); if(/\\\\/(?:FeatureServer|MapServer)\\\\/\\\\d+$/i.test(u)) return u+'/query'; if(/\\\\/(?:FeatureServer|MapServer)$/i.test(u)) return u+'/0/query'; return u+'/query'; })() }}",
+        "url": "={{ (() => { const u=String($json.source.url).replace(/\\\\/$/,''); if(/\\\\/(?:FeatureServer|MapServer)\\\\/\\\\d+$/i.test(u)) return u; if(/\\\\/(?:FeatureServer|MapServer)$/i.test(u)) return u+'/0'; return u; })() }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "f",
+              "value": "json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "build",
+      "name": "Build Safe ArcGIS Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const source=$('Split GIS Sources').item.json.source; const base=$('Split GIS Sources').item.json; const meta=$json||{}; const fields=Array.isArray(meta.fields)?meta.fields:[]; const lower=fields.map(f=>String(f.name||'').toLowerCase()); const find=(aliases)=>{for(const a of aliases){const i=lower.indexOf(String(a).toLowerCase());if(i>=0)return fields[i];}return null;}; const esc=v=>String(v).replace(/'/g,\"''\"); const clauses=[]; const applied=[]; const state=find(['SITUSSTATE','SITE_STATE','STATE','STATE_CODE','STATE_NAME']); const county=find(['COUNTY','COUNTY_NAME','CNTY_NAME','SITUSCOUNTY']); const city=find(['SITUSCITY','SITE_CITY','CITY','CITY_NAME','SITUS_CITY']); const zip=find(['SZIP','SITEZIP','SITE_ZIP','ZIP','ZIPCODE','ZIP_CODE']); const add=(f,v,label)=>{if(f&&v){clauses.push(f.name+\" = '\"+esc(v)+\"'\");applied.push(label+':'+f.name);}}; add(state,base.state,'state'); add(county,base.county,'county'); add(city,base.city,'city'); if(zip&&base.zip){const numeric=/int|double|float|decimal|number/i.test(String(zip.type||'')); clauses.push(numeric?(zip.name+\" = \"+(Number(base.zip)||0)):(zip.name+\" = '\"+esc(base.zip)+\"'\")); applied.push('zip:'+zip.name);} const delinquent=find(['DELINQUENT_TAX','DELINQ_TAX','DELINQUENT_AMOUNT','TAX_DELINQUENT','DELINQ_AMT']); if(delinquent&&base.criteria.includes('tax_delinquent')&&/int|double|float|decimal|number/i.test(String(delinquent.type||''))){clauses.push(delinquent.name+\" > 0\");applied.push('tax_delinquent:'+delinquent.name);} const objectId=String(meta.objectIdField||'OBJECTID'); const maxRaw=Number(meta.maxRecordCount||meta.standardMaxRecordCountNoGeometry||1000); const pageSize=Math.max(1,Math.min(base.limit,Number.isFinite(maxRaw)&&maxRaw>0?maxRaw:100)); const supportsPagination=meta.advancedQueryCapabilities?.supportsPagination!==false; const pageCount=supportsPagination?Math.min(10,Math.ceil(base.limit/pageSize)):1; return Array.from({length:pageCount},(_,i)=>({json:{...base,metadata:meta,source,layer_url:meta.url||source.url,where:clauses.length?clauses.join(' AND '):'1=1',query_filters_applied:applied,object_id_field:objectId,page_index:i,result_offset:i*pageSize,result_record_count:Math.min(pageSize,base.limit-i*pageSize),supports_pagination:supportsPagination,pagination_limit_reached:!supportsPagination&&base.limit>pageSize}}));"
+      }
+    },
+    {
+      "id": "query",
+      "name": "Query ArcGIS Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1420,
+        -80
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.layer_url.replace(/\\\\/$/,'') + '/query' }}",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
             {
               "name": "where",
-              "value": "={{ '1=1' }}"
+              "value": "={{ $json.where }}"
             },
             {
               "name": "outFields",
@@ -127,7 +167,15 @@
             },
             {
               "name": "resultRecordCount",
-              "value": "={{ $json.limit }}"
+              "value": "={{ $json.result_record_count }}"
+            },
+            {
+              "name": "resultOffset",
+              "value": "={{ $json.result_offset }}"
+            },
+            {
+              "name": "orderByFields",
+              "value": "={{ $json.object_id_field + ' ASC' }}"
             }
           ]
         },
@@ -142,25 +190,25 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1180,
+        1660,
         -80
       ],
       "parameters": {
-        "jsCode": "const src=$('Split GIS Sources').item.json.source; const base=$('Split GIS Sources').item.json; const features=Array.isArray($json.features)?$json.features:[]; const records=features.map((f,i)=>{const a=f.attributes||f; const pick=(keys)=>{for(const k of keys){if(a[k]!==undefined&&a[k]!==null&&String(a[k]).trim()!=='') return a[k];}return null;}; return {source_url:src.url,source_name:src.name||null,source_type:src.type||'arcgis',source_record_id:String(pick(['PARNO','parno','PARCEL_ID','parcel_id','PIN','pin','OBJECTID','objectid'])||('feature-'+i)),owner_name:pick(['OWNNAME','ownname','OWNER','owner','OWNER_NAME','owner_name']),property_address:pick(['SITUSADDR','situsaddr','SITEADDR','siteaddr','ADDRESS','address','SITE_ADDRESS','site_address']),mailing_address:pick(['MAILADD','mailadd','MAILADDR','mailaddr','MAILING_ADDRESS','mailing_address']),county:pick(['COUNTY','county'])||base.county||null,city:pick(['SITUSCITY','situscity','CITY','city'])||base.city||null,state:pick(['SITUSSTATE','situsstate','STATE','state'])||base.state||null,zip:pick(['SZIP','szip','ZIP','zip','ZIPCODE','zipcode']),parcel_id:pick(['PARNO','parno','PARCEL_ID','parcel_id','PIN','pin']),assessed_value:pick(['PARVAL','parval','ASSESSED','assessed','ASSESSED_VALUE','assessed_value']),land_value:pick(['LANDVAL','landval','LAND_VALUE','land_value']),building_value:pick(['IMPROVVAL','improvval','BUILDING_VALUE','building_value']),acreage:pick(['ACREAGE','acreage','ACRES','acres']),property_type:pick(['PROP_TYPE','prop_type','PROPERTY_TYPE','property_type','LANDUSE','landuse']),raw_attributes:a};}); return [{json:{success:true,request_id:base.request_id,source_url:src.url,records,record_count:records.length,limitations:records.length?[]:['ArcGIS source returned no records or an unsupported layer response.']}}];"
+        "jsCode": "const base=$('Build Safe ArcGIS Queries').item.json; const source=base.source; const features=Array.isArray($json.features)?$json.features:[]; const pick=(a,keys)=>{for(const k of keys){if(a[k]!==undefined&&a[k]!==null&&String(a[k]).trim()!=='')return a[k];}return null;}; const records=features.map((f,i)=>{const a=f.attributes||f; return {source_url:source.url,source_name:source.name||null,source_type:source.type||'arcgis',source_record_id:String(pick(a,[base.object_id_field,'PARNO','parno','PARCEL_ID','parcel_id','PIN','pin','OBJECTID','objectid'])||('feature-'+base.result_offset+i)),owner_name:pick(a,['OWNNAME','ownname','OWNER','owner','OWNER_NAME','owner_name']),property_address:pick(a,['SITUSADDR','situsaddr','SITEADDR','siteaddr','ADDRESS','address','SITE_ADDRESS','site_address']),mailing_address:pick(a,['MAILADD','mailadd','MAILADDR','mailaddr','MAILING_ADDRESS','mailing_address']),county:pick(a,['COUNTY','county','COUNTY_NAME','county_name'])||base.county||null,city:pick(a,['SITUSCITY','situscity','CITY','city','CITY_NAME','city_name'])||base.city||null,state:pick(a,['SITUSSTATE','situsstate','STATE','state','STATE_CODE','state_code'])||base.state||null,zip:pick(a,['SZIP','szip','ZIP','zip','ZIPCODE','zipcode','ZIP_CODE']),parcel_id:pick(a,['PARNO','parno','PARCEL_ID','parcel_id','PIN','pin']),assessed_value:pick(a,['PARVAL','parval','ASSESSED','assessed','ASSESSED_VALUE','assessed_value']),land_value:pick(a,['LANDVAL','landval','LAND_VALUE','land_value']),building_value:pick(a,['IMPROVVAL','improvval','BUILDING_VALUE','building_value','IMPROVEMENT_VALUE','improvement_value']),acreage:pick(a,['ACREAGE','acreage','ACRES','acres']),property_type:pick(a,['PROP_TYPE','prop_type','PROPERTY_TYPE','property_type','LANDUSE','landuse']),raw_attributes:a}; }); return [{json:{success:true,request_id:base.request_id,source_url:source.url,records,record_count:records.length,page_index:base.page_index,result_offset:base.result_offset,query_filters_applied:base.query_filters_applied,limitations:base.pagination_limit_reached?['Layer does not advertise pagination support; only the first query page was collected.']:[]}}];"
       }
     },
     {
       "id": "merge",
-      "name": "Merge GIS Results",
+      "name": "Merge And Dedupe GIS Results",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1420,
+        1900,
         -80
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const all=$input.all(); const records=all.flatMap(i=>Array.isArray(i.json.records)?i.json.records:[]); const meta=all[0]?.json||{}; return [{json:{success:true,request_id:meta.request_id,records:records.slice(0,meta.limit||100),record_count:records.length,sources_checked:all.length}}];"
+        "jsCode": "const all=$input.all(); const meta=all[0]?.json||{}; const raw=all.flatMap(i=>Array.isArray(i.json.records)?i.json.records:[]); const seen=new Set(); const records=[]; for(const r of raw){const key=[r.parcel_id,r.source_record_id,r.property_address,r.owner_name].map(v=>String(v||'').trim().toLowerCase()).join('|'); if(seen.has(key))continue; seen.add(key); records.push(r);} return [{json:{success:true,request_id:meta.request_id,records:records.slice(0,meta.limit||100),record_count:records.length,sources_checked:new Set(all.map(i=>i.json.source_url).filter(Boolean)).size,pages_checked:all.length,query_filters_applied:[...new Set(all.flatMap(i=>i.json.query_filters_applied||[]))],limitations:[...new Set(all.flatMap(i=>i.json.limitations||[]))]}}];"
       }
     },
     {
@@ -169,7 +217,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1660,
+        2140,
         -80
       ],
       "parameters": {
@@ -226,14 +274,36 @@
       "main": [
         [
           {
-            "node": "Query ArcGIS Source",
+            "node": "Read ArcGIS Layer Metadata",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Query ArcGIS Source": {
+    "Read ArcGIS Layer Metadata": {
+      "main": [
+        [
+          {
+            "node": "Build Safe ArcGIS Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Safe ArcGIS Queries": {
+      "main": [
+        [
+          {
+            "node": "Query ArcGIS Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query ArcGIS Page": {
       "main": [
         [
           {
@@ -248,14 +318,14 @@
       "main": [
         [
           {
-            "node": "Merge GIS Results",
+            "node": "Merge And Dedupe GIS Results",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Merge GIS Results": {
+    "Merge And Dedupe GIS Results": {
       "main": [
         [
           {

@@ -1,9 +1,9 @@
 # Real Estate Acquisition. Wholesaling Seller-Side Automation (n8n)
 
-### 7 production n8n workflows. 341 nodes. The operations backbone of a real estate wholesaling business, from raw property data to a booked seller conversation.
+### 7 production n8n workflows. 356 nodes. The operations backbone of a real estate wholesaling business, from raw property data to a booked seller conversation.
 
 [![n8n](https://img.shields.io/badge/n8n-workflows-FF6D5A?style=for-the-badge&logo=n8n&logoColor=white)](https://n8n.io)
-[![Nodes](https://img.shields.io/badge/total_nodes-341-6366F1?style=for-the-badge)](#)
+[![Nodes](https://img.shields.io/badge/total_nodes-356-6366F1?style=for-the-badge)](#)
 [![Workflows](https://img.shields.io/badge/workflows-7-10B981?style=for-the-badge)](#)
 [![Status](https://img.shields.io/badge/status-production-success?style=for-the-badge)](#)
 
@@ -79,26 +79,26 @@ See `docs/INSULA_CRM_INTEGRATION.md` for the complete field mapping, migration o
 
 ## The Workflows
 
-### 01. Seller Response Handler — 136 nodes
+### 01. Seller Response Handler — 139 nodes
 `workflows/01-seller-response-handler.json`
 
 The largest workflow in the stack. Classifies every inbound seller SMS reply into 20+ distinct intents (motivated, price question, not selling, wrong number, deceased owner, already sold, lien on chain, opt-out, and more) and routes each to its own response and follow-up path.
 
 **What it does:** dedup check, reply logging to Convex, intent classification, hot-lead Slack alert, DNC registration on opt-out, follow-up scheduling. Handles the messy reality that sellers never reply in clean categories.
 
-### 02. Ghost Rider CRM Import (Lead Processor) — 40 nodes
+### 02. Ghost Rider CRM Import (Lead Processor) — 41 nodes
 `workflows/02-ghost-rider-crm-import.json`
 
 Weekly job that takes skip-traced leads through DNC, address deduplication, CRM duplicate protection, TCPA checks, first-message preparation, SMS delivery, and follow-up scheduling.
 
 **Migration note:** this workflow is the first major cutover target. During migration, Close CRM remains the existing messaging dependency while InsulaCRM becomes the canonical seller/property system.
 
-### 03. Seller Follow-Up Engine (Enhanced) — 44 nodes
+### 03. Seller Follow-Up Engine (Enhanced) — 46 nodes
 `workflows/03-seller-followup-engine.json`
 
 The multi-day drip. Pulls due follow-ups from a Convex queue, verifies the lead still exists and is in a sendable status, builds the message, sends SMS, and schedules the next touch.
 
-### 04. Tracerfy Results Router — 35 nodes
+### 04. Tracerfy Results Router — 36 nodes
 `workflows/04-skiptrace-results-router.json`
 
 A webhook receiver that catches skip-trace results and routes them by source product, then stages phone/email/phoneless results.
@@ -108,7 +108,7 @@ A webhook receiver that catches skip-trace results and routes them by source pro
 
 The top of the funnel. Scrapes distressed-property records from BatchData across configurable tiers, dedupes against staging, and uploads new leads to Tracerfy for skip tracing.
 
-### 06. Lead Cleanup - SMS Errors & DNC — 49 nodes
+### 06. Lead Cleanup - SMS Errors & DNC — 50 nodes
 `workflows/06-lead-cleanup-sms-dnc.json`
 
 Continuous list hygiene for bounced numbers and opt-outs.

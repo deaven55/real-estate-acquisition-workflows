@@ -198,6 +198,20 @@
       }
     },
     {
+      "id": "signals",
+      "name": "Apply Criterion Evidence Signals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items=$input.all();\nconst text=v=>String(v??'').trim();\nconst norm=v=>text(v).toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();\nconst first=(o,keys)=>{for(const k of keys){if(o[k]!==undefined&&o[k]!==null&&text(o[k])!=='')return o[k];}return null;};\nconst truthy=v=>{const s=norm(v);return v!==null&&v!==undefined&&s!==''&&!['0','N','NO','FALSE','NONE','NULL'].includes(s);};\nconst num=v=>{const n=Number(String(v??'').replace(/[$,]/g,''));return Number.isFinite(n)?n:null;};\nconst addressKey=v=>norm(v).replace(/\\b(ROAD|RD|STREET|ST|AVENUE|AVE|DRIVE|DR|LANE|LN|COURT|CT|CIRCLE|CIR|HIGHWAY|HWY|BOULEVARD|BLVD|PARKWAY|PKWY)\\b/g,'').replace(/\\s+/g,'');\nconst output=[];\nfor(const item of items){\n  const r=item.json||{}; const a=r.raw_attributes||{}; const criteria=Array.isArray(r.criteria)?r.criteria:[];\n  const signals={}; const evidence=[]; const missing=[];\n  const structureCount=num(r.structure_count);\n  const structureIndicator=norm(r.structure_indicator);\n  const propertyType=norm(r.property_type);\n  const hasExplicitNoStructure=structureCount===0 || ['N','NO','NONE','0','VACANT'].includes(structureIndicator);\n  const hasVacantUse=/\\bVACANT\\b/.test(propertyType)||/\\bVACANT LAND\\b/.test(propertyType);\n  const site=addressKey(r.property_address); const mail=addressKey(r.mailing_address);\n  const debt=first(a,['OUTSTANDING_DEBT','OUTSTANDING_LOAN','MORTGAGE_BALANCE','DEBT_AMOUNT','LIEN_AMOUNT','DEBT']);\n  const value=num(first(a,['PARVAL','parval','ASSESSED_VALUE','assessed_value','MARKET_VALUE','market_value']));\n  const explicitDebt=num(debt);\n  for(const criterion of criteria){\n    if(criterion==='vacant'){\n      if(hasExplicitNoStructure||hasVacantUse) signals.vacant={status:'supported',confidence:hasVacantUse?'high':'medium',evidence:[hasVacantUse?'explicit vacant land/use description':'explicit no-structure indicator']};\n      else signals.vacant={status:'needs_evidence',confidence:0,evidence:[],missing_fields:['structure_indicator_or_count','explicit_property_use']};\n    }\n    else if(criterion==='vacant_land'){\n      if(/\\bVACANT LAND\\b/.test(propertyType)||(/\\bLAND\\b/.test(propertyType)&&hasExplicitNoStructure)) signals.vacant_land={status:'supported',confidence:0.9,evidence:['explicit land/vacant-land property use','explicit no-structure indicator'].filter(Boolean)};\n      else if(hasExplicitNoStructure&&num(r.acreage)!==null) signals.vacant_land={status:'candidate_signal',confidence:0.6,evidence:['explicit no-structure indicator','explicit acreage'],missing_fields:['explicit_land_use_or_zoning']};\n      else signals.vacant_land={status:'needs_evidence',confidence:0,evidence:[],missing_fields:['explicit_land_use_or_zoning','structure_indicator_or_count']};\n    }\n    else if(criterion==='absentee'){\n      if(site&&mail&&site!==mail) signals.absentee={status:'supported',confidence:0.9,evidence:['site address differs from mailing address']};\n      else signals.absentee={status:'needs_evidence',confidence:0,evidence:[],missing_fields:['site_address','mailing_address']};\n    }\n    else if(criterion==='high_equity'){\n      if(explicitDebt!==null&&value!==null&&value>explicitDebt) signals.high_equity={status:'supported',confidence:0.8,evidence:['explicit property value','explicit outstanding debt'],equity_proxy:value-explicitDebt};\n      else signals.high_equity={status:'needs_evidence',confidence:0,evidence:[],missing_fields:['outstanding_debt'],note:'Property value alone does not establish equity.'};\n    }\n    else if(criterion==='probate'){\n      const k=Object.keys(a).find(k=>/probate|estate|decedent|heir/i.test(k)&&truthy(a[k]));\n      signals.probate=k?{status:'supported',confidence:0.85,evidence:['explicit probate/estate field: '+k]}:{status:'needs_source',confidence:0,evidence:[],missing_source_types:['probate_record','court_record']};\n    }\n    else if(criterion==='pre_foreclosure'){\n      const k=Object.keys(a).find(k=>/foreclosure|lis.?pendens|default|auction/i.test(k)&&truthy(a[k]));\n      signals.pre_foreclosure=k?{status:'supported',confidence:0.85,evidence:['explicit foreclosure/default field: '+k]}:{status:'needs_source',confidence:0,evidence:[],missing_source_types:['foreclosure_record','court_record']};\n    }\n    else if(criterion==='fixer_upper'){\n      const k=Object.keys(a).find(k=>/condition|code.?enforcement|permit|violation|repair|unsafe/i.test(k)&&truthy(a[k]));\n      signals.fixer_upper=k?{status:'supported',confidence:0.8,evidence:['explicit condition/permit/code signal: '+k]}:{status:'needs_source',confidence:0,evidence:[],missing_source_types:['permit_record','code_enforcement'],missing_fields:['condition_signal']};\n    }\n    else if(criterion==='tax_delinquent'){\n      const k=Object.keys(a).find(k=>/delinq|past.?due|tax.?due|tax.?status/i.test(k)&&truthy(a[k]));\n      const amt=num(first(a,['DELINQUENT_TAX','DELINQ_TAX','DELINQUENT_AMOUNT','TAX_DELINQUENT','DELINQ_AMT']));\n      signals.tax_delinquent=(k||amt>0)?{status:'supported',confidence:0.9,evidence:[k?'explicit tax-delinquency field: '+k:'explicit delinquent tax amount'],delinquent_tax_amount:amt}:{status:'needs_source',confidence:0,evidence:[],missing_source_types:['tax_delinquency','tax_record']};\n    }\n    else if(criterion==='distressed'){\n      const keys=Object.keys(a).filter(k=>/delinq|foreclosure|lis.?pendens|code.?enforcement|violation|unsafe|permit|distress|default/i.test(k)&&truthy(a[k]));\n      signals.distressed=keys.length?{status:'supported',confidence:0.8,evidence:keys.slice(0,5).map(k=>'explicit distress field: '+k)}:{status:'needs_source',confidence:0,evidence:[],missing_source_types:['tax_delinquency','foreclosure_record','permit_record','code_enforcement']};\n    }\n    else signals[criterion]={status:'needs_evidence',confidence:0,evidence:[],missing_fields:['criterion_specific_source']};\n  }\n  for(const [criterion,s] of Object.entries(signals)){ if(Array.isArray(s.evidence)) for(const e of s.evidence) evidence.push({criterion,status:s.status,detail:e}); if(Array.isArray(s.missing_fields)) missing.push(...s.missing_fields.map(field=>({criterion,field}))); if(Array.isArray(s.missing_source_types)) missing.push(...s.missing_source_types.map(source_type=>({criterion,source_type}))); }\n  const supported=Object.values(signals).filter(s=>s.status==='supported').length;\n  output.push({json:{...r,criterion_signals:signals,criterion_evidence:evidence,criterion_missing_fields:missing,criterion_match_count:supported,criterion_signal_version:'v1'}});\n}\nreturn output;"
+      }
+    },
+    {
       "id": "merge",
       "name": "Merge And Dedupe GIS Results",
       "type": "n8n-nodes-base.code",
@@ -318,7 +332,7 @@
       "main": [
         [
           {
-            "node": "Merge And Dedupe GIS Results",
+            "node": "Apply Criterion Evidence Signals",
             "type": "main",
             "index": 0
           }
@@ -330,6 +344,17 @@
         [
           {
             "node": "Respond GIS Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Criterion Evidence Signals": {
+      "main": [
+        [
+          {
+            "node": "Merge And Dedupe GIS Results",
             "type": "main",
             "index": 0
           }

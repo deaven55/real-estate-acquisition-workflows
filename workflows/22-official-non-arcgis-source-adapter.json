@@ -1,0 +1,175 @@
+{
+  "name": "WholeStack WF-022: Official Non-ArcGIS Source Adapter",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-official-non-arcgis-source-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare Source Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b=$input.first().json.body||$input.first().json; const sources=Array.isArray(b.sources)?b.sources:[]; const state=String(b.state||'').trim().toUpperCase(); const county=String(b.county||'').trim(); const limit=Math.min(100,Math.max(1,Number(b.limit||25))); const allowed=new Set(['rest_json','json_api','csv_download','open_data','official_download']); const requests=sources.filter(s=>s&&s.url&&allowed.has(String(s.type||'').toLowerCase())&&s.commercial_live_query_allowed!==false).slice(0,20).map((s,i)=>({source_index:i,source:s,state,county,limit,request_id:String(b.request_id||'nonarc-'+Date.now())})); return [{json:{request_id:String(b.request_id||'nonarc-'+Date.now()),state,county,criteria:Array.isArray(b.criteria)?b.criteria:[],limit,requests,skipped_sources:sources.filter(s=>s&&s.commercial_live_query_allowed===false).map(s=>({name:s.name,url:s.url,reason:s.commercial_use_note||'commercial live query disabled'}))}}];"
+      }
+    },
+    {
+      "id": "split",
+      "name": "Split Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const x=$input.first().json; return (x.requests||[]).map(r=>({json:{...r,request_id:x.request_id,criteria:x.criteria,skipped_sources:x.skipped_sources}}));"
+      }
+    },
+    {
+      "id": "request",
+      "name": "Fetch Official Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.source.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json,text/csv,*/*"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        },
+        "response": {
+          "response": {
+            "neverError": true,
+            "responseFormat": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "normalize",
+      "name": "Normalize Source Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta=$('Split Sources').item.json; const raw=$json; const status=Number(raw.statusCode||200); let body=raw.body??raw.data??raw; if(typeof body!=='string') body=JSON.stringify(body); let parsed=null; let parseError=null; try{parsed=JSON.parse(body);}catch(e){parseError=e.message;} const contentType=String(raw.headers?.['content-type']||raw.headers?.['Content-Type']||'').toLowerCase(); let records=[]; if(parsed){records=Array.isArray(parsed)?parsed:(Array.isArray(parsed.records)?parsed.records:(Array.isArray(parsed.features)?parsed.features.map(f=>f.attributes||f):(Array.isArray(parsed.data)?parsed.data:[])));} else if(contentType.includes('csv')||/[,\\n]/.test(body)){const lines=body.split(/\\r?\\n/).filter(Boolean); if(lines.length>1){const headers=lines[0].split(',').map(h=>h.trim().replace(/^\"|\"$/g,'')); records=lines.slice(1).map(line=>{const vals=line.split(','); const o={}; headers.forEach((h,i)=>o[h]=(vals[i]||'').trim().replace(/^\"|\"$/g,'')); return o;});}} const normalize=(r)=>{const a=r.attributes&&typeof r.attributes==='object'?r.attributes:r; const pick=(keys)=>{for(const k of keys){if(a[k]!==undefined&&a[k]!==null&&String(a[k]).trim()!=='') return a[k];} return null;}; return {source_url:meta.source.url,source_name:meta.source.name||meta.source.url,source_type:meta.source.type,source_record_id:String(pick(['parcel_id','parcelid','parcel','pin','pid','objectid','OBJECTID','record_id','id'])||''),owner_name:pick(['owner_name','owner','ownname','ownername','taxpayer','taxpayer_name']),property_address:pick(['property_address','site_address','situs_address','address','siteadd','situs']),mailing_address:pick(['mailing_address','mail_address','mailadd','mailing']),county:pick(['county','county_name','cntyname'])||meta.county||null,state:pick(['state','state_code','sstate'])||meta.state||null,zip:pick(['zip','zipcode','zip_code','szip']),parcel_id:pick(['parcel_id','parcelid','parcel','pin','pid','nparno']),assessed_value:pick(['assessed_value','assessed','assessedval','parval']),land_value:pick(['land_value','landval']),building_value:pick(['building_value','improvval','improvement_value']),acreage:pick(['acreage','acres','gisacres']),property_type:pick(['property_type','use','use_code','parusecode','parusedesc']),tax_status:pick(['tax_status','taxstatus']),delinquent_tax_amount:pick(['delinquent_tax_amount','delinquent_tax','tax_delinquent_amount']),source_observed_at:new Date().toISOString(),raw_attributes:a};}; const normalized=records.slice(0,meta.limit).map(normalize).filter(r=>r.owner_name||r.property_address||r.parcel_id); return [{json:{request_id:meta.request_id,source:meta.source,success:status>=200&&status<300,record_count:normalized.length,records:normalized,limitations:[...(status>=400?['Source returned HTTP '+status+'.']:[]),...(parseError&&normalized.length===0?['Response was not parsed as JSON/CSV: '+parseError]:[])]}}];"
+      }
+    },
+    {
+      "id": "respond",
+      "name": "Respond Adapter Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success:true,request_id:$('Prepare Source Requests').first().json.request_id,source_results:$input.all().map(i=>i.json),skipped_sources:$('Prepare Source Requests').first().json.skipped_sources||[],policy:'official non-ArcGIS sources only; restricted live sources are not queried'}) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare Source Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Source Requests": {
+      "main": [
+        [
+          {
+            "node": "Split Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Sources": {
+      "main": [
+        [
+          {
+            "node": "Fetch Official Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Official Source": {
+      "main": [
+        [
+          {
+            "node": "Normalize Source Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Source Records": {
+      "main": [
+        [
+          {
+            "node": "Respond Adapter Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

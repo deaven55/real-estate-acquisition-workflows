@@ -179,7 +179,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const base=$('Build Criteria Source Strategy').first().json; const gis=$('Query Official GIS Adapter').first().json; const non=$('Query Official Non-ArcGIS Adapter').first().json; const crit=$('Query Criterion Evidence Adapter').first().json; const nonResults=Array.isArray(non.source_results)?non.source_results:[]; const nonRecords=nonResults.flatMap(r=>Array.isArray(r.records)?r.records:[]); const critResults=Array.isArray(crit.criterion_results)?crit.criterion_results:[]; const critRecords=critResults.flatMap(r=>Array.isArray(r.records)?r.records:[]); return [{json:{...base,gis_records:Array.isArray(gis.records)?gis.records:[],gis_record_count:gis.record_count||0,gis_sources_checked:gis.sources_checked||0,gis_limitations:gis.limitations||[],non_arcgis_records:nonRecords,non_arcgis_record_count:nonRecords.length,non_arcgis_sources_checked:nonResults.length,non_arcgis_limitations:nonResults.flatMap(r=>r.limitations||[]),criterion_evidence:critRecords,criterion_evidence_count:critRecords.length,criterion_evidence_limitations:critResults.flatMap(r=>r.limitations||[]),restricted_sources:non.skipped_sources||[]}}];"
+        "jsCode": "const base=$('Build Criteria Source Strategy').first().json; const gis=$('Query Official GIS Adapter').first().json; const non=$('Query Official Non-ArcGIS Adapter').first().json; const crit=$('Query Criterion Evidence Adapter').first().json; const nonResults=Array.isArray(non.source_results)?non.source_results:[]; const nonRecords=nonResults.flatMap(r=>Array.isArray(r.records)?r.records:[]); const critRecords=Array.isArray(crit.records)?crit.records:[]; return [{json:{...base,gis_records:Array.isArray(gis.records)?gis.records:[],gis_record_count:gis.record_count||0,gis_sources_checked:gis.sources_checked||0,gis_limitations:gis.limitations||[],non_arcgis_records:nonRecords,non_arcgis_record_count:nonRecords.length,non_arcgis_sources_checked:nonResults.length,non_arcgis_limitations:nonResults.flatMap(r=>r.limitations||[]),criterion_evidence:critRecords,criterion_evidence_count:critRecords.length,criterion_evidence_limitations:crit.limitations||[],criterion_adapter_results:crit.adapter_results||[],restricted_sources:non.skipped_sources||[]}}];"
       }
     },
     {
@@ -193,7 +193,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-criterion-evidence-adapter-v1' }}",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-criterion-evidence-orchestrator-v1' }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [

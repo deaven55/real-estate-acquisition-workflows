@@ -164,3 +164,8 @@ Shared for portfolio and reference. The original Real Estate Acquisition product
 - The search contract is state-agnostic; it is not hardcoded to Catawba County or North Carolina.
 - The workflow does not itself send seller outreach. Compliance remains the control point before downstream automated activity.
 - n8n execution and provider credentials must be validated before production activation.
+
+
+### WF-020 integration update
+
+Added criteria-driven source strategy and InsulaCRM candidate evidence persistence.

@@ -487,8 +487,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3296,
-        10576
+        3648,
+        10544
       ]
     },
     {
@@ -1157,10 +1157,42 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3296,
-        10576
+        3472,
+        10544
       ],
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-insula-lead",
+              "leftValue": "={{ $json.insulaLeadId }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d1f8c7e0-4b0e-4e53-a9a6-3f9d3d0d0b22",
+      "name": "Has Insula Lead ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3296,
+        10576
+      ]
     }
   ],
   "connections": {
@@ -1394,7 +1426,12 @@
       "main": [
         [
           {
-            "node": "Log Follow-Up Activity in InsulaCRM",
+            "node": "Has Insula Lead ID?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has Insula Lead ID?",
             "type": "main",
             "index": 0
           }
@@ -1636,6 +1673,24 @@
     },
     "Log Follow-Up Activity in InsulaCRM": {
       "main": [
+        [
+          {
+            "node": "Update Convex Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Insula Lead ID?": {
+      "main": [
+        [
+          {
+            "node": "Log Follow-Up Activity in InsulaCRM",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Update Convex Queue",

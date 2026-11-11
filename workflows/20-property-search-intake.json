@@ -83,12 +83,12 @@
       }
     },
     {
-      "id": "search",
-      "name": "Research Official Property Records",
+      "id": "research",
+      "name": "Research Candidate Properties",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        700,
+        1420,
         -80
       ],
       "parameters": {
@@ -109,10 +109,24 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({model:$env.PERPLEXITY_PROPERTY_MODEL || 'sonar',messages:[{role:'system',content:'You are a property-record research agent. Find candidate properties matching the requested jurisdiction and criteria. Prefer official county/state government property, tax, GIS, land-record, probate, foreclosure, permit, or open-data sources. Do not invent owners, addresses, parcel IDs, delinquency amounts, values, sale facts, or source URLs. Only return candidates for which the cited source supports the key identity facts. Return JSON only: {candidates:[{owner_name,property_address,city,state,zip,county,parcel_id,property_type,distress_signals,source_record_id,source_url,source_observed_at,confidence,notes}],limitations:[],search_notes:\"\"}. Each candidate must have owner_name, property_address, state, and source_url or source_record_id.'},{role:'user',content:'Jurisdiction: '+$json.state+' '+($json.county||'')+' '+($json.city||'')+' '+($json.zip||'')+'\\\\nCriteria: '+JSON.stringify($json.criteria)+'\\\\nProperty type: '+($json.property_type||'any')+'\\\\nLimit: '+$json.limit+'\\\\nAdditional notes: '+$json.search_notes}],temperature:0.1}) }}",
+        "jsonBody": "={{ JSON.stringify({model:$env.PERPLEXITY_PROPERTY_MODEL || 'sonar',messages:[{role:'system',content:'You are a property-record research agent. Find candidate properties matching the requested jurisdiction and criteria. Use the supplied official sources first and cross-check identity facts where possible. Prefer official county/state property, tax, GIS, land-record, probate, foreclosure, permit, or open-data sources. Do not invent owners, addresses, parcel IDs, delinquency amounts, values, sale facts, or source URLs. Only return candidates for which the cited source supports the key identity facts. Return JSON only: {candidates:[{owner_name,property_address,city,state,zip,county,parcel_id,property_type,distress_signals,source_record_id,source_url,source_observed_at,confidence,notes}],limitations:[],search_notes:''}. Each candidate must have owner_name, property_address, state, and source_url or source_record_id.'},{role:'user',content:'Jurisdiction: '+$json.state+' '+($json.county||'')+' '+($json.city||'')+' '+($json.zip||'')+'\\\\nCriteria: '+JSON.stringify($json.criteria)+'\\\\nProperty type: '+($json.property_type||'any')+'\\\\nLimit: '+$json.limit+'\\\\nAdditional notes: '+$json.search_notes+'\\\\nOfficial sources discovered for this jurisdiction: '+JSON.stringify($json.official_sources)+'\\\\nSource discovery limitations: '+JSON.stringify($json.source_limitations)}],temperature:0.1}) }}",
         "options": {
           "timeout": 120000
         }
+      }
+    },
+    {
+      "id": "sourceParse",
+      "name": "Parse Jurisdiction Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ctx=$(\"Prepare Search Request\").first().json; const raw=$input.first().json; let content=raw.output_text??raw.choices?.[0]?.message?.content??raw.content??''; if(typeof content!=='string') content=JSON.stringify(content); content=content.replace(/^\\`\\`\\`(?:json)?\\s*/i,'').replace(/\\s*\\`\\`\\`$/,'').trim(); let parsed; try{parsed=JSON.parse(content);}catch(e){parsed={sources:[],limitations:['Source discovery returned non-JSON data; continue with provider search using jurisdiction only.']};} const sources=(Array.isArray(parsed.sources)?parsed.sources:[]).filter(s=>s&&s.url&&s.name).slice(0,20); return [{json:{...ctx,official_sources:sources,source_limitations:Array.isArray(parsed.limitations)?parsed.limitations:[]}}];"
       }
     },
     {
@@ -121,7 +135,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        940,
+        1640,
         -80
       ],
       "parameters": {
@@ -186,7 +200,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1180,
+        1880,
         -80
       ],
       "parameters": {
@@ -199,7 +213,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1400,
+        2100,
         -80
       ],
       "parameters": {
@@ -212,7 +226,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1620,
+        2320,
         -80
       ],
       "parameters": {
@@ -249,7 +263,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1840,
+        2540,
         -80
       ],
       "parameters": {
@@ -262,7 +276,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2060,
+        2760,
         -80
       ],
       "parameters": {
@@ -299,7 +313,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2280,
+        2980,
         -80
       ],
       "parameters": {
@@ -312,7 +326,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        2500,
+        3200,
         -80
       ],
       "parameters": {
@@ -341,7 +355,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2720,
+        3420,
         -80
       ],
       "parameters": {
@@ -354,7 +368,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        2940,
+        3640,
         -80
       ],
       "parameters": {
@@ -393,7 +407,7 @@
       "main": [
         [
           {
-            "node": "Research Official Property Records",
+            "node": "Discover Official Jurisdiction Sources",
             "type": "main",
             "index": 0
           }
@@ -401,17 +415,6 @@
         [
           {
             "node": "Respond 400",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Research Official Property Records": {
-      "main": [
-        [
-          {
-            "node": "Parse Candidate Properties",
             "type": "main",
             "index": 0
           }
@@ -529,6 +532,39 @@
         [
           {
             "node": "Respond No Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discover Official Jurisdiction Sources": {
+      "main": [
+        [
+          {
+            "node": "Parse Jurisdiction Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Jurisdiction Sources": {
+      "main": [
+        [
+          {
+            "node": "Research Candidate Properties",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research Candidate Properties": {
+      "main": [
+        [
+          {
+            "node": "Parse Candidate Properties",
             "type": "main",
             "index": 0
           }

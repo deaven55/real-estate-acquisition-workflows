@@ -187,3 +187,11 @@ The adapter remains provider-neutral: it does not assume every county uses the s
 `config/jurisdiction-source-registry.json` provides a provider-neutral registry for curated official sources. It is an accelerator, not a hardcoded geographic limit: unknown states/counties continue through controlled official-source discovery. The registry also records commercial-live-query restrictions where a government source publishes them.
 
 For example, Mecklenburg County's GIS documentation states that commercial users should not rely on, integrate with, or continuously consume its live data services; the registry therefore marks those live services as non-permitted for commercial querying and points the system toward downloaded/hosted copies instead.
+
+### WF-022 — Official Non-ArcGIS Property Source Adapter
+
+`workflows/22-official-non-arcgis-source-adapter.json` provides a reusable adapter for official property/tax/open-data sources that are not ArcGIS FeatureServer/MapServer endpoints. It supports common REST/JSON and CSV/download responses, normalizes parcel/property identity and tax/value fields, preserves source provenance, and refuses sources explicitly marked as commercially restricted for live querying.
+
+WF-020 now feeds both WF-021 (ArcGIS) and WF-022 (non-ArcGIS) structured records into the evidence-aware candidate research step. HTML-only official search pages remain discovery/evidence sources rather than being treated as machine-readable APIs.
+
+See `docs/OFFICIAL_NON_ARCGIS_SOURCE_ADAPTER.md`.

@@ -175,7 +175,7 @@
         "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/ghost-rider/mark-in-crm",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"parcelId\": \"{{ $('Has Leads?').item.json.parcelId || '' }}\",\n  \"closeLeadId\": \"{{ $json.closeLeadId || $('Log SMS & Mark Processed').item.json.closeLeadId || '' }}\"\n}",
+        "jsonBody": "={\n  \"parcelId\": \"{{ $('Has Leads?').item.json.parcelId || '' }}\",\n  \"closeLeadId\": \"{{ $json.closeLeadId || $('Log SMS & Mark Processed').item.json.closeLeadId || '' }}\",\n  \"insulaLeadId\": \"{{ $json.insulaLeadId || $('Log SMS & Mark Processed').item.json.insulaLeadId || '' }}\",\n  \"insulaPropertyId\": \"{{ $json.insulaPropertyId || $('Log SMS & Mark Processed').item.json.insulaPropertyId || '' }}\"\n}",
         "options": {
           "timeout": 30000
         }
@@ -290,7 +290,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Ghost Rider - Fixed phone, Thompson Sampling templates\nvar CONVEX_URL = 'https://YOUR_CONVEX_DEPLOYMENT.convex.site';\nvar lead = $('Has Leads?').item.json;\nvar closeResponse = $('Create Close CRM Lead').item.json;\nvar assigned_phone_number = { phone: '+15555550100' };\nvar phone_source = 'ghost_rider_fixed';\nvar DISTRESS_MAP = {'pre_foreclosure':'Preforeclosure','preforeclosure':'Preforeclosure','probate':'Probate','inherited':'Probate','vacant':'Vacant','tax_delinquent':'Tax_Delinquent','tax_default':'Tax_Delinquent','lien':'Tax_Delinquent','absentee_owner':'Absentee','absentee':'Absentee','out_of_state':'Absentee','tired_landlord':'Absentee','high_equity':'High_Equity','senior_owner':'High_Equity','code_violation':'Code_Violation','code_violations':'Code_Violation'};\nvar listingType = 'BRRRR';\nvar distressType = null;\nvar distressSource = 'none';\nif (lead.primaryDistress && DISTRESS_MAP[lead.primaryDistress.toLowerCase()]) {\n  distressType = DISTRESS_MAP[lead.primaryDistress.toLowerCase()];\n  distressSource = 'primaryDistress';\n}\nvar template1_id = null;\nvar template1_variant = 'fallback';\nvar template1_source = 'fallback';\nvar templateBody = null;\nvar fallbackTemplates = ['Hey, got your message about {street_name}. What did you mean?','Hey, someone gave me this number for {street_name}. That you?','Hey, {street_name} - call me back when you get this','Hey, {street_name} came up. You still have it?'];\ntry {\n  var apiUrl = CONVEX_URL + '/api/template-select-thompson?position=1&listing_type=' + encodeURIComponent(listingType);\n  if (distressType) apiUrl += '&distress_type=' + encodeURIComponent(distressType);\n  var templateResp = await this.helpers.httpRequest({ method: 'GET', url: apiUrl, returnFullResponse: false });\n  if (templateResp && templateResp.selected && templateResp.selected.body) {\n    templateBody = templateResp.selected.body;\n    template1_id = templateResp.selected._id;\n    template1_variant = templateResp.selected.variant_name || 'thompson';\n    template1_source = 'thompson_sampling';\n  } else { throw new Error('No template returned'); }\n} catch (e) {\n  templateBody = fallbackTemplates[Math.floor(Math.random() * fallbackTemplates.length)];\n  template1_id = 'fallback_curiosity';\n}\nvar address = lead.address || 'your property';\nvar streetName = address.replace(/^\\d+\\s+/, '').split(',')[0].trim();\nvar sms_text = templateBody.replace(/\\{street_name\\}/gi, streetName).replace(/\\{street\\}/gi, streetName).replace(/\\{address\\}/gi, address).replace(/\\{city\\}/gi, lead.city || '').replace(/\\{firstName\\}/gi, lead.firstName || '').replace(/\\{first_name\\}/gi, lead.firstName || '').replace(/\\{\\{street_name\\}\\}/gi, streetName).replace(/\\{\\{street\\}\\}/gi, streetName).replace(/\\{\\{address\\}\\}/gi, address);\nvar now = new Date();\nvar tomorrow = new Date(now);\ntomorrow.setDate(tomorrow.getDate() + 1);\ntomorrow.setHours(9, 0, 0, 0);\nreturn [{json: {_id: lead._id, parcelId: lead.parcelId, stagedLeadId: lead._id, tier: lead.tier, tierName: lead.tierName, listingType: listingType, distressType: distressType, distressSource: distressSource, primaryDistress: lead.primaryDistress || 'none', closeLeadId: closeResponse.id, contactId: closeResponse.contacts && closeResponse.contacts[0] ? closeResponse.contacts[0].id : null, firstName: lead.firstName, lastName: lead.lastName, phone: lead.phone, address: lead.address, city: lead.city, state: lead.state || 'OH', zip: lead.zip, assigned_phone_number: assigned_phone_number, phone_source: phone_source, template1_id: template1_id, template1_variant: template1_variant, template1_source: template1_source, sms_text: sms_text, text1_sent: now.toISOString(), text2_scheduled: tomorrow.toISOString()}}];"
+        "jsCode": "// Ghost Rider - Fixed phone, Thompson Sampling templates\nvar CONVEX_URL = 'https://YOUR_CONVEX_DEPLOYMENT.convex.site';\nvar lead = $('Has Leads?').item.json;\nvar closeResponse = $('Create Close CRM Lead').item.json;\nvar insulaResponse = $('Upsert Lead in InsulaCRM').item.json;\nvar assigned_phone_number = { phone: '+15555550100' };\nvar phone_source = 'ghost_rider_fixed';\nvar DISTRESS_MAP = {'pre_foreclosure':'Preforeclosure','preforeclosure':'Preforeclosure','probate':'Probate','inherited':'Probate','vacant':'Vacant','tax_delinquent':'Tax_Delinquent','tax_default':'Tax_Delinquent','lien':'Tax_Delinquent','absentee_owner':'Absentee','absentee':'Absentee','out_of_state':'Absentee','tired_landlord':'Absentee','high_equity':'High_Equity','senior_owner':'High_Equity','code_violation':'Code_Violation','code_violations':'Code_Violation'};\nvar listingType = 'BRRRR';\nvar distressType = null;\nvar distressSource = 'none';\nif (lead.primaryDistress && DISTRESS_MAP[lead.primaryDistress.toLowerCase()]) {\n  distressType = DISTRESS_MAP[lead.primaryDistress.toLowerCase()];\n  distressSource = 'primaryDistress';\n}\nvar template1_id = null;\nvar template1_variant = 'fallback';\nvar template1_source = 'fallback';\nvar templateBody = null;\nvar fallbackTemplates = ['Hey, got your message about {street_name}. What did you mean?','Hey, someone gave me this number for {street_name}. That you?','Hey, {street_name} - call me back when you get this','Hey, {street_name} came up. You still have it?'];\ntry {\n  var apiUrl = CONVEX_URL + '/api/template-select-thompson?position=1&listing_type=' + encodeURIComponent(listingType);\n  if (distressType) apiUrl += '&distress_type=' + encodeURIComponent(distressType);\n  var templateResp = await this.helpers.httpRequest({ method: 'GET', url: apiUrl, returnFullResponse: false });\n  if (templateResp && templateResp.selected && templateResp.selected.body) {\n    templateBody = templateResp.selected.body;\n    template1_id = templateResp.selected._id;\n    template1_variant = templateResp.selected.variant_name || 'thompson';\n    template1_source = 'thompson_sampling';\n  } else { throw new Error('No template returned'); }\n} catch (e) {\n  templateBody = fallbackTemplates[Math.floor(Math.random() * fallbackTemplates.length)];\n  template1_id = 'fallback_curiosity';\n}\nvar address = lead.address || 'your property';\nvar streetName = address.replace(/^\\d+\\s+/, '').split(',')[0].trim();\nvar sms_text = templateBody.replace(/\\{street_name\\}/gi, streetName).replace(/\\{street\\}/gi, streetName).replace(/\\{address\\}/gi, address).replace(/\\{city\\}/gi, lead.city || '').replace(/\\{firstName\\}/gi, lead.firstName || '').replace(/\\{first_name\\}/gi, lead.firstName || '').replace(/\\{\\{street_name\\}\\}/gi, streetName).replace(/\\{\\{street\\}\\}/gi, streetName).replace(/\\{\\{address\\}\\}/gi, address);\nvar now = new Date();\nvar tomorrow = new Date(now);\ntomorrow.setDate(tomorrow.getDate() + 1);\ntomorrow.setHours(9, 0, 0, 0);\nreturn [{json: {insulaLeadId: insulaResponse.lead_id || null, insulaPropertyId: insulaResponse.property_id || null, _id: lead._id, parcelId: lead.parcelId, stagedLeadId: lead._id, tier: lead.tier, tierName: lead.tierName, listingType: listingType, distressType: distressType, distressSource: distressSource, primaryDistress: lead.primaryDistress || 'none', closeLeadId: closeResponse.id, contactId: closeResponse.contacts && closeResponse.contacts[0] ? closeResponse.contacts[0].id : null, firstName: lead.firstName, lastName: lead.lastName, phone: lead.phone, address: lead.address, city: lead.city, state: lead.state || 'OH', zip: lead.zip, assigned_phone_number: assigned_phone_number, phone_source: phone_source, template1_id: template1_id, template1_variant: template1_variant, template1_source: template1_source, sms_text: sms_text, text1_sent: now.toISOString(), text2_scheduled: tomorrow.toISOString()}}];"
       },
       "id": "select-phone-template",
       "name": "Select Phone & Template",
@@ -349,7 +349,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Log SMS to Convex - Ghost Rider (no phone pool rotation)\nvar CONVEX_URL = 'https://YOUR_CONVEX_DEPLOYMENT.convex.site';\nvar selectData = $('Select Phone & Template').item.json;\nvar smsResponse = $('Send Text 1').item.json;\ntry {\n  await this.helpers.httpRequest({method: 'POST', url: CONVEX_URL + '/api/conversation-log', body: {lead_id: selectData.closeLeadId, phone: selectData.phone, direction: 'outbound', message_text: selectData.sms_text, template_id: selectData.template1_id || null, close_activity_id: smsResponse.id || null}, json: true, returnFullResponse: false});\n} catch (e) { console.log('Failed to log SMS:', e.message); }\nreturn [{json: {success: true, closeLeadId: selectData.closeLeadId, stagedLeadId: selectData.stagedLeadId, parcelId: selectData.parcelId, tier: selectData.tier, phone: selectData.phone, firstName: selectData.firstName, address: selectData.address, city: selectData.city, zip: selectData.zip, listingType: selectData.listingType, assigned_phone_number: selectData.assigned_phone_number, template1_id: selectData.template1_id, template1_variant: selectData.template1_variant, template1_source: selectData.template1_source, text2_scheduled: selectData.text2_scheduled, smsSent: true}}];"
+        "jsCode": "// Log SMS to Convex - Ghost Rider (no phone pool rotation)\nvar CONVEX_URL = 'https://YOUR_CONVEX_DEPLOYMENT.convex.site';\nvar selectData = $('Select Phone & Template').item.json;\nvar smsResponse = $('Send Text 1').item.json;\ntry {\n  await this.helpers.httpRequest({method: 'POST', url: CONVEX_URL + '/api/conversation-log', body: {lead_id: selectData.closeLeadId, phone: selectData.phone, direction: 'outbound', message_text: selectData.sms_text, template_id: selectData.template1_id || null, close_activity_id: smsResponse.id || null}, json: true, returnFullResponse: false});\n} catch (e) { console.log('Failed to log SMS:', e.message); }\nreturn [{json: {success: true, insulaLeadId: selectData.insulaLeadId || null, insulaPropertyId: selectData.insulaPropertyId || null, closeLeadId: selectData.closeLeadId, stagedLeadId: selectData.stagedLeadId, parcelId: selectData.parcelId, tier: selectData.tier, phone: selectData.phone, firstName: selectData.firstName, address: selectData.address, city: selectData.city, zip: selectData.zip, listingType: selectData.listingType, assigned_phone_number: selectData.assigned_phone_number, template1_id: selectData.template1_id, template1_variant: selectData.template1_variant, template1_source: selectData.template1_source, text2_scheduled: selectData.text2_scheduled, smsSent: true}}];"
       },
       "id": "log-sms-convex",
       "name": "Log SMS & Mark Processed",
@@ -387,7 +387,7 @@
         "url": "https://YOUR_CONVEX_DEPLOYMENT.convex.site/api/follow-up-queue-add",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"lead_id\": \"{{ $json.closeLeadId }}\",\n  \"phone\": \"{{ $json.phone }}\",\n  \"first_name\": \"{{ $json.firstName }}\",\n  \"address\": \"{{ $json.address }}\",\n  \"city\": \"{{ $json.city }}\",\n  \"zip\": \"{{ $json.zip }}\",\n  \"next_send_date\": {{ new Date($json.text2_scheduled).getTime() }},\n  \"sequence_position\": 2,\n  \"lead_type\": \"Seller\",\n  \"listing_type\": \"{{ $json.listingType || 'BRRRR' }}\",\n  \"tier\": \"{{ $json.tier }}\",\n  \"assigned_phone\": \"{{ $json.assigned_phone_number.phone }}\",\n  \"template_id\": \"{{ $json.template1_id || '' }}\",\n  \"status\": \"pending\"\n}",
+        "jsonBody": "={\n  \"lead_id\": \"{{ $json.closeLeadId }}\",\n  \"insula_lead_id\": \"{{ $json.insulaLeadId || '' }}\",\n  \"insula_property_id\": \"{{ $json.insulaPropertyId || '' }}\",\n  \"phone\": \"{{ $json.phone }}\",\n  \"first_name\": \"{{ $json.firstName }}\",\n  \"address\": \"{{ $json.address }}\",\n  \"city\": \"{{ $json.city }}\",\n  \"zip\": \"{{ $json.zip }}\",\n  \"next_send_date\": {{ new Date($json.text2_scheduled).getTime() }},\n  \"sequence_position\": 2,\n  \"lead_type\": \"Seller\",\n  \"listing_type\": \"{{ $json.listingType || 'BRRRR' }}\",\n  \"tier\": \"{{ $json.tier }}\",\n  \"assigned_phone\": \"{{ $json.assigned_phone_number.phone }}\",\n  \"template_id\": \"{{ $json.template1_id || '' }}\",\n  \"status\": \"pending\"\n}",
         "options": {
           "timeout": 10000
         }
@@ -654,13 +654,13 @@
     },
     {
       "parameters": {
-        "content": "## BatchData Import (Weekly Lead Processor)\n\n**Purpose:** Process new seller leads from Convex staging into Close CRM and send initial Text 1 (Curiosity Message)\n\n**Schedule:** Weekly on Sunday at 6AM EST\n- Allows leads to accumulate during the week\n- Processes up to 750 leads per run\n- Manual trigger available for testing\n\n**Data Flow:**\n```\nConvex Staging \u2192 DNC Check \u2192 Address Dedup \u2192 Close Dedup \u2192 Create Lead \u2192 Send SMS \u2192 Follow-Up Queue\n```\n\n**Key Features:**\n- \u2705 DNC Registry compliance\n- \u2705 90-day address deduplication\n- \u2705 Close CRM duplicate detection\n- \u2705 Thompson Sampling for template selection\n- \u2705 TCPA time window enforcement\n- \u2705 Distress-aware template matching\n\n**Convex Base URL:** `https://YOUR_CONVEX_DEPLOYMENT.convex.site`",
+        "content": "## BatchData Import (Weekly Lead Processor)\n\n**Purpose:** Process new seller leads from Convex staging into Close CRM and send initial Text 1 (Curiosity Message)\n\n**Schedule:** Weekly on Sunday at 6AM EST\n- Allows leads to accumulate during the week\n- Processes up to 750 leads per run\n- Manual trigger available for testing\n\n**Data Flow:**\n```\nConvex Staging → DNC Check → Address Dedup → Close Dedup → Create Lead → Send SMS → Follow-Up Queue\n```\n\n**Key Features:**\n- ✅ DNC Registry compliance\n- ✅ 90-day address deduplication\n- ✅ Close CRM duplicate detection\n- ✅ Thompson Sampling for template selection\n- ✅ TCPA time window enforcement\n- ✅ Distress-aware template matching\n\n**Convex Base URL:** `https://YOUR_CONVEX_DEPLOYMENT.convex.site`",
         "height": 480,
         "width": 380,
         "color": 4
       },
       "id": "sticky-overview",
-      "name": "\ud83d\udccb Workflow Overview",
+      "name": "📋 Workflow Overview",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
@@ -670,13 +670,13 @@
     },
     {
       "parameters": {
-        "content": "## Lead Validation Pipeline\n\n**Step 1: DNC Check**\n`GET /api/dnc-check?phone={phone}`\n- Checks Convex DNC registry\n- Returns `{ isDnc: true/false }`\n- If DNC \u2192 Mark as skipped, return to loop\n\n**Step 2: Address Deduplication**\n`GET /api/dedup-check?address={addr}&zip={zip}&days=90`\n- Prevents re-contacting same property within 90 days\n- Returns `{ isDuplicate: true/false }`\n\n**Step 3: Close CRM Duplicate Check**\n`GET /api/v1/lead/?query=phone:{phone}`\n- Queries Close CRM for existing lead with same phone\n- If found \u2192 Mark as duplicate, skip creation\n\n**Skip Reasons Logged:**\n- `dnc` - Phone on Do Not Call list\n- `address_duplicate` - Property contacted in last 90 days\n- `duplicate` - Lead already exists in Close CRM\n- `error` - Failed to create lead",
+        "content": "## Lead Validation Pipeline\n\n**Step 1: DNC Check**\n`GET /api/dnc-check?phone={phone}`\n- Checks Convex DNC registry\n- Returns `{ isDnc: true/false }`\n- If DNC → Mark as skipped, return to loop\n\n**Step 2: Address Deduplication**\n`GET /api/dedup-check?address={addr}&zip={zip}&days=90`\n- Prevents re-contacting same property within 90 days\n- Returns `{ isDuplicate: true/false }`\n\n**Step 3: Close CRM Duplicate Check**\n`GET /api/v1/lead/?query=phone:{phone}`\n- Queries Close CRM for existing lead with same phone\n- If found → Mark as duplicate, skip creation\n\n**Skip Reasons Logged:**\n- `dnc` - Phone on Do Not Call list\n- `address_duplicate` - Property contacted in last 90 days\n- `duplicate` - Lead already exists in Close CRM\n- `error` - Failed to create lead",
         "height": 480,
         "width": 380,
         "color": 2
       },
       "id": "sticky-validation",
-      "name": "\ud83d\udd0d Lead Validation Pipeline",
+      "name": "🔍 Lead Validation Pipeline",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
@@ -692,7 +692,7 @@
         "color": 5
       },
       "id": "sticky-close-crm",
-      "name": "\ud83d\udcf1 Close CRM & SMS Flow",
+      "name": "📱 Close CRM & SMS Flow",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
@@ -702,13 +702,13 @@
     },
     {
       "parameters": {
-        "content": "## TCPA Time Windows (EST)\n\n**Weekdays (Mon-Fri):**\n- \u2705 9:00 AM - 8:00 PM EST\n\n**Saturday:**\n- \u2705 10:00 AM - 6:00 PM EST\n\n**Sunday:**\n- \u274c NO SMS ALLOWED\n\n**If Outside Window:**\n- SMS queued for later via `/api/follow-up-queue-add`\n- Lead marked as `tcpaDeferred: true`\n- Will be processed by Follow-Up Engine\n\n---\n\n## Follow-Up Queue\n\n`POST /api/follow-up-queue-add`\n- Schedules Text 2 for next day 9AM\n- Tracks: position, listing_type, assigned_phone\n- Processed by separate Follow-Up Engine workflow\n\n---\n\n## Slack Report\n\nChannel: `#test` (C0ABWBR67JL)\n- Total processed with Text 1 sent\n- Skipped (DNC count)\n- Failed count\n- Success rate percentage",
+        "content": "## TCPA Time Windows (EST)\n\n**Weekdays (Mon-Fri):**\n- ✅ 9:00 AM - 8:00 PM EST\n\n**Saturday:**\n- ✅ 10:00 AM - 6:00 PM EST\n\n**Sunday:**\n- ❌ NO SMS ALLOWED\n\n**If Outside Window:**\n- SMS queued for later via `/api/follow-up-queue-add`\n- Lead marked as `tcpaDeferred: true`\n- Will be processed by Follow-Up Engine\n\n---\n\n## Follow-Up Queue\n\n`POST /api/follow-up-queue-add`\n- Schedules Text 2 for next day 9AM\n- Tracks: position, listing_type, assigned_phone\n- Processed by separate Follow-Up Engine workflow\n\n---\n\n## Slack Report\n\nChannel: `#test` (C0ABWBR67JL)\n- Total processed with Text 1 sent\n- Skipped (DNC count)\n- Failed count\n- Success rate percentage",
         "height": 540,
         "width": 340,
         "color": 6
       },
       "id": "sticky-tcpa",
-      "name": "\u23f0 TCPA Compliance & Reporting",
+      "name": "⏰ TCPA Compliance & Reporting",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
@@ -826,6 +826,44 @@
         128
       ],
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/leads' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'acquisition:ghost-rider:' + $('Prepare Lead Data').item.json.parcelId + ':v1' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ external_id: $('Prepare Lead Data').item.json.parcelId, external_source: 'ghost_rider', first_name: $('Prepare Lead Data').item.json.firstName, last_name: $('Prepare Lead Data').item.json.lastName, phone: $('Prepare Lead Data').item.json.phone || null, email: $('Prepare Lead Data').item.json.email || null, source: 'BatchLeads', notes: JSON.stringify({ distressScore: $('Prepare Lead Data').item.json.distressScore || 0, primaryDistress: $('Prepare Lead Data').item.json.primaryDistress || null, tier: $('Prepare Lead Data').item.json.tier || null, listingType: $('Prepare Lead Data').item.json.listingType || null }), property_address: $('Prepare Lead Data').item.json.address || null, property_city: $('Prepare Lead Data').item.json.city || null, property_state: $('Prepare Lead Data').item.json.state || null, property_zip: $('Prepare Lead Data').item.json.zip || null, property_type: $('Prepare Lead Data').item.json.listingType || null }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "insula-lead-upsert",
+      "name": "Upsert Lead in InsulaCRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1680,
+        272
+      ],
+      "onError": "stopRegularOutput"
     }
   ],
   "connections": {
@@ -1234,6 +1272,17 @@
       ]
     },
     "Prepare Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Upsert Lead in InsulaCRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Lead in InsulaCRM": {
       "main": [
         [
           {

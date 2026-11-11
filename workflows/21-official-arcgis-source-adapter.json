@@ -1,0 +1,276 @@
+{
+  "name": "WholeStack WF-021: Official ArcGIS Property Source Adapter",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-official-arcgis-source-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare GIS Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=$input.first().json.body||$input.first().json; const sources=Array.isArray(body.official_sources)?body.official_sources:[]; const machine=sources.filter(s=>s&&typeof s.url==='string'&&/(FeatureServer|MapServer)/i.test(s.url)); return [{json:{request_id:String(body.request_id||('gis-'+Date.now())),state:String(body.state||'').toUpperCase(),county:String(body.county||''),city:String(body.city||''),zip:String(body.zip||''),criteria:Array.isArray(body.criteria)?body.criteria:[],limit:Math.min(100,Math.max(1,Number(body.limit||25))),sources:machine.slice(0,10)}}];"
+      }
+    },
+    {
+      "id": "if",
+      "name": "IF ArcGIS Sources",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "leftValue": ""
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has",
+              "leftValue": "={{ $json.sources.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "no",
+      "name": "Respond No GIS Sources",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        220
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success:true,request_id:$json.request_id,records:[],message:'No machine-readable ArcGIS FeatureServer/MapServer sources were discovered.'}) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "split",
+      "name": "Split GIS Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        -80
+      ],
+      "parameters": {
+        "jsCode": "return $json.sources.map((source,index)=>({json:{...$json,source,source_index:index+1}}));"
+      }
+    },
+    {
+      "id": "query",
+      "name": "Query ArcGIS Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        940,
+        -80
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ (() => { const u=String($json.source.url).replace(/\\\\/$/,''); const base=/\\\\/(?:FeatureServer|MapServer)\\\\/\\\\d+$/i.test(u)?u:u.replace(/\\\\/(?:FeatureServer|MapServer)\\\\/i,'/$&').replace(/\\\\/$/,''); return base + (/(?:FeatureServer|MapServer)\\\\/\\\\d+$/i.test(u)?'/query':'/0/query'); })() }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "where",
+              "value": "={{ '1=1' }}"
+            },
+            {
+              "name": "outFields",
+              "value": "*"
+            },
+            {
+              "name": "returnGeometry",
+              "value": "false"
+            },
+            {
+              "name": "f",
+              "value": "json"
+            },
+            {
+              "name": "resultRecordCount",
+              "value": "={{ $json.limit }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "normalize",
+      "name": "Normalize GIS Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        -80
+      ],
+      "parameters": {
+        "jsCode": "const src=$('Split GIS Sources').item.json.source; const base=$('Split GIS Sources').item.json; const features=Array.isArray($json.features)?$json.features:[]; const records=features.map((f,i)=>{const a=f.attributes||f; const pick=(keys)=>{for(const k of keys){if(a[k]!==undefined&&a[k]!==null&&String(a[k]).trim()!=='') return a[k];}return null;}; return {source_url:src.url,source_name:src.name||null,source_type:src.type||'arcgis',source_record_id:String(pick(['PARNO','parno','PARCEL_ID','parcel_id','PIN','pin','OBJECTID','objectid'])||('feature-'+i)),owner_name:pick(['OWNNAME','ownname','OWNER','owner','OWNER_NAME','owner_name']),property_address:pick(['SITUSADDR','situsaddr','SITEADDR','siteaddr','ADDRESS','address','SITE_ADDRESS','site_address']),mailing_address:pick(['MAILADD','mailadd','MAILADDR','mailaddr','MAILING_ADDRESS','mailing_address']),county:pick(['COUNTY','county'])||base.county||null,city:pick(['SITUSCITY','situscity','CITY','city'])||base.city||null,state:pick(['SITUSSTATE','situsstate','STATE','state'])||base.state||null,zip:pick(['SZIP','szip','ZIP','zip','ZIPCODE','zipcode']),parcel_id:pick(['PARNO','parno','PARCEL_ID','parcel_id','PIN','pin']),assessed_value:pick(['PARVAL','parval','ASSESSED','assessed','ASSESSED_VALUE','assessed_value']),land_value:pick(['LANDVAL','landval','LAND_VALUE','land_value']),building_value:pick(['IMPROVVAL','improvval','BUILDING_VALUE','building_value']),acreage:pick(['ACREAGE','acreage','ACRES','acres']),property_type:pick(['PROP_TYPE','prop_type','PROPERTY_TYPE','property_type','LANDUSE','landuse']),raw_attributes:a};}); return [{json:{success:true,request_id:base.request_id,source_url:src.url,records,record_count:records.length,limitations:records.length?[]:['ArcGIS source returned no records or an unsupported layer response.']}}];"
+      }
+    },
+    {
+      "id": "merge",
+      "name": "Merge GIS Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1420,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const all=$input.all(); const records=all.flatMap(i=>Array.isArray(i.json.records)?i.json.records:[]); const meta=all[0]?.json||{}; return [{json:{success:true,request_id:meta.request_id,records:records.slice(0,meta.limit||100),record_count:records.length,sources_checked:all.length}}];"
+      }
+    },
+    {
+      "id": "response",
+      "name": "Respond GIS Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1660,
+        -80
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare GIS Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare GIS Sources": {
+      "main": [
+        [
+          {
+            "node": "IF ArcGIS Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF ArcGIS Sources": {
+      "main": [
+        [
+          {
+            "node": "Split GIS Sources",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No GIS Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split GIS Sources": {
+      "main": [
+        [
+          {
+            "node": "Query ArcGIS Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query ArcGIS Source": {
+      "main": [
+        [
+          {
+            "node": "Normalize GIS Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize GIS Records": {
+      "main": [
+        [
+          {
+            "node": "Merge GIS Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge GIS Results": {
+      "main": [
+        [
+          {
+            "node": "Respond GIS Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

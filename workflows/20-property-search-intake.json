@@ -83,6 +83,20 @@
       }
     },
     {
+      "id": "registry",
+      "name": "Resolve Curated Jurisdiction Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ctx=$input.first().json;\nconst registry={'US-NC':{state_sources:[{name:'NC OneMap Parcel Data',type:'state_parcel',url:'https://www.nconemap.gov/pages/parcels',machine_readable:true,commercial_live_query_allowed:true},{name:'NC OneMap ArcGIS Services',type:'state_parcel',url:'https://services.nconemap.gov/secure/rest/services',machine_readable:true,commercial_live_query_allowed:true}],counties:{'catawba':[{name:'Catawba County GIS',type:'county_gis',url:'https://www.catawbacountync.gov/county-services/information-technology/gis/',machine_readable:true,commercial_live_query_allowed:true}],'caldwell':[{name:'Caldwell County GIS',type:'county_gis',url:'https://gis.caldwellcountync.org/',machine_readable:true,commercial_live_query_allowed:true}],'mecklenburg':[{name:'Mecklenburg County GIS',type:'county_gis',url:'https://gis.mecknc.gov/',machine_readable:true,commercial_live_query_allowed:false,commercial_use_note:'County states live data services may not be relied on, integrated, or continuously consumed by commercial applications; commercial users should download and host copies.'}],'wake':[{name:'Wake County iMAPS',type:'county_gis',url:'https://maps.raleighnc.gov/iMAPS/',machine_readable:true,commercial_live_query_allowed:true}],'new hanover':[{name:'New Hanover County GIS',type:'county_gis',url:'https://finance.nhcgov.com/844/GIS-Maps-Data',machine_readable:true,commercial_live_query_allowed:true}]}}};\nconst state=String(ctx.state||'').toUpperCase(); const county=String(ctx.county||'').trim().toLowerCase(); const entry=registry['US-'+state]||null; const curated=[...(entry?.state_sources||[]),...(entry?.counties?.[county]||[])]; const blocked=curated.filter(s=>s.commercial_live_query_allowed===false); const discovered=Array.isArray(ctx.official_sources)?ctx.official_sources:[]; const seen=new Set(curated.map(s=>String(s.url).toLowerCase())); const merged=[...curated,...discovered.filter(s=>s?.url&&!seen.has(String(s.url).toLowerCase()))].slice(0,30); return [{json:{...ctx,curated_source_count:curated.length,curated_sources:curated,commercial_restrictions:blocked,official_sources:merged,source_resolution:{registry_key:'US-'+state,county_key:county||null,curated_match:curated.length>0,discovery_fallback_used:curated.length===0,policy:'curated official sources first; discovery supplements only when needed; restricted live sources are flagged rather than silently queried'}}}];"
+      }
+    },
+    {
       "id": "sourceStrategy",
       "name": "Build Criteria Source Strategy",
       "type": "n8n-nodes-base.code",
@@ -93,7 +107,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const criteria=new Set($json.criteria||[]);\nconst map={\n  tax_delinquent:{types:[\"tax_delinquency\",\"tax_record\",\"county_dataset\"],fields:[\"delinquent_tax_amount\",\"tax_status\",\"tax_amount\",\"parcel_id\",\"owner_name\"]},\n  vacant:{types:[\"gis_parcel\",\"property_record\",\"tax_record\",\"permit_record\"],fields:[\"property_address\",\"parcel_id\",\"property_type\",\"building_sqft\",\"year_built\",\"owner_name\",\"mailing_address\"]},\n  vacant_land:{types:[\"gis_parcel\",\"tax_record\",\"zoning_record\",\"county_dataset\"],fields:[\"parcel_id\",\"acreage\",\"zoning\",\"land_value\",\"property_type\",\"owner_name\"]},\n  absentee:{types:[\"property_record\",\"tax_record\",\"land_record\"],fields:[\"owner_name\",\"mailing_address\",\"property_address\",\"parcel_id\"]},\n  high_equity:{types:[\"land_record\",\"property_record\",\"tax_record\"],fields:[\"owner_name\",\"last_verified_sale_date\",\"last_verified_sale_price\",\"assessed_value\",\"parcel_id\"]},\n  probate:{types:[\"probate_record\",\"court_record\",\"land_record\"],fields:[\"owner_name\",\"estate_or_probate_signal\",\"property_address\",\"parcel_id\",\"source_record_id\"]},\n  pre_foreclosure:{types:[\"foreclosure_record\",\"court_record\",\"land_record\"],fields:[\"owner_name\",\"property_address\",\"parcel_id\",\"foreclosure_signal\",\"source_record_id\"]},\n  fixer_upper:{types:[\"permit_record\",\"code_enforcement\",\"property_record\",\"gis_parcel\"],fields:[\"property_address\",\"building_sqft\",\"year_built\",\"permit_records\",\"condition_signals\",\"parcel_id\"]},\n  distressed:{types:[\"tax_delinquency\",\"foreclosure_record\",\"permit_record\",\"code_enforcement\",\"property_record\"],fields:[\"distress_signals\",\"owner_name\",\"property_address\",\"parcel_id\",\"source_record_id\"]}\n};\nconst selected=[...criteria].flatMap(c=>map[c]||[]).reduce((acc,v)=>acc.includes(v)?acc:acc.concat(v),[]);\nconst defaultTypes=[\"property_record\",\"tax_record\",\"gis_parcel\",\"land_record\"];\nconst sourceTypes=selected.length?selected:defaultTypes;\nconst requestedFields=[...criteria].flatMap(c=>map[c]?.fields||[]).reduce((acc,v)=>acc.includes(v)?acc:acc.concat(v),[]);\nreturn [{json:{...$json,source_strategy:{criteria:[...criteria],priority_source_types:sourceTypes,required_evidence_fields:requestedFields,minimum_identity_fields:[\"owner_name\",\"property_address\",\"state\"],criteria_rules:{tax_delinquent:'Require explicit delinquent tax evidence; GIS alone is insufficient when no delinquency field exists.',vacant:'Require explicit structure/use evidence; absence of building data is not proof of vacancy.',vacant_land:'Prefer explicit land/vacant-land use plus structure evidence; acreage alone is not proof.',absentee:'Compare explicit site and mailing addresses; do not infer absentee status without both.',high_equity:'Do not call equity from assessed value alone; require explicit debt evidence or label as needs_evidence.',probate:'Require probate/court/estate evidence.',pre_foreclosure:'Require foreclosure/court/default/lis-pendens evidence.',fixer_upper:'Require explicit condition, permit, code-enforcement, violation, or comparable evidence.',distressed:'Require one or more explicit distress signals from tax, foreclosure, permit, code, or court sources.'},rules:[\"Use official sources first.\",\"Match each criterion to evidence from the corresponding source type when available.\",\"Do not infer a distress status from absence of data.\",\"Keep unknown fields null and list them in limitations.\",\"Preserve source_url or source_record_id for every candidate.\"]}}}];"
+        "jsCode": "const criteria=new Set($json.criteria||[]); const restricted=$json.commercial_restrictions||[];\nconst map={\n  tax_delinquent:{types:[\"tax_delinquency\",\"tax_record\",\"county_dataset\"],fields:[\"delinquent_tax_amount\",\"tax_status\",\"tax_amount\",\"parcel_id\",\"owner_name\"]},\n  vacant:{types:[\"gis_parcel\",\"property_record\",\"tax_record\",\"permit_record\"],fields:[\"property_address\",\"parcel_id\",\"property_type\",\"building_sqft\",\"year_built\",\"owner_name\",\"mailing_address\"]},\n  vacant_land:{types:[\"gis_parcel\",\"tax_record\",\"zoning_record\",\"county_dataset\"],fields:[\"parcel_id\",\"acreage\",\"zoning\",\"land_value\",\"property_type\",\"owner_name\"]},\n  absentee:{types:[\"property_record\",\"tax_record\",\"land_record\"],fields:[\"owner_name\",\"mailing_address\",\"property_address\",\"parcel_id\"]},\n  high_equity:{types:[\"land_record\",\"property_record\",\"tax_record\"],fields:[\"owner_name\",\"last_verified_sale_date\",\"last_verified_sale_price\",\"assessed_value\",\"parcel_id\"]},\n  probate:{types:[\"probate_record\",\"court_record\",\"land_record\"],fields:[\"owner_name\",\"estate_or_probate_signal\",\"property_address\",\"parcel_id\",\"source_record_id\"]},\n  pre_foreclosure:{types:[\"foreclosure_record\",\"court_record\",\"land_record\"],fields:[\"owner_name\",\"property_address\",\"parcel_id\",\"foreclosure_signal\",\"source_record_id\"]},\n  fixer_upper:{types:[\"permit_record\",\"code_enforcement\",\"property_record\",\"gis_parcel\"],fields:[\"property_address\",\"building_sqft\",\"year_built\",\"permit_records\",\"condition_signals\",\"parcel_id\"]},\n  distressed:{types:[\"tax_delinquency\",\"foreclosure_record\",\"permit_record\",\"code_enforcement\",\"property_record\"],fields:[\"distress_signals\",\"owner_name\",\"property_address\",\"parcel_id\",\"source_record_id\"]}\n};\nconst selected=[...criteria].flatMap(c=>map[c]||[]).reduce((acc,v)=>acc.includes(v)?acc:acc.concat(v),[]);\nconst defaultTypes=[\"property_record\",\"tax_record\",\"gis_parcel\",\"land_record\"];\nconst sourceTypes=selected.length?selected:defaultTypes;\nconst requestedFields=[...criteria].flatMap(c=>map[c]?.fields||[]).reduce((acc,v)=>acc.includes(v)?acc:acc.concat(v),[]);\nreturn [{json:{...$json,source_strategy:{criteria:[...criteria],priority_source_types:sourceTypes,required_evidence_fields:requestedFields,minimum_identity_fields:[\"owner_name\",\"property_address\",\"state\"],curated_sources:$json.curated_sources||[],commercial_restrictions:restricted,source_resolution:$json.source_resolution||null,criteria_rules:{tax_delinquent:'Require explicit delinquent tax evidence; GIS alone is insufficient when no delinquency field exists.',vacant:'Require explicit structure/use evidence; absence of building data is not proof of vacancy.',vacant_land:'Prefer explicit land/vacant-land use plus structure evidence; acreage alone is not proof.',absentee:'Compare explicit site and mailing addresses; do not infer absentee status without both.',high_equity:'Do not call equity from assessed value alone; require explicit debt evidence or label as needs_evidence.',probate:'Require probate/court/estate evidence.',pre_foreclosure:'Require foreclosure/court/default/lis-pendens evidence.',fixer_upper:'Require explicit condition, permit, code-enforcement, violation, or comparable evidence.',distressed:'Require one or more explicit distress signals from tax, foreclosure, permit, code, or court sources.'},rules:[\"Use official sources first.\",\"Match each criterion to evidence from the corresponding source type when available.\",\"Do not infer a distress status from absence of data.\",\"Keep unknown fields null and list them in limitations.\",\"Preserve source_url or source_record_id for every candidate.\"]}}}];"
       }
     },
     {
@@ -680,7 +694,7 @@
       "main": [
         [
           {
-            "node": "Build Criteria Source Strategy",
+            "node": "Resolve Curated Jurisdiction Sources",
             "type": "main",
             "index": 0
           }
@@ -736,6 +750,17 @@
         [
           {
             "node": "Research Candidate Properties",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Curated Jurisdiction Sources": {
+      "main": [
+        [
+          {
+            "node": "Build Criteria Source Strategy",
             "type": "main",
             "index": 0
           }

@@ -105,7 +105,7 @@
       ],
       "parameters": {
         "method": "GET",
-        "url": "={{ (() => { const u=String($json.source.url).replace(/\\\\/$/,''); const base=/\\\\/(?:FeatureServer|MapServer)\\\\/\\\\d+$/i.test(u)?u:u.replace(/\\\\/(?:FeatureServer|MapServer)\\\\/i,'/$&').replace(/\\\\/$/,''); return base + (/(?:FeatureServer|MapServer)\\\\/\\\\d+$/i.test(u)?'/query':'/0/query'); })() }}",
+        "url": "={{ (() => { const u=String($json.source.url).replace(/\\\\/$/,''); if(/\\\\/(?:FeatureServer|MapServer)\\\\/\\\\d+$/i.test(u)) return u+'/query'; if(/\\\\/(?:FeatureServer|MapServer)$/i.test(u)) return u+'/0/query'; return u+'/query'; })() }}",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [

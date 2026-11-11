@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "description": "Provider-neutral jurisdiction source registry for official public-record discovery. Curated entries are accelerators, not the only allowed sources; WF-020 must retain controlled discovery fallback for jurisdictions not listed here.",
+  "source_priority": [
+    "state_parcel",
+    "county_gis",
+    "county_property",
+    "county_tax",
+    "county_land",
+    "county_open_data",
+    "court_probate",
+    "foreclosure",
+    "permit_code_enforcement"
+  ],
+  "fallback_policy": {
+    "use_official_sources_first": true,
+    "allow_discovery_for_unknown_jurisdictions": true,
+    "require_source_url_or_source_record_id": true,
+    "require_owner_and_property_identity_before_ingest": true,
+    "do_not_infer_distress_from_missing_data": true
+  },
+  "jurisdictions": {
+    "US-NC": {
+      "state_sources": [
+        {
+          "name": "NC OneMap Parcel Data",
+          "type": "state_parcel",
+          "url": "https://www.nconemap.gov/pages/parcels",
+          "machine_readable": true
+        },
+        {
+          "name": "NC OneMap ArcGIS Services",
+          "type": "state_parcel",
+          "url": "https://services.nconemap.gov/secure/rest/services",
+          "machine_readable": true
+        }
+      ],
+      "counties": {
+        "Catawba": {
+          "aliases": [
+            "Catawba County"
+          ],
+          "sources": [
+            {
+              "name": "Catawba County GIS",
+              "type": "county_gis",
+              "url": "https://www.catawbacountync.gov/county-services/information-technology/gis/",
+              "machine_readable": false
+            },
+            {
+              "name": "Catawba County GIS/Parcel Services",
+              "type": "county_gis",
+              "url": "https://www.catawbacountync.gov/county-services/information-technology/gis/",
+              "machine_readable": true
+            }
+          ]
+        },
+        "Caldwell": {
+          "aliases": [
+            "Caldwell County"
+          ],
+          "sources": [
+            {
+              "name": "Caldwell County GIS",
+              "type": "county_gis",
+              "url": "https://www.caldwellcountync.org/departments/gis",
+              "machine_readable": false
+            }
+          ]
+        },
+        "Mecklenburg": {
+          "aliases": [
+            "Mecklenburg County"
+          ],
+          "sources": [
+            {
+              "name": "Mecklenburg County GIS",
+              "type": "county_gis",
+              "url": "https://gis.mecknc.gov/",
+              "machine_readable": true
+            }
+          ]
+        },
+        "Wake": {
+          "aliases": [
+            "Wake County"
+          ],
+          "sources": [
+            {
+              "name": "Wake County iMAPS",
+              "type": "county_gis",
+              "url": "https://maps.raleighnc.gov/iMAPS/",
+              "machine_readable": true
+            }
+          ]
+        },
+        "New Hanover": {
+          "aliases": [
+            "New Hanover County"
+          ],
+          "sources": [
+            {
+              "name": "New Hanover County GIS",
+              "type": "county_gis",
+              "url": "https://www.nhcgov.com/government/departments/gis",
+              "machine_readable": false
+            }
+          ]
+        }
+      }
+    }
+  }
+}

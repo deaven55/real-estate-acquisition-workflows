@@ -1,0 +1,175 @@
+{
+  "name": "WholeStack WF-023: Criterion Evidence Adapter Router",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-criterion-evidence-adapter-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare Criterion Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b=$input.first().json.body||$input.first().json; const criteria=Array.isArray(b.criteria)?b.criteria:[]; const supported=new Set(['tax_delinquent','probate','pre_foreclosure','fixer_upper','distressed']); const selected=[...new Set(criteria.map(x=>String(x).trim().toLowerCase()).filter(x=>supported.has(x)))]; const sources=Array.isArray(b.sources)?b.sources:[]; const requests=selected.flatMap(c=>sources.filter(s=>s&&s.url&&s.commercial_live_query_allowed!==false).map(s=>({criterion:c,source:s,state:b.state||null,county:b.county||null,city:b.city||null,zip:b.zip||null,property_address:b.property_address||null,parcel_id:b.parcel_id||null,owner_name:b.owner_name||null,limit:Math.min(50,Math.max(1,Number(b.limit||25))),request_id:String(b.request_id||('criterion-'+Date.now()))}))); return [{json:{request_id:String(b.request_id||('criterion-'+Date.now())),criteria:selected,requests,unsupported_criteria:criteria.filter(x=>!supported.has(String(x).trim().toLowerCase()))}}];"
+      }
+    },
+    {
+      "id": "split",
+      "name": "Split Criterion Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const x=$input.first().json; return (x.requests||[]).map(r=>({json:{...r,all_criteria:x.criteria,unsupported_criteria:x.unsupported_criteria}}));"
+      }
+    },
+    {
+      "id": "fetch",
+      "name": "Fetch Official Criterion Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.source.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json,text/csv,text/html,*/*"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        },
+        "response": {
+          "response": {
+            "neverError": true,
+            "responseFormat": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "normalize",
+      "name": "Normalize Criterion Evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta=$('Split Criterion Requests').item.json; const raw=$json; const status=Number(raw.statusCode||200); let body=raw.body??raw.data??raw; if(typeof body!=='string') body=JSON.stringify(body); let parsed=null; try{parsed=JSON.parse(body);}catch(e){} const rows=parsed?(Array.isArray(parsed)?parsed:(parsed.records||parsed.data||parsed.features||[])):[]; const arr=Array.isArray(rows)?rows:[]; const pick=(a,keys)=>{for(const k of keys){if(a?.[k]!==undefined&&a?.[k]!==null&&String(a[k]).trim()!=='')return a[k];}return null;}; const records=arr.slice(0,meta.limit).map(r=>{const a=r.attributes&&typeof r.attributes==='object'?r.attributes:r; let signal=null; if(meta.criterion==='tax_delinquent' && (pick(a,['delinquent_tax_amount','delinquent_tax','tax_delinquent'])||/delinquent|past due/i.test(String(pick(a,['tax_status','status'])||'')))) signal='tax_delinquent'; if(meta.criterion==='probate' && /probate|estate|decedent/i.test(JSON.stringify(a))) signal='probate'; if(meta.criterion==='pre_foreclosure' && /foreclos|default|lis pendens/i.test(JSON.stringify(a))) signal='pre_foreclosure'; if(meta.criterion==='fixer_upper' && /violation|condemn|unsafe|repair|permit/i.test(JSON.stringify(a))) signal='fixer_upper'; if(meta.criterion==='distressed' && /delinquent|foreclos|violation|condemn|unsafe|default/i.test(JSON.stringify(a))) signal='distressed'; return {source_record_id:String(pick(a,['parcel_id','parcelid','parcel','pin','pid','case_number','case_no','record_id','id','objectid','OBJECTID'])||''),source_url:meta.source.url,source_observed_at:new Date().toISOString(),owner_name:pick(a,['owner_name','owner','ownname','party_name','plaintiff','defendant','decedent_name']),property_address:pick(a,['property_address','site_address','situs_address','address','siteadd','situs']),parcel_id:pick(a,['parcel_id','parcelid','parcel','pin','pid','nparno']),signal,signal_strength:signal?'needs_review':'needs_review',structured_facts:a,raw_attributes:a};}).filter(r=>r.signal); return [{json:{request_id:meta.request_id,criterion:meta.criterion,source:meta.source,success:status>=200&&status<300,records,limitations:status>=400?['Source returned HTTP '+status+'.']:['Automated signal extraction is heuristic and requires evidence review.'],missing_fields:records.filter(r=>!r.owner_name||!r.property_address).map(r=>r.source_record_id||'unknown')}}];"
+      }
+    },
+    {
+      "id": "respond",
+      "name": "Respond Criterion Evidence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success:true,request_id:$('Prepare Criterion Requests').first().json.request_id,criterion_results:$input.all().map(i=>i.json),unsupported_criteria:$('Prepare Criterion Requests').first().json.unsupported_criteria||[],policy:'criterion signals are evidence candidates and require source traceability and downstream review'}) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare Criterion Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Criterion Requests": {
+      "main": [
+        [
+          {
+            "node": "Split Criterion Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Criterion Requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch Official Criterion Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Official Criterion Source": {
+      "main": [
+        [
+          {
+            "node": "Normalize Criterion Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Criterion Evidence": {
+      "main": [
+        [
+          {
+            "node": "Respond Criterion Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

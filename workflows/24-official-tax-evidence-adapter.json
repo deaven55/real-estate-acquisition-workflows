@@ -1,0 +1,87 @@
+{
+  "name": "WholeStack WF-024: Official County Tax Evidence Adapter",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "parameters": {
+        "path": "wholestack-official-tax-evidence-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare Tax Source Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b=$input.first().json.body||$input.first().json; const sources=(Array.isArray(b.sources)?b.sources:[]).filter(s=>s&&s.url&&['county_tax','tax_delinquency','county_property'].includes(String(s.type||s.source_type||'').toLowerCase())&&s.commercial_live_query_allowed!==false); const criteria=Array.isArray(b.criteria)?b.criteria.filter(c=>c==='tax_delinquent'||c==='distressed'):[]; return [{json:{request_id:String(b.request_id||('tax-'+Date.now())),state:b.state||null,county:b.county||null,city:b.city||null,zip:b.zip||null,parcel_id:b.parcel_id||null,owner_name:b.owner_name||null,property_address:b.property_address||null,limit:Math.min(100,Math.max(1,Number(b.limit||25))),criteria,sources}}];"
+      }
+    },
+    {
+      "id": "split",
+      "name": "Split Tax Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const x=$input.first().json; return (x.sources||[]).map(s=>({json:{...x,source:s}}));"
+      }
+    },
+    {
+      "id": "fetch",
+      "name": "Fetch Official Tax Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [720, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.source.url }}",
+        "sendHeaders": true,
+        "headerParameters": {"parameters":[{"name":"Accept","value":"application/json,text/csv,text/html,*/*"}]},
+        "options": {"timeout":120000},
+        "response": {"response":{"neverError":true,"responseFormat":"text"}}
+      }
+    },
+    {
+      "id": "normalize",
+      "name": "Normalize Tax Evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meta=$('Split Tax Sources').item.json; const raw=$json; const status=Number(raw.statusCode||200); let body=raw.body??raw.data??raw; if(typeof body!=='string') body=JSON.stringify(body); let parsed=null; try{parsed=JSON.parse(body);}catch(e){} const rows=parsed?(Array.isArray(parsed)?parsed:(parsed.records||parsed.data||parsed.features||[])):[]; const arr=Array.isArray(rows)?rows:[]; const pick=(a,keys)=>{for(const k of keys){if(a?.[k]!==undefined&&a?.[k]!==null&&String(a[k]).trim()!=='')return a[k];}return null;}; const normMoney=v=>{if(v===null||v===undefined||v==='')return null; const n=Number(String(v).replace(/[$,]/g,'')); return Number.isFinite(n)?n:null;}; const records=arr.slice(0,meta.limit).map(r=>{const a=r.attributes&&typeof r.attributes==='object'?r.attributes:r; const delinquent=normMoney(pick(a,['delinquent_tax_amount','delinquent_tax','tax_delinquent_amount','past_due_tax','past_due','amount_due'])); const statusText=String(pick(a,['tax_status','status','tax_state','delinquency_status'])||''); const explicit=/delinquent|past due|default|unpaid|in arrears/i.test(statusText); const signal=(delinquent!==null&&delinquent>0)||explicit?'tax_delinquent':null; return {source_record_id:String(pick(a,['parcel_id','parcelid','parcel','pin','pid','tax_account','account_number','record_id','id','objectid','OBJECTID'])||''),source_url:meta.source.url,source_observed_at:new Date().toISOString(),owner_name:pick(a,['owner_name','owner','ownname','taxpayer_name','taxpayer']),property_address:pick(a,['property_address','site_address','situs_address','address','situs']),parcel_id:pick(a,['parcel_id','parcelid','parcel','pin','pid','nparno']),signal,signal_strength:signal?'confirmed':'needs_review',structured_facts:{tax_status:pick(a,['tax_status','status','tax_state','delinquency_status']),delinquent_tax_amount:delinquent,tax_due_date:pick(a,['tax_due_date','due_date']),tax_amount:normMoney(pick(a,['tax_amount','annual_tax','total_tax'])),raw:a},raw_attributes:a};}).filter(r=>r.signal); return [{json:{success:status>=200&&status<300,request_id:meta.request_id,criterion:'tax_delinquent',source:meta.source,records,limitations:status>=400?['Official tax source returned HTTP '+status+'.']:[],missing_fields:records.filter(r=>!r.owner_name||!r.property_address).map(r=>r.source_record_id||'unknown'),policy:'Only explicit delinquency fields/statuses create a tax_delinquent signal; missing or ambiguous tax data is not treated as delinquent.'}}];"
+      }
+    },
+    {
+      "id": "respond",
+      "name": "Respond Tax Evidence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 0],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success:true,request_id:$('Prepare Tax Source Requests').first().json.request_id,criterion_results:$input.all().map(i=>i.json),policy:'Official tax evidence is traceable to the source URL/record; downstream review is required before outreach.'}) }}",
+        "options": {"responseCode": 200}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook":{"main":[[{"node":"Prepare Tax Source Requests","type":"main","index":0}]]},
+    "Prepare Tax Source Requests":{"main":[[{"node":"Split Tax Sources","type":"main","index":0}]]},
+    "Split Tax Sources":{"main":[[{"node":"Fetch Official Tax Source","type":"main","index":0}]]},
+    "Fetch Official Tax Source":{"main":[[{"node":"Normalize Tax Evidence","type":"main","index":0}]]},
+    "Normalize Tax Evidence":{"main":[[{"node":"Respond Tax Evidence","type":"main","index":0}]]}
+  },
+  "settings":{"executionOrder":"v1","callerPolicy":"workflowsFromSameOwner","availableInMCP":false},
+  "active":false
+}

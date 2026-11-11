@@ -152,3 +152,15 @@ Filters raw property leads before skip-trace spend, standardizes addresses, and 
 ## License
 
 Shared for portfolio and reference. The original Real Estate Acquisition product, brand, and backend are proprietary.
+
+
+### WF-020 — State/County Property Search Intake
+
+- `workflows/20-property-search-intake.json` accepts a state plus optional county/city/ZIP and distress/property criteria.
+- Researches candidate properties using the configured research provider with an official-public-record-first prompt.
+- Requires owner identity and source attribution before ingesting a candidate.
+- Creates/upserts the seller lead and acquisition deal in InsulaCRM using deterministic external IDs and idempotency keys.
+- Sends each ingested deal into WF-019 for property intelligence → comps/ARV → offer decision → ranking → jurisdiction review.
+- The search contract is state-agnostic; it is not hardcoded to Catawba County or North Carolina.
+- The workflow does not itself send seller outreach. Compliance remains the control point before downstream automated activity.
+- n8n execution and provider credentials must be validated before production activation.

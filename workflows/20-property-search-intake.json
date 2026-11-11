@@ -83,6 +83,20 @@
       }
     },
     {
+      "id": "sourceStrategy",
+      "name": "Build Criteria Source Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const criteria=new Set($json.criteria||[]);\nconst map={\n  tax_delinquent:{types:[\"tax_delinquency\",\"tax_record\",\"county_dataset\"],fields:[\"delinquent_tax_amount\",\"tax_status\",\"tax_amount\",\"parcel_id\",\"owner_name\"]},\n  vacant:{types:[\"gis_parcel\",\"property_record\",\"tax_record\",\"permit_record\"],fields:[\"property_address\",\"parcel_id\",\"property_type\",\"building_sqft\",\"year_built\",\"owner_name\",\"mailing_address\"]},\n  vacant_land:{types:[\"gis_parcel\",\"tax_record\",\"zoning_record\",\"county_dataset\"],fields:[\"parcel_id\",\"acreage\",\"zoning\",\"land_value\",\"property_type\",\"owner_name\"]},\n  absentee:{types:[\"property_record\",\"tax_record\",\"land_record\"],fields:[\"owner_name\",\"mailing_address\",\"property_address\",\"parcel_id\"]},\n  high_equity:{types:[\"land_record\",\"property_record\",\"tax_record\"],fields:[\"owner_name\",\"last_verified_sale_date\",\"last_verified_sale_price\",\"assessed_value\",\"parcel_id\"]},\n  probate:{types:[\"probate_record\",\"court_record\",\"land_record\"],fields:[\"owner_name\",\"estate_or_probate_signal\",\"property_address\",\"parcel_id\",\"source_record_id\"]},\n  pre_foreclosure:{types:[\"foreclosure_record\",\"court_record\",\"land_record\"],fields:[\"owner_name\",\"property_address\",\"parcel_id\",\"foreclosure_signal\",\"source_record_id\"]},\n  fixer_upper:{types:[\"permit_record\",\"code_enforcement\",\"property_record\",\"gis_parcel\"],fields:[\"property_address\",\"building_sqft\",\"year_built\",\"permit_records\",\"condition_signals\",\"parcel_id\"]},\n  distressed:{types:[\"tax_delinquency\",\"foreclosure_record\",\"permit_record\",\"code_enforcement\",\"property_record\"],fields:[\"distress_signals\",\"owner_name\",\"property_address\",\"parcel_id\",\"source_record_id\"]}\n};\nconst selected=[...criteria].flatMap(c=>map[c]||[]).reduce((acc,v)=>acc.includes(v)?acc:acc.concat(v),[]);\nconst defaultTypes=[\"property_record\",\"tax_record\",\"gis_parcel\",\"land_record\"];\nconst sourceTypes=selected.length?selected:defaultTypes;\nconst requestedFields=[...criteria].flatMap(c=>map[c]?.fields||[]).reduce((acc,v)=>acc.includes(v)?acc:acc.concat(v),[]);\nreturn [{json:{...$json,source_strategy:{criteria:[...criteria],priority_source_types:sourceTypes,required_evidence_fields:requestedFields,minimum_identity_fields:[\"owner_name\",\"property_address\",\"state\"],rules:[\"Use official sources first.\",\"Match each distress criterion to evidence from the corresponding source type when available.\",\"Do not infer a distress status from absence of data.\",\"Keep unknown fields null and list them in limitations.\",\"Preserve source_url or source_record_id for every candidate.\"]}}}];"
+      }
+    },
+    {
       "id": "research",
       "name": "Research Candidate Properties",
       "type": "n8n-nodes-base.httpRequest",
@@ -354,6 +368,43 @@
       }
     },
     {
+      "id": "evidence",
+      "name": "Persist Candidate Evidence to Insula",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3200,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/deals/' + $json.deal_id + '/evidence' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'property-search:evidence:' + $json.external_id + ':v1' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({evidence_type:'property_search_candidate',source:'public_record_search',source_record_id:$json.source_record_id||null,observed_at:$json.source_observed_at||null,confidence:$json.confidence??null,payload:{structured_facts:{owner_name:$json.owner_name||null,property_address:$json.property_address||null,city:$json.city||null,state:$json.state||null,zip:$json.zip||null,county:$json.county||null,parcel_id:$json.parcel_id||null,property_type:$json.property_type||null,distress_signals:$json.distress_signals||[],criteria:$json.criteria||[],search_request_id:$json.request_id},source:{url:$json.source_url||null,record_id:$json.source_record_id||null,observed_at:$json.source_observed_at||null},notes:$json.notes||null}}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
       "id": "orchestrate",
       "name": "Run WF-019 Underwriting Pipeline",
       "type": "n8n-nodes-base.httpRequest",
@@ -524,7 +575,7 @@
       "main": [
         [
           {
-            "node": "Run WF-019 Underwriting Pipeline",
+            "node": "Persist Candidate Evidence to Insula",
             "type": "main",
             "index": 0
           }
@@ -586,7 +637,7 @@
       "main": [
         [
           {
-            "node": "Research Candidate Properties",
+            "node": "Build Criteria Source Strategy",
             "type": "main",
             "index": 0
           }
@@ -598,6 +649,28 @@
         [
           {
             "node": "Parse Candidate Properties",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Criteria Source Strategy": {
+      "main": [
+        [
+          {
+            "node": "Research Candidate Properties",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Candidate Evidence to Insula": {
+      "main": [
+        [
+          {
+            "node": "Run WF-019 Underwriting Pipeline",
             "type": "main",
             "index": 0
           }

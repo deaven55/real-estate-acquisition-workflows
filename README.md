@@ -169,3 +169,9 @@ Shared for portfolio and reference. The original Real Estate Acquisition product
 ### WF-020 integration update
 
 Added criteria-driven source strategy and InsulaCRM candidate evidence persistence.
+
+### WF-021 — Official ArcGIS Property Source Adapter
+
+workflows/21-official-arcgis-source-adapter.json provides a reusable machine-readable source adapter for official ArcGIS FeatureServer/MapServer endpoints discovered by WF-020. It queries supported layers, normalizes common parcel fields (owner, situs/mailing address, parcel ID, assessed/land/building value, acreage, property type), and returns raw attributes alongside normalized evidence. WF-020 now invokes this adapter before its research-provider step so structured government GIS records are available to the candidate research prompt instead of relying exclusively on web search.
+
+The adapter is provider-neutral and only acts on discovered FeatureServer/MapServer URLs; it does not assume that every county uses the same schema. Unsupported or non-machine-readable sources remain available to the research provider as official source URLs.

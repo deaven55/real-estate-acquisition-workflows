@@ -175,3 +175,15 @@ Added criteria-driven source strategy and InsulaCRM candidate evidence persisten
 workflows/21-official-arcgis-source-adapter.json provides a reusable machine-readable source adapter for official ArcGIS FeatureServer/MapServer endpoints discovered by WF-020. It queries supported layers, normalizes common parcel fields (owner, situs/mailing address, parcel ID, assessed/land/building value, acreage, property type), and returns raw attributes alongside normalized evidence. WF-020 now invokes this adapter before its research-provider step so structured government GIS records are available to the candidate research prompt instead of relying exclusively on web search.
 
 The adapter is provider-neutral and only acts on discovered FeatureServer/MapServer URLs; it does not assume that every county uses the same schema. Unsupported or non-machine-readable sources remain available to the research provider as official source URLs.
+
+### WF-021 hardening — metadata-aware GIS extraction
+
+WF-021 now reads ArcGIS layer metadata before querying. It uses advertised field names and data types to safely apply jurisdiction filters for state/county/city/ZIP and a numeric delinquent-tax filter when that field is actually present. It also uses the layer's advertised record limits, paginates supported layers, preserves deterministic ordering, and deduplicates parcel candidates across pages/sources.
+
+The adapter remains provider-neutral: it does not assume every county uses the same schema, and it records which filters were actually applied plus limitations when a layer does not advertise pagination support.
+
+### Jurisdiction source registry
+
+`config/jurisdiction-source-registry.json` provides a provider-neutral registry for curated official sources. It is an accelerator, not a hardcoded geographic limit: unknown states/counties continue through controlled official-source discovery. The registry also records commercial-live-query restrictions where a government source publishes them.
+
+For example, Mecklenburg County's GIS documentation states that commercial users should not rely on, integrate with, or continuously consume its live data services; the registry therefore marks those live services as non-permitted for commercial querying and points the system toward downloaded/hosted copies instead.

@@ -780,6 +780,35 @@
           "timeout": 120000
         }
       }
+    },
+    {
+      "id": "runWf035",
+      "name": "Run WF-035 Offer Preparation Gate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1900,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-offer-preparation-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
     }
   ],
   "connections": {
@@ -1117,6 +1146,17 @@
       ]
     },
     "Run WF-034 Acquisition Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "Run WF-035 Offer Preparation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run WF-035 Offer Preparation Gate": {
       "main": [
         [
           {

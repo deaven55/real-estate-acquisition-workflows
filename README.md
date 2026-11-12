@@ -346,3 +346,12 @@ It returns `ready_for_exit`, `needs_data`, or `not_ready`, preserves the selecte
 - Calculates assignment profit when an assignment fee is supplied, or estimated transaction profit when contract/buyer prices and costs are supplied.
 - Distinguishes calculated profit from supplied realized profit and does not provide tax, legal, financial-verification, or closing-execution claims.
 - Outputs `profit_tracking`, `outcome`, `transaction_package`, `readiness`, and `next_action` for reporting/CRM handoff.
+
+
+### WF-044 — CRM Closeout & Deal Performance Reporting Gate
+- File: `workflows/44-crm-closeout-deal-performance-reporting-gate.json`
+- Adds the final CRM/reporting boundary after post-close reconciliation.
+- Normalizes closeout states: `closed_out`, `reported`, `crm_synced`, `complete`, `reopened`, and `failed`.
+- Produces a normalized CRM update payload with lead/deal identity, closeout stage, and performance outcome.
+- Tracks assignment fee, contract price, buyer price, closing/holding/other costs, and realized versus calculated profit/loss.
+- Outputs a reusable `reporting_record` for portfolio performance reporting while keeping tax/legal/financial-verification boundaries explicit.

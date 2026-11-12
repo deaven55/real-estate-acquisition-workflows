@@ -1,0 +1,79 @@
+name: Validate n8n workflows
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate-workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate workflow JSON, connections, and Code-node JavaScript
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const files = [];
+
+          function walk(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else if (entry.isFile() && full.endsWith('.json')) files.push(full);
+            }
+          }
+
+          walk('workflows');
+
+          const failures = [];
+          for (const file of files) {
+            let workflow;
+            try {
+              workflow = JSON.parse(fs.readFileSync(file, 'utf8'));
+            } catch (err) {
+              failures.push(`${file}: invalid JSON — ${err.message}`);
+              continue;
+            }
+
+            const nodeIds = new Set((workflow.nodes || []).map(n => n.id));
+            const connections = workflow.connections || {};
+
+            for (const [from, outputGroups] of Object.entries(connections)) {
+              if (!nodeIds.has(from)) {
+                failures.push(`${file}: connection source "${from}" is not a declared node`);
+              }
+              for (const groups of Object.values(outputGroups || {})) {
+                for (const group of groups || []) {
+                  for (const target of group || []) {
+                    if (!nodeIds.has(target.node)) {
+                      failures.push(`${file}: connection target "${target.node}" from "${from}" is not a declared node`);
+                    }
+                  }
+                }
+              }
+            }
+
+            for (const node of workflow.nodes || []) {
+              if (node.type !== 'n8n-nodes-base.code') continue;
+              const source = node.parameters?.jsCode || '';
+              try {
+                new Function(source);
+              } catch (err) {
+                failures.push(`${file}: Code node "${node.name}" has invalid JavaScript — ${err.message}`);
+              }
+            }
+          }
+
+          console.log(`Validated ${files.length} workflow JSON files.`);
+          if (failures.length) {
+            console.error(failures.join('\n'));
+            process.exit(1);
+          }
+          console.log('All workflow JSON, connection targets, and Code-node JavaScript checks passed.');
+          NODE

@@ -355,3 +355,20 @@ It returns `ready_for_exit`, `needs_data`, or `not_ready`, preserves the selecte
 - Produces a normalized CRM update payload with lead/deal identity, closeout stage, and performance outcome.
 - Tracks assignment fee, contract price, buyer price, closing/holding/other costs, and realized versus calculated profit/loss.
 - Outputs a reusable `reporting_record` for portfolio performance reporting while keeping tax/legal/financial-verification boundaries explicit.
+
+
+### WF-045 — Portfolio Performance & Acquisition/Disposition Analytics Gate
+
+`workflows/45-portfolio-performance-acquisition-disposition-analytics-gate.json` adds the portfolio-level reporting boundary after WF-044 closeout reporting. It accepts supplied transaction/reporting records and produces normalized operating metrics without inventing missing data.
+
+It reports:
+
+- deals closed, complete deals, profitable deals, losses, and total/average profit;
+- assignment fees and gross-spread metrics when supplied;
+- offer, contract, buyer-match, close, and completion funnel rates;
+- acquisition-to-offer, offer-to-contract, and contract-to-close cycle times when timestamps are supplied;
+- performance grouped by source, market/county/city, and matched acquisition criterion;
+- identity/provenance and data-quality coverage so incomplete reporting is visible;
+- normalized performance_summary, funnel_metrics, stage_cycle_times, source_performance, market_performance, criterion_performance, and data_quality payloads for downstream dashboards or operating reviews.
+
+WF-045 is analytics/reporting only. It does not fabricate metrics, provide tax/legal advice, validate title or funds, or execute financial/transaction activity.

@@ -39,3 +39,7 @@ Runtime execution still requires an n8n environment with the internal webhook ba
 ## Validation
 
 The repository CI validates WF-030 JSON wiring and Code-node syntax, then executes a deterministic fixture at `tests/fixtures/property-candidate-fanin.json`. The fixture verifies that three corroborating records for one parcel deduplicate to one candidate, preserve all three evidence records, match both requested criteria, and produce `criterion_supported`. The fixture is an offline unit-style check; it does not claim that live county/provider execution has succeeded.
+
+## WF-031 qualification gate
+
+`workflows/31-distressed-lead-qualification.json` is the next deterministic stage after candidate fan-in. It converts explicit candidate evidence into a review qualification state without inventing distress, equity, appraisal, seller intent, or outreach permission. Candidates can be marked `qualified_for_review`, `partial_support`, `needs_evidence`, or `needs_identity`. The workflow deliberately sets `automation_allowed:false`; jurisdiction/compliance and human review remain separate gates.

@@ -70,4 +70,28 @@ jobs:
             process.exit(1);
           }
           console.log('All integration workflow JSON, connection targets, and Code-node JavaScript checks passed.');
+
+          const fanin = JSON.parse(fs.readFileSync('workflows/30-property-candidate-fanin.json', 'utf8'));
+          const faninNode = (fanin.nodes || []).find(n => n.name === 'Aggregate And Rank Candidates');
+          if (!faninNode?.parameters?.jsCode) {
+            throw new Error('WF-030 Aggregate And Rank Candidates Code node not found');
+          }
+
+          const fixture = JSON.parse(fs.readFileSync('tests/fixtures/property-candidate-fanin.json', 'utf8'));
+          let fixtureResult;
+          const input = { first: () => ({ json: fixture }) };
+          try {
+            fixtureResult = new Function('$input', faninNode.parameters.jsCode + '\\nreturn $json;')(input);
+          } catch (err) {
+            throw new Error('WF-030 fan-in fixture execution failed: ' + err.message);
+          }
+
+          if (!fixtureResult.success) throw new Error('WF-030 fixture did not return success=true');
+          if (fixtureResult.candidate_count !== 1) throw new Error(`WF-030 fixture expected 1 deduped candidate, got ${fixtureResult.candidate_count}`);
+          const candidate = fixtureResult.candidate_records?.[0];
+          if (!candidate) throw new Error('WF-030 fixture returned no candidate');
+          if (candidate.evidence_count !== 3) throw new Error(`WF-030 fixture expected 3 corroborating evidence records, got ${candidate.evidence_count}`);
+          if (candidate.matched_criteria?.length !== 2) throw new Error(`WF-030 fixture expected 2 matched criteria, got ${candidate.matched_criteria?.length}`);
+          if (candidate.evidence_status !== 'criterion_supported') throw new Error(`WF-030 fixture expected criterion_supported, got ${candidate.evidence_status}`);
+          console.log('WF-030 deterministic fan-in fixture passed: dedupe, corroborating evidence, criterion matching, and support status are correct.');
           NODE

@@ -621,6 +621,35 @@
           "timeout": 60000
         }
       }
+    },
+    {
+      "id": "candidateFanIn",
+      "name": "Aggregate And Rank Property Candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2040,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-property-candidate-fanin-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,gis_records:$json.gis_records||[],gis_limitations:$json.gis_limitations||[],non_arcgis_records:$json.non_arcgis_records||[],non_arcgis_limitations:$json.non_arcgis_limitations||[],criterion_evidence:$json.criterion_evidence||[],criterion_evidence_limitations:$json.criterion_evidence_limitations||[]}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
     }
   ],
   "connections": {
@@ -851,7 +880,7 @@
       "main": [
         [
           {
-            "node": "Research Candidate Properties",
+            "node": "Aggregate And Rank Property Candidates",
             "type": "main",
             "index": 0
           }
@@ -896,6 +925,17 @@
         [
           {
             "node": "Build Criteria Source Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate And Rank Property Candidates": {
+      "main": [
+        [
+          {
+            "node": "Research Candidate Properties",
             "type": "main",
             "index": 0
           }

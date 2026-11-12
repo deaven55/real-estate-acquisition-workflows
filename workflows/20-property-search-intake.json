@@ -717,7 +717,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,gis_records:[],non_arcgis_records:[],criterion_evidence:$json.canonical_records||[],gis_limitations:$json.gis_limitations||[],non_arcgis_limitations:$json.non_arcgis_limitations||[],criterion_evidence_limitations:$json.criterion_evidence_limitations||[]}) }}",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,canonical_records:$json.canonical_records||[],gis_records:[],non_arcgis_records:[],criterion_evidence:[],gis_limitations:$json.gis_limitations||[],non_arcgis_limitations:$json.non_arcgis_limitations||[],criterion_evidence_limitations:$json.criterion_evidence_limitations||[]}) }}",
         "options": {
           "timeout": 120000
         }

@@ -246,6 +246,12 @@ See `docs/PROPERTY_CANDIDATE_FANIN.md`.
 
 ### WF-033 — Underwriting to InsulaCRM Status Sync
 
+### WF-035 — Offer Preparation & Seller Review Gate
+
+`workflows/35-offer-preparation-seller-review-gate.json` converts an approved acquisition decision into a structured offer draft. It preserves the MAO and canonical property identity, accepts an explicit proposed offer amount or the calculated MAO, records seller/contact data when supplied, and returns `draft_ready` versus `needs_review`. It is intentionally draft-only: it does not send an offer, make a legal representation, or authorize seller outreach.
+
+WF-020 now routes WF-034 → WF-035 → WF-033 so offer-readiness state is available to the CRM status boundary before the workflow returns the candidate result.
+
 ### WF-034 — Acquisition Decision & Offer Readiness Gate
 
 `workflows/34-acquisition-decision-gate.json` converts verified underwriting inputs into an explicit acquisition decision. It calculates a maximum allowable offer only when required inputs are present, records missing fields instead of guessing, preserves candidate identity/evidence, and exposes `offer_ready` / `needs_data` / `not_approved` states for CRM and downstream disposition workflows.

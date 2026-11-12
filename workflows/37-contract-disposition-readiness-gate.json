@@ -47,6 +47,35 @@
           "responseCode": 200
         }
       }
+    },
+    {
+      "id": "buyerMatch",
+      "name": "Buyer Matching Endpoint",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        920,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-buyer-matching-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
     }
   ],
   "connections": {
@@ -62,6 +91,17 @@
       ]
     },
     "Evaluate Contract & Disposition Readiness": {
+      "main": [
+        [
+          {
+            "node": "Buyer Matching Endpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buyer Matching Endpoint": {
       "main": [
         [
           {

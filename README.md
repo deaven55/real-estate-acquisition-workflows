@@ -589,3 +589,20 @@ It produces:
 - an explicit `next_action`.
 
 WF-058 is measurement-only. It does not automatically escalate, retry, contact parties, change pipeline state, or make legal/title/funding determinations.
+
+
+### WF-059 — Operating Queue Prioritization & Capacity Planning Gate
+
+`workflows/59-operating-queue-prioritization-capacity-planning-gate.json` converts operating metrics and supplied pipeline records into a deterministic work queue. It scores records using priority, blocking state, SLA breach, and age, then separates the dispatch queue from deferred work based on configurable operating capacity.
+
+It produces:
+
+- `queue_health`;
+- prioritized records with deterministic priority scores;
+- `dispatch_queue` and `deferred_queue`;
+- critical/high/blocked/SLA-breach counts;
+- queue data-quality issues;
+- capacity-aware operating guidance;
+- an explicit `next_action`.
+
+WF-059 is prioritization-only. It does not assign employees, execute external actions, contact sellers/buyers, or change deal state automatically.

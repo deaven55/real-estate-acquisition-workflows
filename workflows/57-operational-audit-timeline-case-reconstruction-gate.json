@@ -1,0 +1,42 @@
+{
+  "name": "WF-057 Operational Audit Timeline & Case Reconstruction Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-057-operational-audit-timeline", "responseMode": "responseNode", "options": {} },
+      "id": "wf057-webhook",
+      "name": "Operational Audit Timeline Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-057-operational-audit-timeline"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const events=Array.isArray(input.events)?input.events:Array.isArray(input.audit_trail)?input.audit_trail:[]; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const ts=v=>{const n=Date.parse(v);return Number.isNaN(n)?null:n}; const sorted=[...events].map((e,i)=>({e,i,t:ts(e.decision_at??e.occurred_at??e.created_at)})).sort((a,b)=>(a.t??Number.MAX_SAFE_INTEGER)-(b.t??Number.MAX_SAFE_INTEGER)); const caseIds=new Map(); const timeline=[]; const gaps=[]; const invalid=[]; sorted.forEach((x,idx)=>{const e=x.e; const id=norm(e.event_id??e.audit_id??e.id); const entity=norm(e.entity_id??e.deal_id??e.lead_id??e.property_id); const type=lower(e.event_type??e.type); if(!id)invalid.push({record_index:x.i,type:'missing_event_id',severity:'blocking'}); if(!entity)invalid.push({record_index:x.i,type:'missing_entity_id',severity:'review'}); if(!x.t)invalid.push({record_index:x.i,type:'missing_or_invalid_timestamp',severity:'review'}); const prior=idx?sorted[idx-1].t:null; const gap=x.t&&prior?Math.round((x.t-prior)/3600000*100)/100:null; if(gap!==null&&gap>72)gaps.push({from_event_id:norm(sorted[idx-1].e.event_id??sorted[idx-1].e.id)||null,to_event_id:id||null,gap_hours:gap}); if(entity){if(!caseIds.has(entity))caseIds.set(entity,[]);caseIds.get(entity).push(id||null);} timeline.push({sequence:idx+1,event_id:id||null,event_type:type||null,entity_id:entity||null,actor_id:norm(e.actor_id??e.approver_id)||null,action:norm(e.action)||null,decision:norm(e.decision??e.outcome)||null,occurred_at:e.decision_at??e.occurred_at??e.created_at??null,source_workflow:e.source_workflow??e.workflow??null});}); const entitySummaries=[...caseIds.entries()].map(([entity,ids])=>({entity_id:entity,event_count:ids.length,event_ids:ids})); const health=invalid.some(x=>x.severity==='blocking')?'blocked':invalid.length||gaps.length?'needs_review':events.length?'ready':'needs_review'; return[{json:{ok:health==='ready',case_reconstruction_health:health,event_count:events.length,entity_count:entitySummaries.length,timeline,entity_summaries:entitySummaries,timeline_gaps:gaps,validation_issues:invalid,next_action:health==='ready'?'Use the reconstructed timeline as the operational evidence sequence for review, reporting, and dispute resolution.':health==='blocked'?'Repair blocking audit records before relying on the case timeline.':'Review timeline gaps and incomplete timestamps/entity references before treating the reconstruction as complete.',policy:{reconstruction_only:true,no_external_side_effects:true,no_automatic_retry:true,no_legal_conclusion:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf057-timeline",
+      "name": "Reconstruct Operational Case Timeline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf057-response",
+      "name": "Respond Case Timeline",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Operational Audit Timeline Webhook": { "main": [[{ "node": "Reconstruct Operational Case Timeline", "type": "main", "index": 0 }]] },
+    "Reconstruct Operational Case Timeline": { "main": [[{ "node": "Respond Case Timeline", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf057-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

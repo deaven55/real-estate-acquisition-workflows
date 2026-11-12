@@ -310,3 +310,10 @@ WF-037 now hands a disposition-ready request into WF-038. This creates the first
 Supported states include `queued`, `reviewed`, `contact_authorized`, `contacted`, `interested`, `requested_disclosures`, `countered`, `proof_of_funds_pending`, `proof_of_funds_verified`, `declined`, `unresponsive`, `selected`, `backup`, and `disqualified`.
 
 WF-039 is intentionally a state-management boundary. It does not contact buyers, negotiate terms, verify proof of funds, or make legal determinations. Buyer selection remains an explicit operational decision, and outreach is only marked authorized when an external caller supplies that authorization.
+
+
+### WF-040 — Buyer Selection & Exit Strategy Gate
+
+`workflows/40-buyer-selection-exit-strategy-gate.json` converts buyer-response state into an explicit exit-strategy readiness decision. It validates property identity, executed contract identity, selected-buyer readiness, supported exit strategy, and assignment economics when applicable. Supported strategies include assignment, novation, double-close, wholetail, resale, and hold.
+
+It returns `ready_for_exit`, `needs_data`, or `not_ready`, preserves the selected and backup buyer context, calculates an estimated gross spread when the relevant prices are supplied, and recommends the next operational action. It does not create contracts, negotiate, verify funds, provide legal advice, or execute a closing.

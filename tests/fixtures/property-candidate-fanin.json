@@ -1,0 +1,52 @@
+{
+  "request_id": "fixture-001",
+  "state": "NC",
+  "county": "Catawba",
+  "criteria": [
+    "tax_delinquent",
+    "fixer_upper"
+  ],
+  "limit": 10,
+  "gis_records": [
+    {
+      "parcel_id": "P-100",
+      "owner_name": "Jane Doe",
+      "property_address": "123 Main St",
+      "state": "NC",
+      "source_url": "https://county.example/gis/1",
+      "source_type": "gis_parcel",
+      "criterion_signals": {
+        "fixer_upper": true
+      }
+    }
+  ],
+  "non_arcgis_records": [
+    {
+      "parcel_id": "P-100",
+      "owner_name": "Jane Doe",
+      "property_address": "123 Main St",
+      "state": "NC",
+      "source_record_id": "T-100",
+      "source_url": "https://county.example/tax/100",
+      "source_type": "tax_delinquency",
+      "criterion_signals": {
+        "tax_delinquent": true
+      },
+      "criterion_evidence": "delinquent tax record"
+    }
+  ],
+  "criterion_evidence": [
+    {
+      "parcel_id": "P-100",
+      "owner_name": "Jane Doe",
+      "property_address": "123 Main St",
+      "source_record_id": "V-100",
+      "source_url": "https://county.example/permit/100",
+      "source_type": "permit_record",
+      "criterion_signals": {
+        "fixer_upper": true
+      },
+      "criterion_evidence": "permit and inspection evidence"
+    }
+  ]
+}

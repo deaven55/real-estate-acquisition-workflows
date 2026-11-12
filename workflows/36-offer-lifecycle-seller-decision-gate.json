@@ -1,0 +1,82 @@
+{
+  "name": "WholeStack WF-036: Offer Lifecycle & Seller Decision Gate",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-offer-lifecycle-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "classify",
+      "name": "Classify Offer Lifecycle State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input=$input.first().json.body||$input.first().json; const raw=String(input.offer_status||input.status||input.seller_decision||\"draft_ready\").trim().toLowerCase().replace(/[- ]+/g,\"_\"); const aliases={draft:\"draft_ready\",prepared:\"draft_ready\",ready:\"draft_ready\",sent:\"sent\",delivered:\"sent\",counter:\"seller_countered\",countered:\"seller_countered\",accepted:\"accepted\",signed:\"accepted\",rejected:\"rejected\",declined:\"rejected\",expired:\"expired\",withdrawn:\"withdrawn\",cancelled:\"withdrawn\",canceled:\"withdrawn\",contract_pending:\"contract_pending\",executed:\"executed\"}; const status=aliases[raw]||raw; const allowed=[\"draft_ready\",\"sent\",\"seller_countered\",\"accepted\",\"rejected\",\"expired\",\"withdrawn\",\"contract_pending\",\"executed\"]; const valid=allowed.includes(status); const identityReady=Boolean(input.candidate_key||input.normalized_identity_key||input.parcel_id||input.propertyId||input.dealId||input.deal_id); const transitions={draft_ready:[\"sent\",\"withdrawn\"],sent:[\"seller_countered\",\"accepted\",\"rejected\",\"expired\",\"withdrawn\"],seller_countered:[\"sent\",\"accepted\",\"rejected\",\"withdrawn\"],accepted:[\"contract_pending\",\"withdrawn\"],contract_pending:[\"executed\",\"withdrawn\"],executed:[],rejected:[],expired:[],withdrawn:[]}; const prior=String(input.previous_offer_status||\"\").trim().toLowerCase(); const transitionValid=!prior||!transitions[prior]||transitions[prior].includes(status)||prior===status; const stageMap={draft_ready:\"offer_draft_ready\",sent:\"offer_sent\",seller_countered:\"seller_countered\",accepted:\"seller_accepted\",rejected:\"offer_rejected\",expired:\"offer_expired\",withdrawn:\"offer_withdrawn\",contract_pending:\"contract_pending\",executed:\"contract_executed\"}; const nextAction={draft_ready:\"seller_review_and_send\",sent:\"await_seller_response\",seller_countered:\"review_counteroffer\",accepted:\"prepare_contract\",rejected:\"stop_offer_sequence\",expired:\"review_and_reissue_if_appropriate\",withdrawn:\"stop_offer_sequence\",contract_pending:\"track_contract_execution\",executed:\"handoff_to_disposition\"}; const warnings=[]; if(!identityReady)warnings.push(\"property_identity_missing\"); if(!valid)warnings.push(\"unsupported_offer_status\"); if(!transitionValid)warnings.push(\"invalid_offer_transition\"); const ready=valid&&identityReady&&transitionValid; return [{json:{...input,offer_lifecycle:{offer_id:input.offer_id||null,previous_status:prior||null,status,valid,transition_valid:transitionValid,ready,crm_stage:ready?stageMap[status]:\"offer_review_needed\",next_action:ready?nextAction[status]:\"review_required\",warnings, seller_decision:status===\"accepted\"?\"accepted\":status===\"seller_countered\"?\"countered\":status===\"rejected\"?\"rejected\":null,disposition_handoff_ready:status===\"executed\"}}}];"
+      }
+    },
+    {
+      "id": "response",
+      "name": "Respond Lifecycle Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        620,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Classify Offer Lifecycle State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Offer Lifecycle State": {
+      "main": [
+        [
+          {
+            "node": "Respond Lifecycle Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

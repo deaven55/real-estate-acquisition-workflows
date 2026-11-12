@@ -252,6 +252,12 @@ See `docs/PROPERTY_CANDIDATE_FANIN.md`.
 
 WF-020 now routes WF-034 → WF-035 → WF-033 so offer-readiness state is available to the CRM status boundary before the workflow returns the candidate result.
 
+### WF-036 — Offer Lifecycle & Seller Decision Gate
+
+`workflows/36-offer-lifecycle-seller-decision-gate.json` tracks the seller-side offer state after a draft is prepared. It normalizes offer statuses, validates supported transitions, preserves property/deal identity, recommends the next operational action, and exposes CRM stages for draft, sent, countered, accepted, rejected, expired, withdrawn, contract-pending, and executed states.
+
+WF-035 now hands its prepared offer into WF-036. The lifecycle gate is state-management only: it does not send the offer, negotiate terms, or create a legally binding contract. An executed offer is marked ready for the next disposition/contract workflow.
+
 ### WF-034 — Acquisition Decision & Offer Readiness Gate
 
 `workflows/34-acquisition-decision-gate.json` converts verified underwriting inputs into an explicit acquisition decision. It calculates a maximum allowable offer only when required inputs are present, records missing fields instead of guessing, preserves candidate identity/evidence, and exposes `offer_ready` / `needs_data` / `not_approved` states for CRM and downstream disposition workflows.

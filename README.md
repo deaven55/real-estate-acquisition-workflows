@@ -372,3 +372,10 @@ It reports:
 - normalized performance_summary, funnel_metrics, stage_cycle_times, source_performance, market_performance, criterion_performance, and data_quality payloads for downstream dashboards or operating reviews.
 
 WF-045 is analytics/reporting only. It does not fabricate metrics, provide tax/legal advice, validate title or funds, or execute financial/transaction activity.
+
+
+### WF-046 — Acquisition Pipeline Orchestration & Operating Control Gate
+
+`workflows/46-acquisition-pipeline-orchestration-operating-control-gate.json` adds the operating-control boundary above the transaction workflows. It accepts supplied pipeline records and produces a normalized control snapshot showing stage concentration, active versus terminal records, blockers, transition regressions, data-quality gaps, and prioritized next actions.
+
+The control layer recognizes the acquisition/disposition lifecycle from `new` through `closed_out`, including underwriting, offers, contracting, buyer matching, transaction, and closing states. It does not invent pipeline state or automatically contact sellers/buyers. Its purpose is to make the workflow stack operationally observable and provide a safe queue for the next human/system action.

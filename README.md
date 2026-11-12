@@ -241,3 +241,17 @@ It:
 WF-020 now routes its collected source records through WF-030 before the research provider sees them.
 
 See `docs/PROPERTY_CANDIDATE_FANIN.md`.
+
+### WF-031 — Universal Property Record Normalizer
+
+`workflows/31-universal-property-record-normalizer.json` adds the canonical normalization boundary for property records arriving from GIS, assessor/tax, open-data, court/probate, permit/code, and research-provider sources.
+
+It:
+- maps common field aliases into one canonical property schema;
+- normalizes state, ZIP, text, and numeric values;
+- preserves raw source attributes and provenance;
+- creates deterministic normalized identity keys;
+- removes exact identity duplicates without discarding the first canonical record;
+- explicitly reports missing identity/provenance fields instead of inventing values.
+
+WF-031 is intentionally source-provider-neutral. The next integration pass will place this boundary before WF-030 so every evidence family enters candidate fan-in through the same canonical contract.

@@ -244,7 +244,7 @@ See `docs/PROPERTY_CANDIDATE_FANIN.md`.
 
 ### WF-032 — Distressed Lead Qualification Gate
 
-`workflows/31-distressed-lead-qualification.json` is the evidence gate between candidate fan-in and downstream property research. It requires explicit identity plus criterion evidence, marks candidates as `qualified_for_review`, and passes only review-ready candidates downstream while retaining the full qualification audit trail. It does not determine legal distress, equity, appraisal, seller intent, or outreach permission.
+`workflows/32-distressed-lead-qualification.json` is the evidence gate between candidate fan-in and downstream property research. It requires explicit identity plus criterion evidence, marks candidates as `qualified_for_review`, and passes only review-ready candidates downstream while retaining the full qualification audit trail. It does not determine legal distress, equity, appraisal, seller intent, or outreach permission.
 
 ### WF-031 — Universal Property Record Normalizer
 

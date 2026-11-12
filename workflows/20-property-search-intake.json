@@ -564,6 +564,35 @@
       }
     },
     {
+      "id": "crmStatusSync",
+      "name": "Sync Underwriting Status to InsulaCRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3420,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-underwriting-crm-status-sync-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({dealId:$json.deal_id,leadId:$json.lead_id,propertyId:$json.property_id,candidate_key:$json.candidate_key||null,normalized_identity_key:$json.normalized_identity_key||null,external_id:$json.external_id||null,parcel_id:$json.parcel_id||null,evidence_count:$json.evidence_count??0,evidence_status:$json.evidence_status||null,underwriting_pipeline:$json}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
       "id": "result",
       "name": "Build Candidate Result",
       "type": "n8n-nodes-base.code",
@@ -573,7 +602,7 @@
         -80
       ],
       "parameters": {
-        "jsCode": "const base=$('Preserve Deal Context').item.json; return [{json:{success:true,request_id:base.request_id,candidate_index:base.candidate_index,property:{owner_name:base.owner_name,address:base.property_address,city:base.city,state:base.state,zip:base.zip,county:base.county,parcel_id:base.parcel_id,distress_signals:base.distress_signals||[],criterion_signals:base.criterion_signals||{},criterion_evidence:base.criterion_evidence||[],criterion_missing_fields:base.criterion_missing_fields||[],criterion_match_status:base.criterion_match_status||{}},source:{source_url:base.source_url||null,source_record_id:base.source_record_id||null,confidence:base.confidence??null},insula:{lead_id:base.lead_id,property_id:base.property_id,deal_id:base.deal_id},underwriting_pipeline:$json,identity:{candidate_key:base.candidate_key||null,normalized_identity_key:base.normalized_identity_key||null,external_id:base.external_id||null,parcel_id:base.parcel_id||null},evidence:{count:base.evidence_count??0,source_types:base.evidence_source_types||[],matched_criteria:base.matched_criteria||[],status:base.evidence_status||null,normalization_warnings:base.normalization_warnings||[]}}}];"
+        "jsCode": "const base=$('Preserve Deal Context').item.json; const sync=$json; return [{json:{...base,crm_status_sync:sync,success:true,request_id:base.request_id,candidate_index:base.candidate_index,property:{owner_name:base.owner_name,address:base.property_address,city:base.city,state:base.state,zip:base.zip,county:base.county,parcel_id:base.parcel_id,distress_signals:base.distress_signals||[],criterion_signals:base.criterion_signals||{},criterion_evidence:base.criterion_evidence||[],criterion_missing_fields:base.criterion_missing_fields||[],criterion_match_status:base.criterion_match_status||{}},source:{source_url:base.source_url||null,source_record_id:base.source_record_id||null,confidence:base.confidence??null},insula:{lead_id:base.lead_id,property_id:base.property_id,deal_id:base.deal_id},underwriting_pipeline:base.underwriting_pipeline||$json,identity:{candidate_key:base.candidate_key||null,normalized_identity_key:base.normalized_identity_key||null,external_id:base.external_id||null,parcel_id:base.parcel_id||null},evidence:{count:base.evidence_count??0,source_types:base.evidence_source_types||[],matched_criteria:base.matched_criteria||[],status:base.evidence_status||null,normalization_warnings:base.normalization_warnings||[]}}}];"
       }
     },
     {
@@ -846,7 +875,7 @@
       "main": [
         [
           {
-            "node": "Build Candidate Result",
+            "node": "Sync Underwriting Status to InsulaCRM",
             "type": "main",
             "index": 0
           }
@@ -1041,6 +1070,17 @@
         [
           {
             "node": "Qualify Distressed Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Underwriting Status to InsulaCRM": {
+      "main": [
+        [
+          {
+            "node": "Build Candidate Result",
             "type": "main",
             "index": 0
           }

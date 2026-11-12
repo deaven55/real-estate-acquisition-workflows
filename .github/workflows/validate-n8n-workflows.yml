@@ -1,0 +1,73 @@
+name: Validate n8n integration workflows
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  validate-workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate integration workflow JSON, connections, and Code-node JavaScript
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          const files = fs.readdirSync('workflows')
+            .filter(name => /^(2[0-9]|30)-.*\.json$/.test(name))
+            .map(name => path.join('workflows', name));
+
+          const failures = [];
+
+          for (const file of files) {
+            let workflow;
+            try {
+              workflow = JSON.parse(fs.readFileSync(file, 'utf8'));
+            } catch (err) {
+              failures.push(`${file}: invalid JSON — ${err.message}`);
+              continue;
+            }
+
+            const nodeIds = new Set((workflow.nodes || []).map(n => n.id));
+            const nodeNames = new Set((workflow.nodes || []).map(n => n.name));
+
+            for (const [from, outputGroups] of Object.entries(workflow.connections || {})) {
+              if (!nodeIds.has(from) && !nodeNames.has(from)) {
+                failures.push(`${file}: connection source "${from}" is not a declared node name or id`);
+              }
+
+              for (const groups of Object.values(outputGroups || {})) {
+                for (const group of groups || []) {
+                  for (const target of group || []) {
+                    if (!nodeIds.has(target.node) && !nodeNames.has(target.node)) {
+                      failures.push(`${file}: connection target "${target.node}" from "${from}" is not a declared node name or id`);
+                    }
+                  }
+                }
+              }
+            }
+
+            for (const node of workflow.nodes || []) {
+              if (node.type !== 'n8n-nodes-base.code') continue;
+              try {
+                new Function(node.parameters?.jsCode || '');
+              } catch (err) {
+                failures.push(`${file}: Code node "${node.name}" has invalid JavaScript — ${err.message}`);
+              }
+            }
+          }
+
+          console.log(`Validated ${files.length} integration workflow JSON files.`);
+          if (failures.length) {
+            console.error(failures.join('\n'));
+            process.exit(1);
+          }
+          console.log('All integration workflow JSON, connection targets, and Code-node JavaScript checks passed.');
+          NODE

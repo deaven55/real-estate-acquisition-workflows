@@ -85,6 +85,12 @@ For webhook/event-style writes, n8n should send an `Idempotency-Key` header. A d
 
 Retries must be safe. Do not create a second seller/property record merely because an upstream HTTP request timed out.
 
+## Canonical property-search handoff
+
+WF-020 now routes official GIS, non-ArcGIS, and criterion evidence through WF-031 (Universal Property Record Normalizer) before WF-030 (Property Candidate Fan-In). WF-030 emits canonical candidate identity and evidence metadata including `candidate_key`, `normalized_identity_key`, `evidence_count`, `evidence_source_types`, `matched_criteria`, `evidence_status`, and normalization warnings. WF-020 preserves these fields when creating/upserting the InsulaCRM lead and deal and when persisting candidate evidence, so CRM records remain traceable to the canonical acquisition evidence layer.
+
+The reusable `00-insula-crm-lead-upsert-adapter.json` also preserves the same canonical metadata in lead notes when supplied by an upstream workflow.
+
 ## Migration rules
 
 1. Do not delete Convex staging immediately.

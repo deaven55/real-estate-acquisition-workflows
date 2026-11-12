@@ -539,3 +539,19 @@ It produces:
 - an explicit `next_action`.
 
 WF-055 does not itself send seller/buyer messages, write CRM data, schedule closings, or perform other external side effects. It records and validates the result/receipt of an external executor so the rest of the operating system can distinguish **authorized**, **dispatched**, and **actually acknowledged/completed** actions.
+
+
+### WF-056 — External Action Reconciliation & Failure Recovery Gate
+
+`workflows/56-external-action-reconciliation-failure-recovery-gate.json` adds the reconciliation boundary after external action receipts. It distinguishes completed, failed, cancelled, and unresolved actions and creates a recovery queue for retryable failures without automatically retrying anything.
+
+It produces:
+
+- `reconciliation_health`;
+- normalized action/receipt status;
+- completion, failure, and cancellation counts;
+- retry candidates with failure reasons and attempt counts;
+- blocking reconciliation issues;
+- explicit recovery instructions requiring fresh human authorization.
+
+WF-056 is intentionally non-executing. It does not automatically retry external actions or contact sellers/buyers. A failed action must be reconciled and, where appropriate, separately authorized before another execution attempt.

@@ -317,3 +317,12 @@ WF-039 is intentionally a state-management boundary. It does not contact buyers,
 `workflows/40-buyer-selection-exit-strategy-gate.json` converts buyer-response state into an explicit exit-strategy readiness decision. It validates property identity, executed contract identity, selected-buyer readiness, supported exit strategy, and assignment economics when applicable. Supported strategies include assignment, novation, double-close, wholetail, resale, and hold.
 
 It returns `ready_for_exit`, `needs_data`, or `not_ready`, preserves the selected and backup buyer context, calculates an estimated gross spread when the relevant prices are supplied, and recommends the next operational action. It does not create contracts, negotiate, verify funds, provide legal advice, or execute a closing.
+
+
+### WF-041 — Assignment / Novation / Double-Close Transaction Tracking Gate
+- File: `workflows/41-assignment-novation-double-close-transaction-tracking-gate.json`
+- Adds the transaction-state boundary after buyer selection/exit-strategy readiness.
+- Normalizes transaction status across assignment, novation, double-close, and closing states.
+- Preserves canonical property identity, executed contract identity, selected/backup buyer context, and transaction economics.
+- Validates required transaction data and supported state transitions without claiming legal validity, title clearance, funding verification, or closing execution.
+- Outputs `transaction_status`, `readiness`, `transaction_package`, `closing_ready`, and `next_action` for downstream closing coordination.

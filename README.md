@@ -445,3 +445,22 @@ It produces:
 - `blocking_contracts`, compatibility warnings, and an explicit `next_action`.
 
 WF-050 is registry validation only. It does not execute external side effects, contact sellers/buyers, validate legal/title status, or claim funding verification. Its purpose is to establish a version-pinned dependency source of truth as the acquisition/disposition stack grows.
+
+
+### WF-051 — Unified Operational Control Plane Gate
+
+`workflows/51-unified-operational-control-plane-gate.json` adds the unified operating snapshot above the workflow governance layers. It accepts supplied pipeline/control snapshots and consolidates lifecycle state, identity coverage, blockers, transition warnings, active/terminal counts, and prioritized operating actions.
+
+It produces:
+
+- `control_plane_health` with `ready`, `needs_review`, or `blocked`;
+- lifecycle `stage_counts` and active/terminal record counts;
+- critical blockers for missing canonical identity, invalid stages, and blocked upstream health;
+- warnings for missing next actions and update timestamps;
+- stage-regression warnings;
+- identity coverage;
+- a prioritized `operating_queue`;
+- source-workflow and control-group visibility;
+- an explicit `next_action`.
+
+WF-051 is an operational control-plane boundary, not an execution engine. It does not automatically contact sellers/buyers, execute external side effects, validate legal/title status, or claim funding verification. Its purpose is to give the acquisition/disposition system one normalized operating snapshot for deciding what should happen next.

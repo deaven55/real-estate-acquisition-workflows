@@ -410,3 +410,20 @@ It detects:
 - prior terminal results that should be returned rather than re-executed.
 
 It produces an execution ledger, duplicate/replay analysis, payload conflicts, and an explicit ledger readiness state. WF-048 is tracking and decision support only: it does not automatically retry executions or perform external side effects. The purpose is to establish a deterministic anti-duplication contract before higher-level automation is allowed to replay failed or timed-out work.
+
+
+### WF-049 — Workflow Contract & Schema Compatibility Gate
+
+`workflows/49-workflow-contract-schema-compatibility-gate.json` adds the contract-hardening boundary after the execution ledger layer. It validates supplied workflow handoff records against lifecycle-stage requirements and detects schema/contract drift before downstream automation is allowed to rely on a payload.
+
+It produces:
+
+- `contract_health` with `ready`, `needs_review`, or `blocked`;
+- blocking schema/contract violations and compatibility warnings;
+- dependency contracts showing upstream/downstream workflow boundaries;
+- required fields for the declared lifecycle stage;
+- schema-version consistency checks;
+- unsupported status/outcome detection and self-dependency detection;
+- a `blocking_contracts` list and explicit `next_action`.
+
+WF-049 is contract validation only. It does not execute external side effects, contact sellers/buyers, validate legal/title status, or claim funding verification. Its purpose is to make the WF-020 through WF-048 stack safer to integrate by catching missing fields, incompatible statuses, and contract-version drift before production handoff.

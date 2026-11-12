@@ -1,0 +1,42 @@
+{
+  "name": "WF-044 CRM Closeout & Deal Performance Reporting Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-044-crm-closeout-performance", "responseMode": "responseNode", "options": {} },
+      "id": "wf044-webhook",
+      "name": "CRM Closeout Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf044-crm-closeout-performance"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const source=input.closeout??input;\nconst identity={candidate_key:source.candidate_key??null,normalized_identity_key:source.normalized_identity_key??null,lead_id:source.leadId??source.lead_id??null,deal_id:source.dealId??source.deal_id??null,property_id:source.propertyId??source.property_id??null,parcel_id:source.parcel_id??null};\nconst strategy=String(source.exit_strategy??source.disposition_strategy??'').toLowerCase().trim(); const allowed=['assignment','novation','double_close','wholetail','resale','hold','review'];\nconst status=String(source.closeout_status??source.post_close_status??'closed_out').toLowerCase().trim(); const statuses=['closed_out','reported','crm_synced','complete','reopened','failed'];\nconst prior=String(source.prior_closeout_status??'').toLowerCase().trim(); const transitions={closed_out:['reported','crm_synced','complete','reopened','failed'],reported:['crm_synced','complete','reopened','failed'],crm_synced:['complete','reopened','failed'],complete:['reopened'],reopened:['closed_out','failed'],failed:['closed_out','reopened']};\nconst missing=[]; if(!identity.candidate_key&&!identity.normalized_identity_key&&!identity.property_id&&!identity.parcel_id)missing.push('property_identity'); if(!source.executed_contract_id&&!source.contract_id)missing.push('executed_contract_id'); if(!allowed.includes(strategy))missing.push('supported_exit_strategy'); if(!statuses.includes(status))missing.push('supported_closeout_status');\nconst transitionValid=!prior||prior===status||(transitions[prior]??[]).includes(status);\nconst n=v=>{const x=Number(v);return Number.isFinite(x)?x:null}; const assignmentFee=n(source.assignment_fee); const contractPrice=n(source.contract_price??source.purchase_price); const buyerPrice=n(source.buyer_purchase_price??source.buyer_price); const closingCosts=n(source.closing_costs)??0; const holdingCosts=n(source.holding_costs)??0; const otherCosts=n(source.other_costs)??0; const realized=n(source.realized_profit??source.net_profit); const calculated=assignmentFee!==null&&strategy==='assignment'?assignmentFee:(contractPrice!==null&&buyerPrice!==null?buyerPrice-contractPrice-closingCosts-holdingCosts-otherCosts:null); const profit=realized??calculated;\nif(['reported','crm_synced','complete'].includes(status)&&profit===null)missing.push('profit_or_loss');\nconst outcome=profit===null?'pending':profit>0?'profit':profit<0?'loss':'break_even'; const readiness=missing.length?'needs_data':!transitionValid?'invalid_transition':status==='complete'?'complete':status==='crm_synced'?'crm_synced':status==='reported'?'reported':'ready_for_reporting';\nconst crmStage=readiness==='complete'?'closed_won':outcome==='loss'?'closed_loss':'closed_out'; const performance={profit_or_loss:profit,profit_source:realized!==null?'realized':'calculated',outcome,assignment_fee:assignmentFee,contract_price:contractPrice,buyer_purchase_price:buyerPrice,closing_costs:closingCosts,holding_costs:holdingCosts,other_costs:otherCosts};\nconst next=readiness==='needs_data'?'Collect missing closeout data before final reporting.':readiness==='invalid_transition'?'Review the prior closeout state and use a supported transition.':status==='complete'?'Archive the completed deal and include it in portfolio performance reporting.':status==='crm_synced'?'Complete closeout after confirming the CRM record reflects the transaction outcome.':'Sync the normalized outcome into the CRM/reporting layer, then mark the deal complete.';\nreturn[{json:{ok:!['needs_data','invalid_transition'].includes(readiness),readiness,closeout_status:status,crm_stage:crmStage,identity,executed_contract_id:source.executed_contract_id??source.contract_id??null,exit_strategy:strategy,performance,transaction_outcome:outcome,transition_valid:transitionValid,missing_requirements:missing,crm_update:{lead_id:identity.lead_id,deal_id:identity.deal_id,stage:crmStage,closeout_status:status,performance},reporting_record:{identity,exit_strategy:strategy,performance,transaction_outcome:outcome,closed_date:source.closed_date??source.closing_date??null},next_action:next,policy:{no_tax_advice:true,no_legal_validation:true,no_financial_verification_claim:true,reporting_and_crm_sync_only:true}}}];"
+      },
+      "id": "wf044-normalize",
+      "name": "Normalize Closeout & Performance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf044-response",
+      "name": "Respond CRM Closeout",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "CRM Closeout Webhook": { "main": [[{ "node": "Normalize Closeout & Performance", "type": "main", "index": 0 }]] },
+    "Normalize Closeout & Performance": { "main": [[{ "node": "Respond CRM Closeout", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf044-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

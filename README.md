@@ -292,3 +292,12 @@ WF-031 is intentionally source-provider-neutral. It is now wired directly before
 The gate distinguishes `buyer_matching_ready` from legal contract execution: it does not create or validate a legally binding contract, negotiate terms, or contact buyers. Missing data is surfaced explicitly instead of being guessed.
 
 WF-036 now routes its lifecycle result through WF-037 so an `executed` state can become a structured disposition-ready request while earlier offer states remain review-oriented.
+
+
+### WF-038 — Buyer Matching & Buy-Box Ranking
+
+`workflows/38-buyer-matching-buy-box-ranking.json` ranks supplied buyer records against a disposition-ready property using deterministic buy-box criteria: price limits, property type, geography, ZIP, disposition strategy, and estimated spread when sufficient inputs exist.
+
+It returns scored matches, explicit mismatch reasons, and a top-match shortlist. It does **not** contact buyers or authorize outreach; the output is a reviewable matching queue.
+
+WF-037 now hands a disposition-ready request into WF-038. This creates the first structured buyer-disposition boundary after the seller-side acquisition lifecycle.

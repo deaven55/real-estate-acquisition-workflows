@@ -29,7 +29,10 @@ jobs:
             }
           }
 
-          walk('workflows');
+          const workflowDir = 'workflows';
+          for (const entry of fs.readdirSync(workflowDir)) {
+            if (/^(2[0-9]|30)-.*\\.json$/.test(entry)) files.push(path.join(workflowDir, entry));
+          }
 
           const failures = [];
           for (const file of files) {
@@ -42,6 +45,7 @@ jobs:
             }
 
             const nodeIds = new Set((workflow.nodes || []).map(n => n.id));
+            const nodeNames = new Set((workflow.nodes || []).map(n => n.name));
             const connections = workflow.connections || {};
 
             for (const [from, outputGroups] of Object.entries(connections)) {

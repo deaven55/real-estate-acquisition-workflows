@@ -283,3 +283,12 @@ It:
 - explicitly reports missing identity/provenance fields instead of inventing values.
 
 WF-031 is intentionally source-provider-neutral. It is now wired directly before WF-030 so every evidence family enters candidate fan-in through the same canonical contract. WF-020 also preserves the resulting canonical identity, evidence metadata, and normalization warnings into InsulaCRM.
+
+
+### WF-037 — Contract & Disposition Readiness Gate
+
+`workflows/37-contract-disposition-readiness-gate.json` is the handoff boundary after an offer reaches an executed/contract-ready state. It validates the property identity, executed contract identity, disposition strategy, contract price, and assignment economics where applicable. It produces a normalized disposition match request only when the required data is present.
+
+The gate distinguishes `buyer_matching_ready` from legal contract execution: it does not create or validate a legally binding contract, negotiate terms, or contact buyers. Missing data is surfaced explicitly instead of being guessed.
+
+WF-036 now routes its lifecycle result through WF-037 so an `executed` state can become a structured disposition-ready request while earlier offer states remain review-oriented.

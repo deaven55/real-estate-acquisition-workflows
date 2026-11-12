@@ -210,3 +210,16 @@ See `docs/OFFICIAL_NON_ARCGIS_SOURCE_ADAPTER.md`.
 - Keeps unknown-jurisdiction controlled discovery as a fallback instead of fabricating sources.
 
 See `docs/JURISDICTION_SOURCE_REGISTRY_ADAPTER.md`.
+
+
+### WF-029 — Source Adapter Dispatch Planner
+
+`workflows/29-source-adapter-dispatch-planner.json` turns the canonical jurisdiction source list into an explicit adapter execution plan. WF-020 now sends only the appropriate source family to each adapter:
+
+- ArcGIS/state parcel/county GIS → WF-021
+- approved REST/JSON/CSV/open-data/property/tax sources → WF-022
+- tax delinquency/court/probate/foreclosure/permit/code evidence → WF-026
+- commercially restricted live sources → blocked/review
+- unknown source types → surfaced for review rather than guessed
+
+See `docs/SOURCE_ADAPTER_DISPATCH_PLANNER.md`.

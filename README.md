@@ -555,3 +555,19 @@ It produces:
 - explicit recovery instructions requiring fresh human authorization.
 
 WF-056 is intentionally non-executing. It does not automatically retry external actions or contact sellers/buyers. A failed action must be reconciled and, where appropriate, separately authorized before another execution attempt.
+
+
+### WF-057 — Operational Audit Timeline & Case Reconstruction Gate
+
+`workflows/57-operational-audit-timeline-case-reconstruction-gate.json` reconstructs a chronological operational case timeline from supplied audit events. It groups events by entity, preserves actor/action/decision/source-workflow context, detects incomplete timestamps and long timeline gaps, and provides a normalized sequence for operational review.
+
+It produces:
+
+- `case_reconstruction_health`;
+- chronological `timeline`;
+- per-entity event summaries;
+- timeline gap detection;
+- audit-record validation issues;
+- an explicit `next_action`.
+
+WF-057 is evidence reconstruction only. It does not make legal conclusions, establish title clearance, verify funds, execute external actions, or automatically retry failed actions.

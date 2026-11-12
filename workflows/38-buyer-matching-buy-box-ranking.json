@@ -1,0 +1,82 @@
+{
+  "name": "WholeStack WF-038: Buyer Matching & Buy-Box Ranking",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-buyer-matching-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "rank",
+      "name": "Rank Buyers Against Buy Box",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input=$input.first().json.body||$input.first().json; const req=input.disposition_match_request||input; const p=req.property_identity||{}; const buyers=Array.isArray(input.buyers)?input.buyers:Array.isArray(input.buyer_records)?input.buyer_records:[]; const num=v=>{const n=Number(v);return Number.isFinite(n)?n:null}; const price=num(req.assignment_price??req.disposition_price??req.contract?.contract_price); const arv=num(req.financials?.arv??input.arv); const repairs=num(req.financials?.repairs??input.repairs??input.repair_estimate); const propertyType=String(input.property_type??req.property_type??\\\"\\\").toLowerCase().trim(); const city=String(input.city??p.city??\\\"\\\").toLowerCase().trim(); const state=String(input.state??p.state??\\\"\\\").toLowerCase().trim(); const zip=String(input.zip??p.zip??\\\"\\\").trim(); const strategy=String(req.disposition_strategy??input.disposition_strategy??\\\"\\\").toLowerCase().trim(); const matches=[]; for(const b of buyers){const maxPrice=num(b.max_price??b.max_purchase_price??b.buy_box?.max_price); const minPrice=num(b.min_price??b.min_purchase_price??b.buy_box?.min_price); const types=Array.isArray(b.property_types)?b.property_types.map(x=>String(x).toLowerCase()):Array.isArray(b.buy_box?.property_types)?b.buy_box.property_types.map(x=>String(x).toLowerCase()):[]; const cities=Array.isArray(b.cities)?b.cities.map(x=>String(x).toLowerCase()):Array.isArray(b.buy_box?.cities)?b.buy_box.cities.map(x=>String(x).toLowerCase()):[]; const states=Array.isArray(b.states)?b.states.map(x=>String(x).toLowerCase()):Array.isArray(b.buy_box?.states)?b.buy_box.states.map(x=>String(x).toLowerCase()):[]; const zips=Array.isArray(b.zips)?b.zips.map(String):Array.isArray(b.buy_box?.zips)?b.buy_box.zips.map(String):[]; const strategies=Array.isArray(b.strategies)?b.strategies.map(x=>String(x).toLowerCase()):Array.isArray(b.buy_box?.strategies)?b.buy_box.strategies.map(x=>String(x).toLowerCase()):[]; let score=0; const reasons=[]; const misses=[]; if(price!==null&&maxPrice!==null){if(price<=maxPrice){score+=25;reasons.push(\\\"price_within_max\\\")}else misses.push(\\\"price_above_max\\\")}else misses.push(\\\"price_limit_unverified\\\"); if(price!==null&&minPrice!==null&&price>=minPrice){score+=5;reasons.push(\\\"price_above_min\\\")} if(propertyType&&types.length){if(types.includes(propertyType)){score+=20;reasons.push(\\\"property_type_match\\\")}else misses.push(\\\"property_type_mismatch\\\")}else score+=5; if(city&&cities.length){if(cities.includes(city)){score+=15;reasons.push(\\\"city_match\\\")}else misses.push(\\\"city_mismatch\\\")}else if(state&&states.length){if(states.includes(state)){score+=12;reasons.push(\\\"state_match\\\")}else misses.push(\\\"state_mismatch\\\")}else score+=3; if(zip&&zips.length){if(zips.includes(zip)){score+=15;reasons.push(\\\"zip_match\\\")}else misses.push(\\\"zip_mismatch\\\")} if(strategy&&strategies.length){if(strategies.includes(strategy)){score+=10;reasons.push(\\\"strategy_match\\\")}else misses.push(\\\"strategy_mismatch\\\")} if(arv!==null&&repairs!==null&&price!==null){const spread=arv-repairs-price; if(spread>0){score+=10;reasons.push(\\\"positive_estimated_spread\\\")}else misses.push(\\\"nonpositive_estimated_spread\\\")} const status=misses.includes(\\\"price_above_max\\\")||misses.includes(\\\"property_type_mismatch\\\")||misses.includes(\\\"city_mismatch\\\")||misses.includes(\\\"state_mismatch\\\")||misses.includes(\\\"zip_mismatch\\\")||misses.includes(\\\"strategy_mismatch\\\")?\\\"not_a_match\\\":score>=70?\\\"strong_match\\\":score>=50?\\\"possible_match\\\":\\\"needs_review\\\"; matches.push({buyer_id:b.buyer_id||b.id||b.external_id||null,buyer_name:b.name||b.buyer_name||null,score,status,reasons,missing_or_conflicting_criteria:misses,buy_box:b.buy_box||null,contact:{phone:b.phone||null,email:b.email||null}}); } matches.sort((a,b)=>b.score-a.score); const ready=Boolean(req.buyer_match_status===\\\"ready_for_buyer_matching\\\"||input.disposition_readiness?.buyer_matching_ready); return [{json:{...input,buyer_matching:{ready,property_identity:p,criteria:{price,arv,repairs,property_type:propertyType||null,city:city||null,state:state||null,zip:zip||null,strategy:strategy||null},buyer_count:buyers.length,matched_count:matches.filter(x=>x.status!==\\\"not_a_match\\\").length,top_matches:matches.slice(0,10),ranking_method:\\\"deterministic_buy_box_score\\\",outreach_authorized:false,next_action:ready?(matches.length?\\\"review_top_matches\\\":\\\"source_buyer_records\\\"):\\\"complete_disposition_readiness\\\"}}}];"
+      }
+    },
+    {
+      "id": "response",
+      "name": "Respond Buyer Matches",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Rank Buyers Against Buy Box",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rank Buyers Against Buy Box": {
+      "main": [
+        [
+          {
+            "node": "Respond Buyer Matches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

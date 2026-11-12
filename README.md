@@ -301,3 +301,12 @@ WF-036 now routes its lifecycle result through WF-037 so an `executed` state can
 It returns scored matches, explicit mismatch reasons, and a top-match shortlist. It does **not** contact buyers or authorize outreach; the output is a reviewable matching queue.
 
 WF-037 now hands a disposition-ready request into WF-038. This creates the first structured buyer-disposition boundary after the seller-side acquisition lifecycle.
+
+
+### WF-039 — Buyer Disposition Outreach & Response State Gate
+
+`workflows/39-buyer-disposition-outreach-response-state-gate.json` manages buyer-side disposition state after WF-038 matching. It normalizes buyer response states, validates supported transitions, preserves property/buyer identity and match context, and recommends the next operational action.
+
+Supported states include `queued`, `reviewed`, `contact_authorized`, `contacted`, `interested`, `requested_disclosures`, `countered`, `proof_of_funds_pending`, `proof_of_funds_verified`, `declined`, `unresponsive`, `selected`, `backup`, and `disqualified`.
+
+WF-039 is intentionally a state-management boundary. It does not contact buyers, negotiate terms, verify proof of funds, or make legal determinations. Buyer selection remains an explicit operational decision, and outreach is only marked authorized when an external caller supplies that authorization.

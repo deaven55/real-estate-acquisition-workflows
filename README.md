@@ -482,3 +482,19 @@ It produces:
 - an `authorization_decisions` record for downstream execution controls.
 
 WF-052 is intentionally a human-authorization boundary. It does not contact sellers/buyers, execute contracts or closings, provide legal validation, or claim funding verification. A workflow being technically ready does not constitute permission to perform a consequential external action.
+
+
+### WF-053 — Audit Trail & Decision Evidence Gate
+
+`workflows/53-audit-trail-decision-evidence-gate.json` adds the decision-evidence layer after human authorization and execution governance. It normalizes supplied audit events and checks that consequential decisions have enough deterministic evidence to be traceable.
+
+It produces:
+
+- `audit_health` with `ready`, `needs_review`, or `blocked`;
+- deterministic event identifiers and duplicate-event detection;
+- missing decision evidence and unsupported event-type violations;
+- actor, action, decision, reason, timestamp, source-workflow, and entity context;
+- an `audit_trail` suitable for downstream reporting and operational review;
+- decision-evidence coverage and explicit `next_action`.
+
+WF-053 is an audit/evidence boundary only. It does not execute external actions, contact sellers/buyers, validate legal/title status, or claim funding verification. Its purpose is to make consequential workflow decisions traceable rather than merely observable.

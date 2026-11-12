@@ -326,3 +326,13 @@ It returns `ready_for_exit`, `needs_data`, or `not_ready`, preserves the selecte
 - Preserves canonical property identity, executed contract identity, selected/backup buyer context, and transaction economics.
 - Validates required transaction data and supported state transitions without claiming legal validity, title clearance, funding verification, or closing execution.
 - Outputs `transaction_status`, `readiness`, `transaction_package`, `closing_ready`, and `next_action` for downstream closing coordination.
+
+
+### WF-042 — Closing Coordination & Transaction Status Gate
+- File: `workflows/42-closing-coordination-transaction-status-gate.json`
+- Adds the closing-coordination boundary after transaction readiness.
+- Normalizes title, disclosure, document, funding, scheduling, closed, failed, and cancelled states.
+- Preserves canonical property identity, executed contract identity, buyer context, and closing-package metadata.
+- Validates required closing data and supported status transitions.
+- Produces `closing_ready`, `closing_package`, `blocking_issues`, `readiness`, and `next_action`.
+- Coordination-only: does not claim title clearance, funding verification, legal validity, or closing execution.

@@ -85,15 +85,30 @@
     {
       "id": "registry",
       "name": "Resolve Curated Jurisdiction Sources",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
       "position": [
         700,
         -80
       ],
       "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const ctx=$input.first().json;\nconst registry={'US-NC':{state_sources:[{name:'NC OneMap Parcel Data',type:'state_parcel',url:'https://www.nconemap.gov/pages/parcels',machine_readable:true,commercial_live_query_allowed:true},{name:'NC OneMap ArcGIS Services',type:'state_parcel',url:'https://services.nconemap.gov/secure/rest/services',machine_readable:true,commercial_live_query_allowed:true}],counties:{'catawba':[{name:'Catawba County GIS',type:'county_gis',url:'https://www.catawbacountync.gov/county-services/information-technology/gis/',machine_readable:true,commercial_live_query_allowed:true}],'caldwell':[{name:'Caldwell County GIS',type:'county_gis',url:'https://gis.caldwellcountync.org/',machine_readable:true,commercial_live_query_allowed:true}],'mecklenburg':[{name:'Mecklenburg County GIS',type:'county_gis',url:'https://gis.mecknc.gov/',machine_readable:true,commercial_live_query_allowed:false,commercial_use_note:'County states live data services may not be relied on, integrated, or continuously consumed by commercial applications; commercial users should download and host copies.'}],'wake':[{name:'Wake County iMAPS',type:'county_gis',url:'https://maps.raleighnc.gov/iMAPS/',machine_readable:true,commercial_live_query_allowed:true}],'new hanover':[{name:'New Hanover County GIS',type:'county_gis',url:'https://finance.nhcgov.com/844/GIS-Maps-Data',machine_readable:true,commercial_live_query_allowed:true}]}}};\nconst state=String(ctx.state||'').toUpperCase(); const county=String(ctx.county||'').trim().toLowerCase(); const entry=registry['US-'+state]||null; const curated=[...(entry?.state_sources||[]),...(entry?.counties?.[county]||[])]; const blocked=curated.filter(s=>s.commercial_live_query_allowed===false); const discovered=Array.isArray(ctx.official_sources)?ctx.official_sources:[]; const seen=new Set(curated.map(s=>String(s.url).toLowerCase())); const merged=[...curated,...discovered.filter(s=>s?.url&&!seen.has(String(s.url).toLowerCase()))].slice(0,30); return [{json:{...ctx,curated_source_count:curated.length,curated_sources:curated,commercial_restrictions:blocked,official_sources:merged,source_resolution:{registry_key:'US-'+state,county_key:county||null,curated_match:curated.length>0,discovery_fallback_used:curated.length===0,policy:'curated official sources first; discovery supplements only when needed; restricted live sources are flagged rather than silently queried'}}}];"
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-jurisdiction-source-registry-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,property_type:$json.property_type,limit:$json.limit,search_notes:$json.search_notes,official_sources:$json.official_sources||[]}) }}",
+        "options": {
+          "timeout": 60000
+        }
       }
     },
     {

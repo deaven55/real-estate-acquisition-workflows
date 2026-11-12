@@ -650,6 +650,35 @@
           "timeout": 120000
         }
       }
+    },
+    {
+      "id": "qualificationGate",
+      "name": "Qualify Distressed Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1220,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-distressed-lead-qualification-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,criteria:$json.criteria,candidate_records:$json.candidate_records||[]}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
     }
   ],
   "connections": {
@@ -932,6 +961,17 @@
       ]
     },
     "Aggregate And Rank Property Candidates": {
+      "main": [
+        [
+          {
+            "node": "Qualify Distressed Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualify Distressed Leads": {
       "main": [
         [
           {

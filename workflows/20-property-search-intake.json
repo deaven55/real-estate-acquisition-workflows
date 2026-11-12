@@ -623,35 +623,6 @@
       }
     },
     {
-      "id": "candidateFanIn",
-      "name": "Aggregate And Rank Property Candidates",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        2040,
-        -80
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-property-candidate-fanin-v1' }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,gis_records:$json.gis_records||[],gis_limitations:$json.gis_limitations||[],non_arcgis_records:$json.non_arcgis_records||[],non_arcgis_limitations:$json.non_arcgis_limitations||[],criterion_evidence:$json.criterion_evidence||[],criterion_evidence_limitations:$json.criterion_evidence_limitations||[]}) }}",
-        "options": {
-          "timeout": 120000
-        }
-      }
-    },
-    {
       "id": "qualificationGate",
       "name": "Qualify Distressed Leads",
       "type": "n8n-nodes-base.httpRequest",
@@ -675,6 +646,78 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,criteria:$json.criteria,candidate_records:$json.candidate_records||[]}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "canonicalNormalize",
+      "name": "Normalize Canonical Property Records",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2050,
+        -260
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-universal-property-normalizer-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,records:[...($json.gis_records||[]),...($json.non_arcgis_records||[]),...($json.criterion_evidence||[])]}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "canonicalContext",
+      "name": "Preserve Canonical Research Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2260,
+        -260
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const base=$('Merge GIS Research Context').first().json; const normalized=$input.first().json; return [{json:{...base,canonical_records:normalized.records||[],canonical_record_count:normalized.record_count||0,canonical_duplicate_count:normalized.duplicate_count||0,canonical_warnings:(normalized.records||[]).flatMap(r=>r.normalization_warnings||[])}}];"
+      }
+    },
+    {
+      "id": "candidateFanInCanonical",
+      "name": "Aggregate Canonical Property Candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2480,
+        -260
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-property-candidate-fanin-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,gis_records:[],non_arcgis_records:[],criterion_evidence:$json.canonical_records||[],gis_limitations:$json.gis_limitations||[],non_arcgis_limitations:$json.non_arcgis_limitations||[],criterion_evidence_limitations:$json.criterion_evidence_limitations||[]}) }}",
         "options": {
           "timeout": 120000
         }
@@ -909,7 +952,7 @@
       "main": [
         [
           {
-            "node": "Aggregate And Rank Property Candidates",
+            "node": "Normalize Canonical Property Records",
             "type": "main",
             "index": 0
           }
@@ -960,22 +1003,44 @@
         ]
       ]
     },
-    "Aggregate And Rank Property Candidates": {
+    "Qualify Distressed Leads": {
       "main": [
         [
           {
-            "node": "Qualify Distressed Leads",
+            "node": "Research Candidate Properties",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Qualify Distressed Leads": {
+    "Normalize Canonical Property Records": {
       "main": [
         [
           {
-            "node": "Research Candidate Properties",
+            "node": "Preserve Canonical Research Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preserve Canonical Research Context": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Canonical Property Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Canonical Property Candidates": {
+      "main": [
+        [
+          {
+            "node": "Qualify Distressed Leads",
             "type": "main",
             "index": 0
           }

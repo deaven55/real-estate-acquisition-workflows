@@ -223,3 +223,21 @@ See `docs/JURISDICTION_SOURCE_REGISTRY_ADAPTER.md`.
 - unknown source types → surfaced for review rather than guessed
 
 See `docs/SOURCE_ADAPTER_DISPATCH_PLANNER.md`.
+
+
+### WF-030 — Property Candidate Fan-In & Evidence Aggregator
+
+`workflows/30-property-candidate-fanin.json` is the deterministic fan-in layer between the official source adapters and the AI candidate research step.
+
+It:
+
+- combines GIS, non-ArcGIS, and specialized criterion evidence;
+- deduplicates overlapping records without discarding corroborating evidence;
+- aggregates criterion signals and explicit supporting evidence;
+- ranks candidate research priority deterministically;
+- preserves source provenance and observation metadata;
+- labels whether requested criteria are fully supported, partially supported, or only identity-supported.
+
+WF-020 now routes its collected source records through WF-030 before the research provider sees them.
+
+See `docs/PROPERTY_CANDIDATE_FANIN.md`.

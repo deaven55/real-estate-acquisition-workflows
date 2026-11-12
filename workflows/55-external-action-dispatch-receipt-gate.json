@@ -1,0 +1,42 @@
+{
+  "name": "WF-055 External Action Dispatch & Receipt Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-055-external-action-dispatch-receipt", "responseMode": "responseNode", "options": {} },
+      "id": "wf055-webhook",
+      "name": "External Action Dispatch Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-055-external-action-dispatch-receipt"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const actions=Array.isArray(input.allowed_actions)?input.allowed_actions:Array.isArray(input.actions)?input.actions:[]; const receipts=Array.isArray(input.receipts)?input.receipts:[]; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const allowedStates=new Set(['queued','dispatched','acknowledged','completed','failed','cancelled']); const receiptMap=new Map(receipts.map(r=>[norm(r.action_id??r.request_id??r.idempotency_key),r])); const missing=[]; const invalid=[]; const dispatch=[]; actions.forEach((a,i)=>{const id=norm(a.action_id??a.request_id??a.idempotency_key); const key=norm(a.idempotency_key??a.execution_id??a.request_id); const policy=lower(a.decision??a.policy_decision); const state=lower(a.dispatch_status??a.status??'queued'); const receipt=receiptMap.get(id)||receiptMap.get(key); if(!id)missing.push({record_index:i,type:'missing_action_id',severity:'blocking'}); if(!key)missing.push({record_index:i,type:'missing_idempotency_key',severity:'blocking'}); if(policy!=='allowed')invalid.push({record_index:i,type:'action_not_policy_allowed',severity:'blocking',decision:policy||null}); if(!allowedStates.has(state))invalid.push({record_index:i,type:'invalid_dispatch_status',severity:'blocking',status:state||null}); const receiptStatus=lower(receipt?.status??receipt?.result??''); const receiptPresent=Boolean(receipt); const row={record_index:i,action_id:id||null,idempotency_key:key||null,dispatch_status:state,receipt_present:receiptPresent,receipt_status:receiptStatus||null,external_reference:norm(receipt?.external_reference??receipt?.external_id??'')||null}; dispatch.push(row); if(receiptPresent&&receiptStatus&&!allowedStates.has(receiptStatus))invalid.push({record_index:i,type:'invalid_receipt_status',severity:'blocking',receipt_status:receiptStatus});}); const blocking=[...missing,...invalid]; const completed=dispatch.filter(x=>x.receipt_status==='completed').length; const failed=dispatch.filter(x=>x.receipt_status==='failed').length; const pending=dispatch.filter(x=>!x.receipt_present||!['completed','failed','cancelled'].includes(x.receipt_status)).length; const health=blocking.length?'blocked':pending?'needs_receipts':'ready'; return[{json:{ok:health==='ready',dispatch_health:health,action_count:dispatch.length,completed_receipt_count:completed,failed_receipt_count:failed,pending_receipt_count:pending,dispatch_records:dispatch,blocking_issues:blocking,receipt_coverage:dispatch.length?Math.round((dispatch.filter(x=>x.receipt_present).length/dispatch.length)*10000)/100:100,next_action:health==='ready'?'Persist the external action receipts and pass completed results to the next workflow boundary.':health==='needs_receipts'?'Obtain or record an external receipt for each dispatched action before treating the action as completed.':'Resolve blocked dispatch records before any external action is considered executable.',policy:{dispatch_only:true,no_automatic_action_execution:true,receipt_required_for_completion:true,idempotency_key_required:true,upstream_policy_must_be_allowed:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf055-dispatch",
+      "name": "Normalize Dispatch & External Receipts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf055-response",
+      "name": "Respond Dispatch Receipt",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "External Action Dispatch Webhook": { "main": [[{ "node": "Normalize Dispatch & External Receipts", "type": "main", "index": 0 }]] },
+    "Normalize Dispatch & External Receipts": { "main": [[{ "node": "Respond Dispatch Receipt", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf055-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

@@ -1,0 +1,55 @@
+{
+  "name": "WholeStack WF-040: Buyer Selection & Exit Strategy Gate",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "parameters": {
+        "path": "wholestack-exit-strategy-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "gate",
+      "name": "Evaluate Buyer Selection & Exit Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [320, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input=$input.first().json.body||$input.first().json; const d=input.buyer_disposition||{}; const selected=input.selected_buyer||d.selected_buyer||null; const backup=input.backup_buyer||null; const strategy=String(input.exit_strategy??input.disposition_strategy??input.strategy??\"\").toLowerCase().trim(); const allowed=[\"assignment\",\"novation\",\"double_close\",\"wholetail\",\"resale\",\"hold\",\"review\"]; const strategyValid=allowed.includes(strategy); const contract=input.contract||{}; const contractId=String(input.executed_contract_id??contract.contract_id??\"\").trim(); const contractPrice=Number(input.contract_price??contract.contract_price); const buyerPrice=Number(input.buyer_purchase_price??selected?.purchase_price??selected?.offer_price); const assignmentFee=Number(input.assignment_fee); const buyerReady=Boolean(selected&&selected.buyer_id&&(selected.status===\"selected\"||selected.proof_of_funds_verified===true)); const economicsReady=Number.isFinite(contractPrice)&&contractPrice>0&&Number.isFinite(buyerPrice)&&buyerPrice>0; const feeReady=assignmentFee===0||Number.isFinite(assignmentFee); const identityReady=Boolean((d.property_identity||input.property_identity)?.normalized_identity_key||(d.property_identity||input.property_identity)?.parcel_id||(d.property_identity||input.property_identity)?.normalized_address); const contractReady=Boolean(contractId); const readinessReasons=[]; if(!identityReady) readinessReasons.push(\"property_identity_missing\"); if(!contractReady) readinessReasons.push(\"executed_contract_id_missing\"); if(!strategyValid) readinessReasons.push(\"exit_strategy_missing_or_unsupported\"); if(!buyerReady) readinessReasons.push(\"selected_buyer_not_ready\"); if(strategy===\"assignment\"&&!economicsReady) readinessReasons.push(\"assignment_economics_missing\"); if(strategy===\"assignment\"&&!feeReady) readinessReasons.push(\"assignment_fee_invalid\"); const status=readinessReasons.length===0?\"ready_for_exit\":buyerReady&&contractReady?\"needs_data\":\"not_ready\"; const next=status===\"ready_for_exit\"?\"prepare_transaction_package\":status===\"needs_data\"?\"collect_missing_exit_data\":\"resolve_buyer_contract_or_strategy\"; const spread=economicsReady?buyerPrice-contractPrice:null; return [{json:{...input,exit_strategy_gate:{status,property_identity:d.property_identity||input.property_identity||{},selected_buyer:selected,backup_buyer:backup,exit_strategy:strategy||null,contract:{executed_contract_id:contractId||null,contract_price:Number.isFinite(contractPrice)?contractPrice:null},buyer_economics:{buyer_purchase_price:Number.isFinite(buyerPrice)?buyerPrice:null,assignment_fee:Number.isFinite(assignmentFee)?assignmentFee:null,estimated_gross_spread:spread},readiness:{identity_ready:identityReady,contract_ready:contractReady,buyer_ready:buyerReady,strategy_ready:strategyValid,economics_ready:economicsReady,missing_or_conflicting:readinessReasons},next_action:next,transaction_ready:status===\"ready_for_exit\",policy:\"Decision/readiness management only. This workflow does not create contracts, provide legal advice, negotiate with buyers, verify funds, or execute a closing.\"}}}];"
+      }
+    },
+    {
+      "id": "response",
+      "name": "Respond Exit Strategy",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [640, 0],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {"responseCode": 200}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{"node": "Evaluate Buyer Selection & Exit Strategy", "type": "main", "index": 0}]]
+    },
+    "Evaluate Buyer Selection & Exit Strategy": {
+      "main": [[{"node": "Respond Exit Strategy", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

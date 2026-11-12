@@ -557,7 +557,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({dealId:$json.deal_id,address:$json.property_address,city:$json.city,state:$json.state,zip:$json.zip,county:$json.county,property_type:$json.property_type,activity:'acquisition'}) }}",
+        "jsonBody": "={{ JSON.stringify({dealId:$json.deal_id,leadId:$json.lead_id,propertyId:$json.property_id,address:$json.property_address,city:$json.city,state:$json.state,zip:$json.zip,county:$json.county,parcel_id:$json.parcel_id,property_type:$json.property_type,external_id:$json.external_id,external_source:$json.external_source,candidate_key:$json.candidate_key||null,normalized_identity_key:$json.normalized_identity_key||null,evidence_count:$json.evidence_count??0,evidence_source_types:$json.evidence_source_types||[],matched_criteria:$json.matched_criteria||[],evidence_status:$json.evidence_status||null,normalization_warnings:$json.normalization_warnings||[],criterion_signals:$json.criterion_signals||{},criterion_evidence:$json.criterion_evidence||[],canonical_evidence:$json.evidence||[],source_url:$json.source_url||null,source_record_id:$json.source_record_id||null,activity:'acquisition'}) }}",
         "options": {
           "timeout": 300000
         }
@@ -573,7 +573,7 @@
         -80
       ],
       "parameters": {
-        "jsCode": "const base=$('Preserve Deal Context').item.json; return [{json:{success:true,request_id:base.request_id,candidate_index:base.candidate_index,property:{owner_name:base.owner_name,address:base.property_address,city:base.city,state:base.state,zip:base.zip,county:base.county,parcel_id:base.parcel_id,distress_signals:base.distress_signals||[],criterion_signals:base.criterion_signals||{},criterion_evidence:base.criterion_evidence||[],criterion_missing_fields:base.criterion_missing_fields||[],criterion_match_status:base.criterion_match_status||{}},source:{source_url:base.source_url||null,source_record_id:base.source_record_id||null,confidence:base.confidence??null},insula:{lead_id:base.lead_id,property_id:base.property_id,deal_id:base.deal_id},underwriting_pipeline:$json}}];"
+        "jsCode": "const base=$('Preserve Deal Context').item.json; return [{json:{success:true,request_id:base.request_id,candidate_index:base.candidate_index,property:{owner_name:base.owner_name,address:base.property_address,city:base.city,state:base.state,zip:base.zip,county:base.county,parcel_id:base.parcel_id,distress_signals:base.distress_signals||[],criterion_signals:base.criterion_signals||{},criterion_evidence:base.criterion_evidence||[],criterion_missing_fields:base.criterion_missing_fields||[],criterion_match_status:base.criterion_match_status||{}},source:{source_url:base.source_url||null,source_record_id:base.source_record_id||null,confidence:base.confidence??null},insula:{lead_id:base.lead_id,property_id:base.property_id,deal_id:base.deal_id},underwriting_pipeline:$json,identity:{candidate_key:base.candidate_key||null,normalized_identity_key:base.normalized_identity_key||null,external_id:base.external_id||null,parcel_id:base.parcel_id||null},evidence:{count:base.evidence_count??0,source_types:base.evidence_source_types||[],matched_criteria:base.matched_criteria||[],status:base.evidence_status||null,normalization_warnings:base.normalization_warnings||[]}}}];"
       }
     },
     {

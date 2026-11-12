@@ -35,3 +35,7 @@ This keeps the AI research step downstream of deterministic source collection an
 WF-030 is a normalization/ranking layer, not a source-of-truth property database. Canonical property identity and evidence persistence remain in InsulaCRM after candidate ingestion.
 
 Runtime execution still requires an n8n environment with the internal webhook base URL and configured source-provider credentials.
+
+## Validation
+
+The repository CI validates WF-030 JSON wiring and Code-node syntax, then executes a deterministic fixture at `tests/fixtures/property-candidate-fanin.json`. The fixture verifies that three corroborating records for one parcel deduplicate to one candidate, preserve all three evidence records, match both requested criteria, and produce `criterion_supported`. The fixture is an offline unit-style check; it does not claim that live county/provider execution has succeeded.

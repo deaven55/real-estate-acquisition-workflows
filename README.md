@@ -195,3 +195,18 @@ For example, Mecklenburg County's GIS documentation states that commercial users
 WF-020 now feeds both WF-021 (ArcGIS) and WF-022 (non-ArcGIS) structured records into the evidence-aware candidate research step. HTML-only official search pages remain discovery/evidence sources rather than being treated as machine-readable APIs.
 
 See `docs/OFFICIAL_NON_ARCGIS_SOURCE_ADAPTER.md`.
+
+
+### WF-028 — Canonical Jurisdiction Source Registry Adapter
+
+`workflows/28-jurisdiction-source-registry-adapter.json` centralizes runtime jurisdiction-source resolution. WF-020 now calls WF-028 instead of carrying a duplicated state/county registry inside the intake workflow.
+
+- Reads `config/jurisdiction-source-registry.json` at runtime.
+- Accepts arbitrary state/county input rather than limiting searches to the currently curated North Carolina counties.
+- Merges curated registry sources with official sources discovered by WF-020.
+- Deduplicates source URLs/record IDs deterministically.
+- Surfaces commercially restricted live sources instead of silently querying them.
+- Supports a deployment-specific `WHOLESTACK_REGISTRY_URL` override; otherwise the adapter uses the repository's main-branch registry.
+- Keeps unknown-jurisdiction controlled discovery as a fallback instead of fabricating sources.
+
+See `docs/JURISDICTION_SOURCE_REGISTRY_ADAPTER.md`.

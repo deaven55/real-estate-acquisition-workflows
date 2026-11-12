@@ -427,3 +427,21 @@ It produces:
 - a `blocking_contracts` list and explicit `next_action`.
 
 WF-049 is contract validation only. It does not execute external side effects, contact sellers/buyers, validate legal/title status, or claim funding verification. Its purpose is to make the WF-020 through WF-048 stack safer to integrate by catching missing fields, incompatible statuses, and contract-version drift before production handoff.
+
+
+### WF-050 — Cross-Workflow Dependency & Version Registry Gate
+
+`workflows/50-cross-workflow-dependency-version-registry-gate.json` adds a registry boundary for the growing workflow stack. It validates supplied workflow metadata against expected handoff contracts and checks that declared dependencies and versions are internally consistent.
+
+It produces:
+
+- `registry_health` with `ready`, `needs_review`, or `blocked`;
+- workflow/version registry records;
+- dependency edges between workflows;
+- missing dependency and duplicate-version conflicts;
+- missing required input/output contract declarations;
+- unknown workflow contract warnings;
+- invalid registry statuses and self-dependency detection;
+- `blocking_contracts`, compatibility warnings, and an explicit `next_action`.
+
+WF-050 is registry validation only. It does not execute external side effects, contact sellers/buyers, validate legal/title status, or claim funding verification. Its purpose is to establish a version-pinned dependency source of truth as the acquisition/disposition stack grows.

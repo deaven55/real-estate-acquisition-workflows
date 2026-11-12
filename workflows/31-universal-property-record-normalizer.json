@@ -1,0 +1,82 @@
+{
+  "name": "WholeStack WF-031: Universal Property Record Normalizer",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-universal-property-normalizer-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "normalize",
+      "name": "Normalize Property Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input=$input.first().json.body||$input.first().json;\nconst records=Array.isArray(input.records)?input.records:(input.record?[input.record]:[]);\nconst aliases={\n owner_name:['owner_name','owner','ownerName','property_owner','taxpayer_name','name'],\n property_address:['property_address','situs_address','situs','site_address','address','propertyAddress'],\n mailing_address:['mailing_address','owner_mailing_address','tax_mailing_address','mailingAddress'],\n city:['city','situs_city','property_city'],\n state:['state','state_code','situs_state','property_state'],\n zip:['zip','zipcode','zip_code','postal_code','situs_zip'],\n county:['county','county_name'],\n parcel_id:['parcel_id','parcelid','parcel_number','parcel_no','apn','pin','property_id','account_number'],\n property_type:['property_type','land_use','use_code','property_class','asset_type'],\n assessed_value:['assessed_value','total_assessed_value','assessed_total'],\n land_value:['land_value','assessed_land_value'],\n building_value:['building_value','improvement_value','assessed_improvement_value'],\n acreage:['acreage','lot_acres','acres','land_acres'],\n building_sqft:['building_sqft','living_area','sqft','square_feet','gross_building_area'],\n year_built:['year_built','built_year','construction_year'],\n sale_date:['sale_date','last_sale_date','deed_date'],\n sale_price:['sale_price','last_sale_price','deed_sale_price'],\n tax_status:['tax_status','tax_due_status','delinquent_status'],\n delinquent_tax_amount:['delinquent_tax_amount','delinquent_amount','tax_delinquent_amount'],\n zoning:['zoning','zoning_code'],\n legal_description:['legal_description','legal_desc']\n};\nconst pick=(r,keys)=>{for(const k of keys){if(r[k]!==undefined&&r[k]!==null&&String(r[k]).trim()!=='') return r[k];}return null;};\nconst cleanText=v=>v==null?null:String(v).trim().replace(/\\\\s+/g,' ');\nconst cleanState=v=>{const s=cleanText(v); if(!s)return null; const m={'NORTH CAROLINA':'NC','SOUTH CAROLINA':'SC','VIRGINIA':'VA','TENNESSEE':'TN','GEORGIA':'GA','FLORIDA':'FL','NEW YORK':'NY','NEW JERSEY':'NJ','CALIFORNIA':'CA','TEXAS':'TX'}; return m[s.toUpperCase()]||s.toUpperCase();};\nconst cleanZip=v=>{const s=cleanText(v); if(!s)return null; const m=s.match(/\\\\d{5}(?:-\\\\d{4})?/); return m?m[0]:s;};\nconst num=v=>{if(v==null||v==='')return null; const n=Number(String(v).replace(/[$,\\\\s]/g,'')); return Number.isFinite(n)?n:null;};\nconst normalize=(r,i)=>{\n const n={};\n for(const [field,keys] of Object.entries(aliases)) n[field]=pick(r,keys);\n n.owner_name=cleanText(n.owner_name); n.property_address=cleanText(n.property_address); n.mailing_address=cleanText(n.mailing_address);\n n.city=cleanText(n.city); n.state=cleanState(n.state); n.zip=cleanZip(n.zip); n.county=cleanText(n.county);\n n.parcel_id=cleanText(n.parcel_id); n.property_type=cleanText(n.property_type); n.zoning=cleanText(n.zoning); n.legal_description=cleanText(n.legal_description);\n for(const f of ['assessed_value','land_value','building_value','acreage','building_sqft','year_built','sale_price','delinquent_tax_amount']) n[f]=num(n[f]);\n n.sale_date=cleanText(n.sale_date);\n n.source_url=cleanText(pick(r,['source_url','url','source','record_url']));\n n.source_name=cleanText(pick(r,['source_name','source_provider','provider']));\n n.source_type=cleanText(pick(r,['source_type','record_type','type']));\n n.source_record_id=cleanText(pick(r,['source_record_id','record_id','source_id','id']));\n n.source_observed_at=cleanText(pick(r,['source_observed_at','observed_at','retrieved_at']));\n n.distress_signals=Array.isArray(r.distress_signals)?[...new Set(r.distress_signals.map(cleanText).filter(Boolean))]:[];\n n.criterion_signals=(r.criterion_signals&&typeof r.criterion_signals==='object')?r.criterion_signals:{};\n n.criterion_evidence=Array.isArray(r.criterion_evidence)?r.criterion_evidence:[];\n n.raw_attributes=r.raw_attributes&&typeof r.raw_attributes==='object'?r.raw_attributes:r;\n const identityParts=[n.parcel_id,n.property_address,n.owner_name,n.city,n.state,n.zip].filter(Boolean).map(v=>String(v).toLowerCase().replace(/[^a-z0-9]+/g,'-'));\n n.normalized_identity_key=n.parcel_id?'parcel:'+n.parcel_id.toLowerCase().replace(/[^a-z0-9]+/g,''):('address:'+identityParts.join('|'));\n n.identity_complete=Boolean(n.owner_name&&n.property_address&&n.state&&(n.source_url||n.source_record_id));\n n.normalization_warnings=[];\n if(!n.owner_name)n.normalization_warnings.push('missing_owner_name');\n if(!n.property_address)n.normalization_warnings.push('missing_property_address');\n if(!n.state)n.normalization_warnings.push('missing_state');\n if(!(n.source_url||n.source_record_id))n.normalization_warnings.push('missing_source_identity');\n return {index:i,...n};\n};\nconst normalized=records.filter(r=>r&&typeof r==='object').map(normalize);\nconst seen=new Set(); const deduped=[]; let duplicateCount=0;\nfor(const r of normalized){if(seen.has(r.normalized_identity_key)){duplicateCount++; continue;} seen.add(r.normalized_identity_key); deduped.push(r);}\nreturn [{json:{success:true,request_id:input.request_id||null,record_count:deduped.length,input_record_count:normalized.length,duplicate_count:duplicateCount,records:deduped,policy:'Canonical normalization only. No missing facts are inferred; raw source attributes and provenance are preserved.'}}];"
+      }
+    },
+    {
+      "id": "respond",
+      "name": "Respond Normalized Records",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Property Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Property Records": {
+      "main": [
+        [
+          {
+            "node": "Respond Normalized Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

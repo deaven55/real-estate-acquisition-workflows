@@ -498,3 +498,27 @@ It produces:
 - decision-evidence coverage and explicit `next_action`.
 
 WF-053 is an audit/evidence boundary only. It does not execute external actions, contact sellers/buyers, validate legal/title status, or claim funding verification. Its purpose is to make consequential workflow decisions traceable rather than merely observable.
+
+
+### WF-054 — Action Execution Policy & Side-Effect Guard
+
+`workflows/54-action-execution-policy-side-effect-guard.json` adds the enforcement boundary between workflow readiness and consequential external actions.
+
+It evaluates supplied action requests against:
+
+- explicit human authorization from WF-052;
+- idempotency/execution identity from WF-048;
+- workflow contract health from WF-049;
+- control-plane health from WF-051;
+- audit/decision evidence from WF-053.
+
+It produces:
+
+- `execution_policy_health`;
+- `allowed_actions`;
+- `blocked_actions`;
+- deterministic `policy_violations`;
+- an audit event summary;
+- an explicit `next_action`.
+
+Side effects are never executed by WF-054. Seller/buyer outreach, offer sending, contract preparation, CRM writes, closing scheduling, and execution retries require the appropriate authorization and governance evidence before a downstream executor is permitted to act.

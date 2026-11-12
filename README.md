@@ -254,4 +254,4 @@ It:
 - removes exact identity duplicates without discarding the first canonical record;
 - explicitly reports missing identity/provenance fields instead of inventing values.
 
-WF-031 is intentionally source-provider-neutral. The next integration pass will place this boundary before WF-030 so every evidence family enters candidate fan-in through the same canonical contract.
+WF-031 is intentionally source-provider-neutral. It is now wired directly before WF-030 so every evidence family enters candidate fan-in through the same canonical contract. WF-020 also preserves the resulting canonical identity, evidence metadata, and normalization warnings into InsulaCRM.

@@ -571,3 +571,21 @@ It produces:
 - an explicit `next_action`.
 
 WF-057 is evidence reconstruction only. It does not make legal conclusions, establish title clearance, verify funds, execute external actions, or automatically retry failed actions.
+
+
+### WF-058 — Operational Metrics & SLA Performance Gate
+
+`workflows/58-operational-metrics-sla-performance-gate.json` adds the operating-performance measurement layer. It calculates supplied pipeline stage counts, active/terminal records, stage SLA breaches, missing operational timestamps/actions, and canonical-identity coverage.
+
+It produces:
+
+- `operational_metrics_health`;
+- stage counts and active/terminal counts;
+- configurable stage SLA thresholds;
+- SLA breach records with overdue duration and priority;
+- data-quality issues;
+- bottleneck-stage indicators;
+- a compact performance summary;
+- an explicit `next_action`.
+
+WF-058 is measurement-only. It does not automatically escalate, retry, contact parties, change pipeline state, or make legal/title/funding determinations.

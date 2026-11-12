@@ -1,0 +1,42 @@
+{
+  "name": "WF-042 Closing Coordination & Transaction Status Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-042-closing-coordination", "responseMode": "responseNode", "options": {} },
+      "id": "wf042-webhook",
+      "name": "Closing Coordination Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf042-closing-coordination"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst source = input.closing ?? input;\nconst identity = { candidate_key: source.candidate_key ?? null, normalized_identity_key: source.normalized_identity_key ?? null, lead_id: source.leadId ?? source.lead_id ?? null, deal_id: source.dealId ?? source.deal_id ?? null, property_id: source.propertyId ?? source.property_id ?? null, parcel_id: source.parcel_id ?? null };\nconst strategy = String(source.exit_strategy ?? source.disposition_strategy ?? '').toLowerCase().trim();\nconst allowedStrategies = ['assignment','novation','double_close','wholetail','resale','hold','review'];\nconst status = String(source.closing_status ?? source.transaction_status ?? source.status ?? 'closing_pending').toLowerCase().trim();\nconst allowedStatuses = ['closing_pending','title_ordered','title_review','title_issue','disclosures_pending','disclosures_complete','documents_pending','documents_ready','funding_pending','funding_ready','closing_scheduled','closed','closing_failed','cancelled'];\nconst prior = String(source.prior_closing_status ?? '').toLowerCase().trim();\nconst transitionMap = { closing_pending:['title_ordered','disclosures_pending','documents_pending','funding_pending','closing_scheduled','cancelled'], title_ordered:['title_review','title_issue','disclosures_pending','documents_pending','cancelled'], title_review:['title_issue','disclosures_pending','documents_pending','funding_pending','closing_scheduled','cancelled'], title_issue:['title_review','closing_failed','cancelled'], disclosures_pending:['disclosures_complete','documents_pending','cancelled'], disclosures_complete:['documents_pending','funding_pending','closing_scheduled','cancelled'], documents_pending:['documents_ready','cancelled'], documents_ready:['funding_pending','funding_ready','closing_scheduled','cancelled'], funding_pending:['funding_ready','closing_scheduled','closing_failed','cancelled'], funding_ready:['closing_scheduled','closed','closing_failed'], closing_scheduled:['closed','closing_failed','cancelled'], closed:[], closing_failed:['closing_pending','cancelled'], cancelled:[] };\nconst validStrategy = allowedStrategies.includes(strategy);\nconst validStatus = allowedStatuses.includes(status);\nconst missing=[];\nif (!identity.candidate_key && !identity.normalized_identity_key && !identity.property_id && !identity.parcel_id) missing.push('property_identity');\nif (!source.executed_contract_id && !source.contract_id) missing.push('executed_contract_id');\nif (!validStrategy) missing.push('supported_exit_strategy');\nif (!validStatus) missing.push('supported_closing_status');\nconst transitionValid = !prior || prior === status || (transitionMap[prior] ?? []).includes(status);\nconst blockingIssues = Array.isArray(source.blocking_issues) ? source.blocking_issues.filter(Boolean) : [];\nconst readiness = missing.length ? 'needs_data' : !transitionValid ? 'invalid_transition' : blockingIssues.length ? 'blocked' : status === 'closed' ? 'closed' : status === 'closing_scheduled' ? 'closing_ready' : 'in_progress';\nconst closingReady = ['closing_scheduled','closed'].includes(status) && missing.length === 0 && blockingIssues.length === 0 && transitionValid;\nconst nextAction = readiness === 'needs_data' ? 'Collect the missing closing package data.' : readiness === 'invalid_transition' ? 'Review the prior closing state and advance only through a supported transition.' : readiness === 'blocked' ? 'Resolve the listed blocking issues before advancing.' : status === 'closed' ? 'Record final closing outcome and hand off to post-close reporting.' : status === 'closing_scheduled' ? 'Coordinate the scheduled closing through the authorized title/closing parties.' : status === 'title_issue' ? 'Route title issues to the authorized title/closing party for resolution.' : status === 'funding_pending' ? 'Coordinate funding confirmation with the authorized funding/closing parties.' : 'Advance the closing package through the next authorized coordination step.';\nconst packageData = { identity, exit_strategy: strategy, executed_contract_id: source.executed_contract_id ?? source.contract_id ?? null, selected_buyer: source.selected_buyer ?? null, backup_buyer: source.backup_buyer ?? null, closing_status: status, prior_closing_status: prior || null, closing_date: source.closing_date ?? null, title_status: source.title_status ?? null, disclosure_status: source.disclosure_status ?? null, document_status: source.document_status ?? null, funding_status: source.funding_status ?? null, blocking_issues: blockingIssues };\nreturn [{ json: { ok: !['needs_data','invalid_transition','blocked'].includes(readiness), readiness, closing_status: status, exit_strategy: strategy, identity, transaction_ids: { lead_id: identity.lead_id, deal_id: identity.deal_id, executed_contract_id: packageData.executed_contract_id }, closing_package: packageData, closing_ready: closingReady, missing_requirements: missing, blocking_issues: blockingIssues, transition_valid: transitionValid, next_action: nextAction, policy: { no_legal_validation: true, no_title_clearance_claim: true, no_funding_verification: true, no_closing_execution: true, coordination_only: true } } }];"
+      },
+      "id": "wf042-normalize",
+      "name": "Normalize Closing Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf042-response",
+      "name": "Respond Closing Coordination",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Closing Coordination Webhook": { "main": [[{ "node": "Normalize Closing Status", "type": "main", "index": 0 }]] },
+    "Normalize Closing Status": { "main": [[{ "node": "Respond Closing Coordination", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf042-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

@@ -148,7 +148,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,official_sources:$json.official_sources}) }}",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,official_sources:$json.adapter_plan?.arcgis||[]}) }}",
         "options": {
           "timeout": 120000
         }
@@ -177,7 +177,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,criteria:$json.criteria,limit:$json.limit,sources:$json.official_sources}) }}",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,criteria:$json.criteria,limit:$json.limit,sources:$json.adapter_plan?.non_arcgis||[]}) }}",
         "options": {
           "timeout": 120000
         }
@@ -220,7 +220,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,sources:$json.official_sources}) }}",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,sources:$json.adapter_plan?.criterion_evidence||[]}) }}",
         "options": {
           "timeout": 120000
         }

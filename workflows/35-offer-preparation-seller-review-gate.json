@@ -94,17 +94,6 @@
       "main": [
         [
           {
-            "node": "Respond Offer Draft",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Respond Offer Draft": {
-      "main": [
-        [
-          {
             "node": "Offer Lifecycle Endpoint",
             "type": "main",
             "index": 0

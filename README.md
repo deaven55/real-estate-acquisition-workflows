@@ -336,3 +336,13 @@ It returns `ready_for_exit`, `needs_data`, or `not_ready`, preserves the selecte
 - Validates required closing data and supported status transitions.
 - Produces `closing_ready`, `closing_package`, `blocking_issues`, `readiness`, and `next_action`.
 - Coordination-only: does not claim title clearance, funding verification, legal validity, or closing execution.
+
+
+### WF-043 — Post-Close Assignment Completion & Profit Tracking Gate
+- File: `workflows/43-post-close-assignment-completion-profit-tracking-gate.json`
+- Adds the post-close boundary for buyer/seller completion, proceeds, assignment fees, reconciliation, and transaction close-out.
+- Normalizes post-close states including `profit_recorded`, `loss_recorded`, `reconciled`, and `closed_out`.
+- Preserves canonical property/contract identity and selected-buyer context.
+- Calculates assignment profit when an assignment fee is supplied, or estimated transaction profit when contract/buyer prices and costs are supplied.
+- Distinguishes calculated profit from supplied realized profit and does not provide tax, legal, financial-verification, or closing-execution claims.
+- Outputs `profit_tracking`, `outcome`, `transaction_package`, `readiness`, and `next_action` for reporting/CRM handoff.

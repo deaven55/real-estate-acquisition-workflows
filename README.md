@@ -464,3 +464,21 @@ It produces:
 - an explicit `next_action`.
 
 WF-051 is an operational control-plane boundary, not an execution engine. It does not automatically contact sellers/buyers, execute external side effects, validate legal/title status, or claim funding verification. Its purpose is to give the acquisition/disposition system one normalized operating snapshot for deciding what should happen next.
+
+
+### WF-052 — Human Approval & Action Authorization Gate
+
+`workflows/52-human-approval-action-authorization-gate.json` adds the explicit human-authorization boundary for consequential operational actions. It validates approval requests and prevents an action from being treated as authorized merely because a downstream workflow is ready.
+
+Supported action types include review, approve/reject, seller/buyer contact, offer sending, contract preparation, closing scheduling, CRM sync, and execution retry.
+
+It produces:
+
+- `authorization_health` with `ready`, `needs_review`, or `blocked`;
+- deterministic approval/action request validation;
+- explicit authorized versus blocked actions;
+- approver identity and decision timestamps;
+- warnings for implicit approval or missing approval context;
+- an `authorization_decisions` record for downstream execution controls.
+
+WF-052 is intentionally a human-authorization boundary. It does not contact sellers/buyers, execute contracts or closings, provide legal validation, or claim funding verification. A workflow being technically ready does not constitute permission to perform a consequential external action.

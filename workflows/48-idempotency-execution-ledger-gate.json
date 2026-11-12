@@ -1,0 +1,42 @@
+{
+  "name": "WF-048 Idempotency & Execution Ledger Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-048-idempotency-execution-ledger", "responseMode": "responseNode", "options": {} },
+      "id": "wf048-webhook",
+      "name": "Execution Ledger Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-048-idempotency-execution-ledger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const events=Array.isArray(input.events)?input.events:Array.isArray(input.records)?input.records:[]; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const keyFor=e=>norm(e.idempotency_key??e.request_id??e.execution_id??e.event_id); const status=e=>lower(e.execution_status??e.status); const terminal=new Set(['completed','succeeded','failed','cancelled','rejected']); const seen=new Map(); const duplicates=[]; const missing=[]; const conflicts=[]; const replaySafe=[]; const newEvents=[]; events.forEach((e,i)=>{const key=keyFor(e); const s=status(e); if(!key){missing.push({record_index:i,event_type:e.event_type??null,message:'Execution/idempotency key is required for safe replay handling.'}); newEvents.push({record_index:i,replay_safe:false}); return;} if(seen.has(key)){const prior=seen.get(key); duplicates.push({idempotency_key:key,record_index:i,first_record_index:prior.index,status:firstStatus(prior.event),duplicate_status:s}); if(prior.event.payload_hash&&e.payload_hash&&prior.event.payload_hash!==e.payload_hash)conflicts.push({idempotency_key:key,record_index:i,first_record_index:prior.index,message:'Same idempotency key was supplied with different payload hashes.'}); else replaySafe.push({idempotency_key:key,record_index:i,action:terminal.has(firstStatus(prior.event))?'return_prior_terminal_result':'deduplicate_in_flight_or_prior_event'}); return;} seen.set(key,{index:i,event:e}); newEvents.push({record_index:i,idempotency_key:key,replay_safe:true}); function firstStatus(x){return lower(x.execution_status??x.status)}}); const invalid=events.filter(e=>{const s=status(e);return s&& !['queued','running','completed','succeeded','failed','cancelled','rejected','retrying','blocked'].includes(s)}).length; const ledger=events.map((e,i)=>({record_index:i,idempotency_key:keyFor(e)||null,event_type:e.event_type??null,status:status(e)||'unknown',workflow:e.workflow??e.workflow_name??null,execution_id:e.execution_id??null,request_id:e.request_id??null,occurred_at:e.occurred_at??e.updated_at??null})); const readiness=conflicts.length?'blocked':missing.length?'needs_idempotency':invalid?'needs_review':'ready'; const next=readiness==='ready'?'Use the ledger key to deduplicate retries and preserve prior terminal results.':readiness==='blocked'?'Block replay for conflicting idempotency keys until the payload conflict is resolved.':'Add deterministic idempotency/request keys before allowing automated retries or replay.'; return[{json:{ok:readiness==='ready',ledger_readiness:readiness,event_count:events.length,unique_key_count:seen.size,duplicate_count:duplicates.length,missing_key_count:missing.length,conflict_count:conflicts.length,invalid_status_count:invalid,duplicates,replay_safe_events:replaySafe,missing_idempotency_keys:missing,payload_conflicts:conflicts,execution_ledger:ledger,next_action:next,policy:{idempotency_and_execution_tracking_only:true,no_automatic_retry:true,no_duplicate_side_effects:true,no_automatic_outreach:true,no_legal_validation:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf048-ledger",
+      "name": "Normalize Idempotency & Execution Ledger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf048-response",
+      "name": "Respond Execution Ledger",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Execution Ledger Webhook": { "main": [[{ "node": "Normalize Idempotency & Execution Ledger", "type": "main", "index": 0 }]] },
+    "Normalize Idempotency & Execution Ledger": { "main": [[{ "node": "Respond Execution Ledger", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf048-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

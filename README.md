@@ -522,3 +522,20 @@ It produces:
 - an explicit `next_action`.
 
 Side effects are never executed by WF-054. Seller/buyer outreach, offer sending, contract preparation, CRM writes, closing scheduling, and execution retries require the appropriate authorization and governance evidence before a downstream executor is permitted to act.
+
+
+### WF-055 — External Action Dispatch & Receipt Gate
+
+`workflows/55-external-action-dispatch-receipt-gate.json` adds the post-policy boundary for consequential actions. It accepts only actions already marked allowed by the execution-policy layer, requires deterministic idempotency/execution identity, and normalizes supplied external receipts.
+
+It produces:
+
+- `dispatch_health`;
+- dispatch records with action IDs and idempotency keys;
+- completed, failed, and pending receipt counts;
+- receipt coverage;
+- blocking dispatch/receipt issues;
+- external references when supplied;
+- an explicit `next_action`.
+
+WF-055 does not itself send seller/buyer messages, write CRM data, schedule closings, or perform other external side effects. It records and validates the result/receipt of an external executor so the rest of the operating system can distinguish **authorized**, **dispatched**, and **actually acknowledged/completed** actions.

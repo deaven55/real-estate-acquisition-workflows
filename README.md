@@ -379,3 +379,19 @@ WF-045 is analytics/reporting only. It does not fabricate metrics, provide tax/l
 `workflows/46-acquisition-pipeline-orchestration-operating-control-gate.json` adds the operating-control boundary above the transaction workflows. It accepts supplied pipeline records and produces a normalized control snapshot showing stage concentration, active versus terminal records, blockers, transition regressions, data-quality gaps, and prioritized next actions.
 
 The control layer recognizes the acquisition/disposition lifecycle from `new` through `closed_out`, including underwriting, offers, contracting, buyer matching, transaction, and closing states. It does not invent pipeline state or automatically contact sellers/buyers. Its purpose is to make the workflow stack operationally observable and provide a safe queue for the next human/system action.
+
+
+### WF-047 — Production Readiness & Exception Routing SLA Gate
+
+`workflows/47-production-readiness-exception-routing-sla-gate.json` adds the production-readiness control boundary after pipeline orchestration. It evaluates supplied workflow/pipeline records for operational exceptions, stage SLA breaches, retryable failures, dependency problems, missing canonical identity, and critical severity flags.
+
+It produces:
+
+- normalized `health_status` and severity counts;
+- `exceptions` with record identity, severity, type, and details;
+- `sla_breaches` using stage-specific operating thresholds;
+- a `retry_queue` that distinguishes retry-safe records from failures that first need an idempotency/request/execution key;
+- `dependency_status` for supplied failed, unavailable, blocked, or unknown dependencies;
+- a `health_summary` and explicit `next_action`.
+
+The default stage SLA policy is intentionally configurable in the workflow payload and is an operating-control baseline, not a promise of business performance. WF-047 does not automatically retry executions, contact sellers/buyers, validate legal/title status, verify funds, or invent execution state. It is the exception-routing and readiness layer needed before treating the broader workflow stack as production-operational.

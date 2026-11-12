@@ -246,6 +246,12 @@ See `docs/PROPERTY_CANDIDATE_FANIN.md`.
 
 ### WF-033 — Underwriting to InsulaCRM Status Sync
 
+### WF-034 — Acquisition Decision & Offer Readiness Gate
+
+`workflows/34-acquisition-decision-gate.json` converts verified underwriting inputs into an explicit acquisition decision. It calculates a maximum allowable offer only when required inputs are present, records missing fields instead of guessing, preserves candidate identity/evidence, and exposes `offer_ready` / `needs_data` / `not_approved` states for CRM and downstream disposition workflows.
+
+
+
 `workflows/33-underwriting-crm-status-sync.json` is the CRM feedback boundary after underwriting. It maps underwriting outcomes to CRM acquisition stages and preserves the canonical candidate identity/evidence context. The actual InsulaCRM deal-update URL is intentionally environment-configurable through `INSULA_CRM_DEAL_UPDATE_URL_TEMPLATE`; when it is not configured, the adapter returns a safe skipped result rather than inventing an endpoint.
 
 

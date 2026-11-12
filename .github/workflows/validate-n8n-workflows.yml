@@ -3,7 +3,9 @@ name: Validate n8n integration workflows
 on:
   pull_request:
   push:
-    branches: ["main"]
+    branches:
+      - "main"
+      - "feature/insula-crm-integration"
   workflow_dispatch:
 
 jobs:

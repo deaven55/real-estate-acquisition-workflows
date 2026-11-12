@@ -592,6 +592,35 @@
           "responseCode": 200
         }
       }
+    },
+    {
+      "id": "dispatch",
+      "name": "Plan Source Adapter Dispatch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        920,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-source-adapter-dispatch-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
     }
   ],
   "connections": {
@@ -833,7 +862,7 @@
       "main": [
         [
           {
-            "node": "Build Criteria Source Strategy",
+            "node": "Plan Source Adapter Dispatch",
             "type": "main",
             "index": 0
           }
@@ -856,6 +885,17 @@
         [
           {
             "node": "Merge GIS Research Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Source Adapter Dispatch": {
+      "main": [
+        [
+          {
+            "node": "Build Criteria Source Strategy",
             "type": "main",
             "index": 0
           }

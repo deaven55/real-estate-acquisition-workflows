@@ -1,0 +1,82 @@
+{
+  "name": "WholeStack WF-035: Offer Preparation & Seller Review Gate",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-offer-preparation-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare Offer Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input=$input.first().json.body||$input.first().json; const d=input.acquisition_decision||{}; const identityReady=Boolean(input.candidate_key||input.normalized_identity_key||input.parcel_id||input.propertyId); const seller=input.seller||input.owner||{}; const proposed=input.proposed_offer_amount??d.mao; const amount=Number(proposed); const amountReady=Number.isFinite(amount)&&amount>0; const missing=[]; if(!identityReady) missing.push(\"property_identity\"); if(!amountReady) missing.push(\"proposed_offer_amount_or_mao\"); if(!seller.name&&!input.seller_name&&!input.owner_name) missing.push(\"seller_name\"); const decision=String(d.decision||\"needs_data\").toLowerCase(); const ready=decision===\"offer_ready\"&&missing.length===0; const offerId=input.offer_id||(\"offer-\"+(input.dealId||input.deal_id||input.candidate_key||Date.now())); const strategy=String(input.offer_strategy||\"standard_wholesale\").trim(); return [{json:{...input,offer:{offer_id:offerId,status:ready?\"draft_ready\":\"needs_review\",draft_only:true,send_authorized:false,offer_strategy:strategy,proposed_offer_amount:amountReady?amount:null,maximum_allowable_offer:d.mao??null,expiration_date:input.expiration_date||null,seller:{name:seller.name||input.seller_name||input.owner_name||null,phone:seller.phone||input.seller_phone||null,email:seller.email||input.seller_email||null},missing_fields:missing,review_required:true,identity_ready:identityReady,acquisition_decision:decision},crm_stage:ready?\"offer_draft_ready\":\"offer_review_needed\"}}];"
+      }
+    },
+    {
+      "id": "response",
+      "name": "Respond Offer Draft",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        620,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare Offer Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Offer Draft": {
+      "main": [
+        [
+          {
+            "node": "Respond Offer Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

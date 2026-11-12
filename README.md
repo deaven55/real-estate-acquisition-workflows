@@ -395,3 +395,18 @@ It produces:
 - a `health_summary` and explicit `next_action`.
 
 The default stage SLA policy is intentionally configurable in the workflow payload and is an operating-control baseline, not a promise of business performance. WF-047 does not automatically retry executions, contact sellers/buyers, validate legal/title status, verify funds, or invent execution state. It is the exception-routing and readiness layer needed before treating the broader workflow stack as production-operational.
+
+
+### WF-048 — Idempotency & Execution Ledger Gate
+
+`workflows/48-idempotency-execution-ledger-gate.json` adds the replay-safety boundary for workflow executions and external side effects. It normalizes supplied execution events and requires a deterministic idempotency/request/execution key before a record can be treated as safely replayable.
+
+It detects:
+
+- duplicate idempotency keys;
+- conflicting payload hashes under the same key;
+- missing idempotency keys;
+- invalid execution states;
+- prior terminal results that should be returned rather than re-executed.
+
+It produces an execution ledger, duplicate/replay analysis, payload conflicts, and an explicit ledger readiness state. WF-048 is tracking and decision support only: it does not automatically retry executions or perform external side effects. The purpose is to establish a deterministic anti-duplication contract before higher-level automation is allowed to replay failed or timed-out work.

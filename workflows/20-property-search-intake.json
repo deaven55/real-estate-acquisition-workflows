@@ -428,7 +428,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({first_name:$json.first_name,last_name:$json.last_name,source:'public_record_search',notes:JSON.stringify({distress_signals:$json.distress_signals||[],source_url:$json.source_url||null,source_record_id:$json.source_record_id||null,confidence:$json.confidence??null,search_request_id:$json.request_id}),property_address:$json.property_address,property_city:$json.city,property_state:$json.state,property_zip:$json.zip,property_type:$json.property_type||null,external_id:$json.external_id,external_source:$json.external_source}) }}",
+        "jsonBody": "={{ JSON.stringify({first_name:$json.first_name,last_name:$json.last_name,source:'public_record_search',notes:JSON.stringify({distress_signals:$json.distress_signals||[],source_url:$json.source_url||null,source_record_id:$json.source_record_id||null,confidence:$json.confidence??null,search_request_id:$json.request_id,candidate_key:$json.candidate_key||null,normalized_identity_key:$json.normalized_identity_key||null,evidence_count:$json.evidence_count??0,evidence_source_types:$json.evidence_source_types||[],matched_criteria:$json.matched_criteria||[],evidence_status:$json.evidence_status||null,normalization_warnings:$json.normalization_warnings||[]}),property_address:$json.property_address,property_city:$json.city,property_state:$json.state,property_zip:$json.zip,property_type:$json.property_type||null,external_id:$json.external_id,external_source:$json.external_source}) }}",
         "options": {
           "timeout": 60000
         }
@@ -478,7 +478,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,title:$json.property_address+' Acquisition',stage:'new',external_id:$json.external_id,external_source:'public_record_search',notes:JSON.stringify({search_request_id:$json.request_id,source_url:$json.source_url||null,source_record_id:$json.source_record_id||null,distress_signals:$json.distress_signals||[],confidence:$json.confidence??null})}) }}",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,title:$json.property_address+' Acquisition',stage:'new',external_id:$json.external_id,external_source:'public_record_search',notes:JSON.stringify({search_request_id:$json.request_id,source_url:$json.source_url||null,source_record_id:$json.source_record_id||null,distress_signals:$json.distress_signals||[],confidence:$json.confidence??null,candidate_key:$json.candidate_key||null,normalized_identity_key:$json.normalized_identity_key||null,evidence_count:$json.evidence_count??0,evidence_source_types:$json.evidence_source_types||[],matched_criteria:$json.matched_criteria||[],evidence_status:$json.evidence_status||null,normalization_warnings:$json.normalization_warnings||[]})}) }}",
         "options": {
           "timeout": 60000
         }
@@ -528,7 +528,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({evidence_type:'property_search_candidate',source:'public_record_search',source_record_id:$json.source_record_id||null,observed_at:$json.source_observed_at||null,confidence:$json.confidence??null,payload:{structured_facts:{owner_name:$json.owner_name||null,property_address:$json.property_address||null,city:$json.city||null,state:$json.state||null,zip:$json.zip||null,county:$json.county||null,parcel_id:$json.parcel_id||null,property_type:$json.property_type||null,distress_signals:$json.distress_signals||[],criteria:$json.criteria||[],criterion_signals:$json.criterion_signals||{},criterion_evidence:$json.criterion_evidence||[],criterion_missing_fields:$json.criterion_missing_fields||[],search_request_id:$json.request_id},source:{url:$json.source_url||null,record_id:$json.source_record_id||null,observed_at:$json.source_observed_at||null},notes:$json.notes||null}}) }}",
+        "jsonBody": "={{ JSON.stringify({evidence_type:'property_search_candidate',source:'public_record_search',source_record_id:$json.source_record_id||null,observed_at:$json.source_observed_at||null,confidence:$json.confidence??null,payload:{structured_facts:{owner_name:$json.owner_name||null,property_address:$json.property_address||null,city:$json.city||null,state:$json.state||null,zip:$json.zip||null,county:$json.county||null,parcel_id:$json.parcel_id||null,property_type:$json.property_type||null,distress_signals:$json.distress_signals||[],criteria:$json.criteria||[],criterion_signals:$json.criterion_signals||{},criterion_evidence:$json.criterion_evidence||[],criterion_missing_fields:$json.criterion_missing_fields||[],search_request_id:$json.request_id,candidate_key:$json.candidate_key||null,normalized_identity_key:$json.normalized_identity_key||null,evidence_count:$json.evidence_count??0,evidence_source_types:$json.evidence_source_types||[],matched_criteria:$json.matched_criteria||[],evidence_status:$json.evidence_status||null,normalization_warnings:$json.normalization_warnings||[],canonical_evidence:$json.evidence||[]},source:{url:$json.source_url||null,record_id:$json.source_record_id||null,observed_at:$json.source_observed_at||null},notes:$json.notes||null}}) }}",
         "options": {
           "timeout": 60000
         }

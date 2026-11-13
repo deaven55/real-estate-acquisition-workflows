@@ -1,0 +1,234 @@
+{
+  "name": "WF-104 Seller Re-Engagement CRM State & Lifecycle Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-104-seller-reengagement-crm-state",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf104-webhook",
+      "name": "Seller Re-Engagement State Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??\"\").trim();\nconst status=s(input.status??input.outcome_status).toLowerCase();\nconst event=s(input.event_type??input.outcome).toLowerCase();\nconst sellerReply=s(input.seller_reply??input.inbound_message??input.message_text);\nconst dnc=input.dnc===true||input.dnc_suppressed===true||event===\"opt_out\"||status===\"dnc\";\nconst leadId=s(input.lead_id??input.identity?.lead_id);\nconst propertyId=s(input.property_id??input.identity?.property_id);\nconst dealId=s(input.deal_id??input.identity?.deal_id);\nconst threadId=s(input.thread_id??input.identity?.thread_id);\nconst requestId=s(input.request_id??input.communication?.request_id);\nconst auditId=s(input.audit_id??input.communication?.audit_id);\nconst missing=[];\nif(!leadId&&!dealId)missing.push(\"lead_id_or_deal_id\");\nif(!requestId&&!auditId)missing.push(\"request_id_or_audit_id\");\nlet lifecycleState=\"reengagement_recorded\", crmStatus=\"active_follow_up\", nextWorkflow=\"wf-099-seller-follow-up-timing-cadence\", reason=\"re-engagement recorded; continue cadence control\", priority=\"normal\";\nif(dnc){lifecycleState=\"suppressed\";crmStatus=\"dnc\";nextWorkflow=null;reason=\"DNC/opt-out; stop autonomous seller outreach\";priority=\"critical\";}\nelse if(sellerReply||event===\"seller_reply\"||event===\"inbound_reply\"){lifecycleState=\"seller_replied\";crmStatus=\"seller_replied\";nextWorkflow=\"wf-097-ai-seller-response-intelligence\";reason=\"seller replied; analyze response before next action\";priority=\"high\";}\nelse if([\"failed\",\"error\",\"timeout\",\"transport_error\"].includes(status)){lifecycleState=\"delivery_attention\";crmStatus=\"contact_attempt_failed\";nextWorkflow=\"wf-089-communication-reconciliation\";reason=\"delivery failed; reconcile before retry\";priority=\"high\";}\nelse if([\"sent\",\"delivered\"].includes(status)||event===\"outbound_sent\"||event===\"outbound_delivered\"){lifecycleState=\"contacted\";crmStatus=\"contacted\";nextWorkflow=\"wf-099-seller-follow-up-timing-cadence\";reason=\"re-engagement delivered; cadence controls next touch\";}\nconst stateId=\"seller-lifecycle:\"+((leadId||dealId||threadId||\"unknown\"))+\":\"+(requestId||auditId||\"event\")+\":v1\";\nreturn[{json:{ok:missing.length===0,state_id:stateId,lifecycle:{state:lifecycleState,crm_status:crmStatus,reason,priority,dnc},identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,thread_id:threadId||null},communication:{request_id:requestId||null,audit_id:auditId||null,status:status||null,event:event||null,seller_reply_present:Boolean(sellerReply)},routing:{next_workflow:nextWorkflow,dispatch_mode:dnc?\"blocked\":sellerReply?\"internal_ai_analysis\":nextWorkflow===\"wf-089-communication-reconciliation\"?\"internal_reconciliation\":\"internal_follow_up_queue\"},missing_requirements:missing}}];"
+      },
+      "id": "wf104-normalize",
+      "name": "Determine Seller Lifecycle State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf104-valid",
+      "name": "Lifecycle Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/leads/{{$json.identity.lead_id}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "={{$json.lifecycle.crm_status}}"
+            },
+            {
+              "name": "dnc",
+              "value": "={{$json.lifecycle.dnc}}"
+            },
+            {
+              "name": "notes",
+              "value": "={{$json.lifecycle.reason}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf104-crm",
+      "name": "Sync Seller State to InsulaCRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json;\nconst code=Number(input.statusCode??input.status??0);\nconst ok=code>=200&&code<300;\nreturn[{json:{ok,crm_state_sync:{status:ok?\"updated\":\"failed\",status_code:code},lifecycle:input.lifecycle??null,identity:input.identity??null,routing:input.routing??null,state_id:input.state_id??null}}];"
+      },
+      "id": "wf104-result",
+      "name": "Lifecycle Sync Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf104-response",
+      "name": "Respond Lifecycle State",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1340,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf104-invalid",
+      "name": "Respond Invalid Lifecycle Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Seller Re-Engagement State Webhook": {
+      "main": [
+        [
+          {
+            "node": "Determine Seller Lifecycle State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Seller Lifecycle State": {
+      "main": [
+        [
+          {
+            "node": "Lifecycle Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lifecycle Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Sync Seller State to InsulaCRM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Lifecycle Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Seller State to InsulaCRM": {
+      "main": [
+        [
+          {
+            "node": "Lifecycle Sync Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lifecycle Sync Result": {
+      "main": [
+        [
+          {
+            "node": "Respond Lifecycle State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-104-v1"
+}

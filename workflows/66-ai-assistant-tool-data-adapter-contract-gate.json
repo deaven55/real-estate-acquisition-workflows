@@ -1,0 +1,84 @@
+{
+  "name": "WF-066 AI Assistant Tool & Data Adapter Contract Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-066-ai-assistant-tool-adapter",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf066-webhook",
+      "name": "AI Assistant Tool Adapter Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "wf-066-ai-assistant-tool-adapter"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const intent=lower(input.intent??''); const routes={portfolio_snapshot:'wf-045-portfolio-performance',lead_lookup:'insula-crm-lead-lookup',lead_followup_queue:'wf-059-operating-queue',deal_lookup:'wf-051-unified-operational-control-plane',deal_underwrite:'wf-034-acquisition-decision-gate',buyer_match:'wf-038-buyer-matching',pipeline_status:'wf-046-acquisition-pipeline-orchestration',production_health:'wf-047-production-readiness',approval_status:'wf-052-human-approval-authorization',crm_activity:'insula-crm-activities',send_offer:'wf-036-offer-lifecycle',contact_seller:'wf-036-offer-lifecycle',contact_buyer:'wf-039-buyer-disposition-response',prepare_contract:'wf-041-transaction-tracking',schedule_closing:'wf-042-closing-coordination'}; const readOnly=new Set(['portfolio_snapshot','lead_lookup','lead_followup_queue','deal_lookup','deal_underwrite','buyer_match','pipeline_status','production_health','approval_status','crm_activity']); const risky=!readOnly.has(intent)&&routes[intent]; const canonical=norm(input.lead_id??input.leadId??input.property_id??input.propertyId??input.deal_id??input.dealId??input.buyer_id??input.buyerId); const requestId=norm(input.request_id??input.requestId); const sessionId=norm(input.session_id??input.sessionId); const version=norm(input.version??'1'); const idem=norm(input.idempotency_key??('assistant-tool:'+intent+':'+(canonical||'scope')+':'+version); const required=['request_id','session_id','intent']; const missing=required.filter(k=>!norm(input[k])); if(!routes[intent])missing.push('supported_intent'); if(['lead_lookup','deal_lookup','deal_underwrite','buyer_match'].includes(intent)&&!canonical)missing.push('canonical_identity'); const dispatchMode=missing.length?'blocked':risky?'approval_controlled':'read_only'; return[{json:{ok:missing.length===0,adapter_version:'1',request_id:requestId||null,session_id:sessionId||null,intent:intent||null,tool_adapter:{tool_name:'wholesaling_os_'+intent,workflow_route:routes[intent]||null,dispatch_mode:dispatchMode,canonical_identity:canonical||null,read_only:readOnly.has(intent),side_effect_capable:Boolean(risky),request_contract:{request_id:requestId||null,session_id:sessionId||null,intent:intent||null,canonical_identity:canonical||null,idempotency_key:idem}},authorization:{human_approval_required:Boolean(risky),approval_state:norm(input.approval_state??input.approval?.approval_state??'not_required'),dispatch_allowed:missing.length===0&&(!risky||lower(input.approval_state??input.approval?.approval_state)==='approved')},missing_requirements:missing,next_action:missing.length?'Collect the missing adapter contract fields before dispatch.':risky&&lower(input.approval_state??input.approval?.approval_state)!=='approved'?'Obtain explicit human approval before dispatching the controlled action.':'Dispatch to the mapped workflow/CRM adapter and require a receipt.',policy:{adapter_contract_only:true,no_direct_external_side_effects:true,read_only_by_default:true,approved_side_effect_only:true,deterministic_idempotency:true,receipt_required:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf066-adapter",
+      "name": "Normalize Assistant Tool Adapter Contract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf066-response",
+      "name": "Respond AI Assistant Tool Adapter Contract",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        600,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "AI Assistant Tool Adapter Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Assistant Tool Adapter Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Assistant Tool Adapter Contract": {
+      "main": [
+        [
+          {
+            "node": "Respond AI Assistant Tool Adapter Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf066-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

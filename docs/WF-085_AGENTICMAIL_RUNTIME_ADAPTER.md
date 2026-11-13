@@ -4,7 +4,7 @@
 
 WF-085 is the provider-runtime boundary for autonomous business email/SMS. It receives an already-authorized communication envelope from WF-082/WF-084, validates the request, resolves AgenticMail runtime configuration, sends through the configured AgenticMail API endpoint, and returns a normalized provider receipt.
 
-AgenticMail documents a REST API under `/api/agenticmail`, including `POST /mail/send` for email. SMS/phone access is provider-backed and should remain configurable rather than hardcoding an unverified SMS route into the acquisition OS. citeturn884773search0turn884773search1
+AgenticMail documents a REST API under `/api/agenticmail`, including `POST /mail/send` for email. SMS/phone access is provider-backed and should remain configurable rather than hardcoding an unverified SMS route into the acquisition OS.
 
 ## Runtime configuration
 
@@ -61,4 +61,4 @@ The upstream workflow remains responsible for CRM activity/audit persistence and
 7. Run a controlled email test and a controlled SMS test.
 8. Confirm provider receipt, CRM activity, idempotency behavior, DNC suppression, and thread continuity before enabling autonomous production traffic.
 
-AgenticMail supports external email through relay/domain gateway modes and documents SMS integrations including Google Voice and 46elks; the OS therefore keeps the communication boundary provider-agnostic while using AgenticMail as the current integration target. citeturn884773search0
+AgenticMail supports external email through relay/domain gateway modes and documents SMS integrations including Google Voice and 46elks; the OS therefore keeps the communication boundary provider-agnostic while using AgenticMail as the current integration target.

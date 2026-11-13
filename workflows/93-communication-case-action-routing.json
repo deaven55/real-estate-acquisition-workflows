@@ -1,0 +1,147 @@
+{
+  "name": "WF-093 Communication Case Action Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-093-communication-case-action-routing",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf093-webhook",
+      "name": "Communication Case Action Routing Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const c=input.case??input; const s=v=>String(v??'').trim(); const dnc=c.dnc_suppressed===true; const outstanding=c.outstanding_response===true; const failures=Number(c.delivery_failures??0); const latestInbound=c.latest_inbound??null; const latestOutbound=c.latest_outbound??null; const actions=[]; if(dnc){actions.push({action:'suppress_outbound',priority:'critical',reason:'DNC suppression is active; no autonomous outbound communication is permitted.'});} else if(failures>0){actions.push({action:'reconcile_delivery',priority:'high',reason:'One or more communication delivery failures require reconciliation before another send.'});} else if(outstanding){actions.push({action:'evaluate_inbound_response',priority:'high',reason:'Latest communication event is inbound and no later outbound event is present.'});} else if(latestOutbound&&['sent','delivered'].includes(s(latestOutbound.status))){actions.push({action:'monitor',priority:'normal',reason:'Latest outbound communication has a successful transport status and no response is currently inferred as outstanding.'});} else {actions.push({action:'human_review',priority:'normal',reason:'Communication case lacks enough evidence for a safe autonomous next action.'});} const contextComplete=Boolean(s(c.case_id)&&s(c.thread_id)); return[{json:{ok:contextComplete,case_action:{case_id:s(c.case_id),thread_id:s(c.thread_id),lead_id:s(c.lead_id)||null,property_id:s(c.property_id)||null,deal_id:s(c.deal_id)||null,decision:dnc?'suppress':actions[0].action,actions,context:{event_count:Number(c.event_count??0),latest_inbound:latestInbound,latest_outbound:latestOutbound,dnc_suppressed:dnc,delivery_failures:failures,outstanding_response:outstanding},autonomous_action_allowed:!dnc&&actions[0].action==='monitor',requires_human_review:dnc?false:actions[0].action==='human_review'||actions[0].action==='evaluate_inbound_response',requires_reconciliation:!dnc&&failures>0},missing_requirements:contextComplete?[]:['case_id','thread_id'],next_action:!contextComplete?'Do not execute an action without a deterministic case and thread identity.':dnc?'Suppress outbound communication and preserve the case for compliance/audit review.':failures>0?'Send the case to WF-089 delivery reconciliation before considering another communication.':outstanding?'Send the inbound message to WF-084 for response-mode evaluation using the reconstructed case context.':actions[0].action==='monitor'?'No autonomous response is required; keep the case available for follow-up monitoring.':'Route the case for human review before any external action.'}}}];"
+      },
+      "id": "wf093-route",
+      "name": "Route Communication Case Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf093-valid",
+      "name": "Case Action Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        580,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf093-response",
+      "name": "Respond Case Action",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        840,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf093-invalid",
+      "name": "Respond Missing Case Identity",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        840,
+        450
+      ]
+    }
+  ],
+  "connections": {
+    "Communication Case Action Routing Webhook": {
+      "main": [
+        [
+          {
+            "node": "Route Communication Case Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Communication Case Action": {
+      "main": [
+        [
+          {
+            "node": "Case Action Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case Action Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Case Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Missing Case Identity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-093-v1"
+}

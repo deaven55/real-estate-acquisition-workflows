@@ -1,0 +1,82 @@
+{
+  "name": "WF-072 Repair Cost & Property Condition Analysis Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-072-repair-condition-analysis",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf072-webhook",
+      "name": "Repair Condition Analysis Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-072-repair-condition-analysis",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const n=v=>Number.isFinite(Number(v))?Number(v):null; const id=s(input.property_id??input.parcel_id??input.lead_id??input.deal_id); const condition=s(input.condition??input.property_condition??'').toLowerCase(); const beds=n(input.beds); const sqft=n(input.sqft); const age=n(input.year_built); const components=input.components&&typeof input.components==='object'?input.components:{}; const comps=Object.entries(components).map(([name,v])=>({component:name,condition:s(v.condition??v.status),quantity:n(v.quantity),unit_cost:n(v.unit_cost),estimated_cost:n(v.estimated_cost)})); const direct=comps.map(x=>x.estimated_cost).filter(v=>v!==null); const directTotal=direct.length?direct.reduce((a,b)=>a+b,0):null; const conditionFactors={excellent:0.02,good:0.06,fair:0.12,poor:0.22,distressed:0.32,major_rehab:0.45}; const factor=conditionFactors[condition]??null; const sqftEstimate= sqft!==null&&factor!==null ? sqft*factor*150 : null; const estimate=directTotal!==null?directTotal:sqftEstimate; const missing=[]; if(!id)missing.push('canonical_identity'); if(estimate===null)missing.push('repair_scope_or_condition_inputs'); const confidence=directTotal!==null?'component_based':factor!==null&&sqft!==null?'condition_plus_sqft_heuristic':'insufficient'; return[{json:{ok:missing.length===0,adapter:'wf-072',canonical_identity:id||null,condition:condition||null,property_profile:{sqft,beds,year_built:age},repair_scope:comps,estimate:{estimated_repairs:estimate,method:confidence,confidence:confidence==='component_based'?'higher':'heuristic_only'},evidence:{provided_component_costs:direct.length,raw_inputs_preserved:true,no_inference:confidence!=='condition_plus_sqft_heuristic'},decision:{status:missing.length?'needs_data':estimate===0?'verify_no_repairs': 'repair_estimate_ready_for_underwriting'},missing_requirements:missing,next_action:missing.length?'Collect property condition/scope or component estimates.':'Validate repair assumptions with inspection/contractor evidence before final offer.',policy:{repair_estimate_not_fact:true,heuristics_not_replacements_for_inspection:true,70_percent_rule_secondary:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf072-analysis",
+      "name": "Estimate Repairs & Condition Impact",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf072-response",
+      "name": "Respond Repair Condition Analysis",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Repair Condition Analysis Webhook": {
+      "main": [
+        [
+          {
+            "node": "Estimate Repairs & Condition Impact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Estimate Repairs & Condition Impact": {
+      "main": [
+        [
+          {
+            "node": "Respond Repair Condition Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {},
+  "versionId": "wf072-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

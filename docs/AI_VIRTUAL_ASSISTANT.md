@@ -131,3 +131,17 @@ WF-063 provides the assistant with a normalized session context so multi-turn co
 The continuity boundary is explicit: references such as “this deal,” “that property,” “continue,” or “follow up” must resolve against session context before dispatch. If the referenced identity is missing, the assistant must resolve it rather than guess. Explicit identity changes take precedence and must be recorded for audit.
 
 WF-063 does not execute side effects. It hands normalized context to WF-060 for intent interpretation and WF-061 for routing/authorization, while WF-062 supplies the current operating snapshot.
+
+## Unified response composition
+
+WF-064 is the presentation/decision layer for the assistant. It combines the command result, operating context, session continuity, blockers, missing context, pending approvals, prioritized actions, and authorization state into one deterministic assistant response envelope.
+
+The response explicitly distinguishes:
+
+- ready: request can continue through the controlled dispatch path
+- blocked: operating exceptions prevent safe continuation
+- needs_context: required identity or data is missing
+- approval_required: a risky action lacks explicit human approval
+- error: the supplied result did not complete safely
+
+WF-064 is compose-only and cannot create external side effects. This keeps natural-language presentation separate from execution authorization.

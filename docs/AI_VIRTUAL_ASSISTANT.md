@@ -201,3 +201,7 @@ WF-072 adds a repair-condition analysis gate. It accepts component-level repair 
 WF-073 adds property-specific feasibility checks for access, road frontage, utilities, septic/well, zoning, flood risk, wetlands, topography, parcel size, and buildability. It flags material risks and unknowns for underwriting and exit-strategy review without pretending that a workflow flag is an authoritative zoning, flood, title, utility, or buildability determination.
 
 For vacant land, these factors can materially change value and buyer demand, so unresolved feasibility issues can reduce MAO or require additional diligence rather than being hidden inside a generic discount percentage.
+
+## Buyer demand and exit strategy analysis
+
+WF-074 adds an evidence-based buyer-demand and exit-strategy layer. It evaluates available buyer matches, demand signals, expected assignment spread, and proposed exit strategy, while explicitly distinguishing missing evidence from weak demand or negative economics. It does not guarantee a buyer, proof of funds, closing ability, or disposition outcome, and it does not perform automatic outreach.

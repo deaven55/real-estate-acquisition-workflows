@@ -28,7 +28,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const input=$input.first().json.body||$input.first().json; const underwriting=input.underwriting_pipeline||input.underwriting||{}; const decision=input.acquisition_decision||{}; const dealId=input.dealId||input.deal_id||null; const status=String(input.underwriting_status||underwriting.status||underwriting.decision||decision.decision||'review').trim().toLowerCase(); const stageMap={review:'underwriting_review',review_needed:'underwriting_review',qualified:'underwriting_review',approved:'offer_ready',offer_ready:'offer_ready',rejected:'underwriting_rejected',declined:'underwriting_rejected',passed:'underwriting_rejected'}; const stage=stageMap[status]||'underwriting_review'; const updateUrlTemplate=String($env.INSULA_CRM_DEAL_UPDATE_URL_TEMPLATE||'').trim(); const configured=Boolean(updateUrlTemplate&&dealId); const updateUrl=configured?updateUrlTemplate.replace(/\\{dealId\\}/g,encodeURIComponent(String(dealId))):null; return [{json:{success:true,deal_id:dealId,underwriting_status:status,crm_stage:stage,update_configured:configured,update_url:updateUrl,payload:{stage,underwriting_status:status,underwriting_summary:underwriting.summary||underwriting.notes||null,underwriting_result:underwriting,acquisition_decision:decision,identity:{candidate_key:input.candidate_key||null,normalized_identity_key:input.normalized_identity_key||null,external_id:input.external_id||null,parcel_id:input.parcel_id||null},evidence:{count:input.evidence_count??0,status:input.evidence_status||null}},message:configured?'CRM update prepared.':'CRM update skipped because INSULA_CRM_DEAL_UPDATE_URL_TEMPLATE is not configured.'}}];"
+        "jsCode": "const input=$input.first().json.body||$input.first().json;\nconst underwriting=input.underwriting_pipeline||input.underwriting||{};\nconst decision=input.acquisition_decision||{};\nconst dealId=input.dealId||input.deal_id||null;\nconst leadId=input.leadId||input.lead_id||null;\nconst status=String(input.underwriting_status||underwriting.status||underwriting.decision||decision.decision||'review').trim().toLowerCase();\nconst stageMap={review:'underwriting_review',review_needed:'underwriting_review',qualified:'underwriting_review',approved:'offer_ready',offer_ready:'offer_ready',rejected:'underwriting_rejected',declined:'underwriting_rejected',passed:'underwriting_rejected'};\nconst stage=stageMap[status]||'underwriting_review';\nconst updateUrlTemplate=String($env.INSULA_CRM_DEAL_UPDATE_URL_TEMPLATE||'').trim();\nconst leadUpdateUrlTemplate=String($env.INSULA_CRM_LEAD_UPDATE_URL_TEMPLATE||'').trim();\nconst configured=Boolean(updateUrlTemplate&&dealId);\nconst leadConfigured=Boolean(leadUpdateUrlTemplate&&leadId);\nconst updateUrl=configured?updateUrlTemplate.replace(/\\\\{dealId\\\\}/g,encodeURIComponent(String(dealId))):null;\nconst leadUpdateUrl=leadConfigured?leadUpdateUrlTemplate.replace(/\\\\{leadId\\\\}/g,encodeURIComponent(String(leadId))):null;\nconst identity={candidate_key:input.candidate_key||null,normalized_identity_key:input.normalized_identity_key||null,external_id:input.external_id||null,external_source:input.external_source||null,parcel_id:input.parcel_id||null};\nconst evidence={count:input.evidence_count??0,status:input.evidence_status||null,source_types:input.evidence_source_types||[]};\nreturn [{json:{success:true,deal_id:dealId,lead_id:leadId,underwriting_status:status,crm_stage:stage,update_configured:configured,lead_update_configured:leadConfigured,update_url:updateUrl,lead_update_url:leadUpdateUrl,payload:{stage,underwriting_status:status,underwriting_summary:underwriting.summary||underwriting.notes||null,underwriting_result:underwriting,acquisition_decision:decision,identity,evidence},message:configured||leadConfigured?'CRM update prepared.':'CRM update skipped because CRM update URLs are not configured.'}}];"
       }
     },
     {
@@ -63,6 +63,77 @@
           ]
         },
         "options": {}
+      }
+    },
+    {
+      "id": "ifLeadConfigured",
+      "name": "IF CRM Lead Update Configured",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        540,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "leftValue": ""
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "lead-configured",
+              "leftValue": "={{ $json.lead_update_configured }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "updateLead",
+      "name": "Update Insula Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        800,
+        220
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.lead_update_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'underwriting-crm-lead-status:' + $json.lead_id + ':' + $json.underwriting_status + ':v1' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({notes:JSON.stringify({underwriting_status:$json.underwriting_status,crm_stage:$json.crm_stage,underwriting_result:$json.payload.underwriting_result,acquisition_decision:$json.payload.acquisition_decision,identity:$json.payload.identity,evidence:$json.payload.evidence})}) }}",
+        "options": {
+          "timeout": 60000
+        }
       }
     },
     {
@@ -154,7 +225,7 @@
         ],
         [
           {
-            "node": "Respond Sync Result",
+            "node": "IF CRM Lead Update Configured",
             "type": "main",
             "index": 0
           }
@@ -162,6 +233,35 @@
       ]
     },
     "Update Insula Deal": {
+      "main": [
+        [
+          {
+            "node": "Respond Sync Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF CRM Lead Update Configured": {
+      "main": [
+        [
+          {
+            "node": "Update Insula Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Sync Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Insula Lead": {
       "main": [
         [
           {

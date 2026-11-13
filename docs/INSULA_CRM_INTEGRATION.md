@@ -136,3 +136,30 @@ WF-035 now records offer-draft preparation as an InsulaCRM activity when a canon
 WF-036 now records seller offer lifecycle decisions (sent, countered, accepted, rejected, expired, withdrawn, contract-pending, or executed) as InsulaCRM activities while preserving the existing lifecycle and disposition handoff behavior.
 
 WF-037 now records contract/disposition readiness evaluation as an InsulaCRM activity, including readiness state, contract/strategy readiness, buyer-matching readiness, next action, and missing fields. These activity writes are best-effort and do not block the acquisition workflow if CRM activity logging fails.
+
+
+## Buyer-to-close CRM activity handoff
+
+WF-038 now records deterministic buyer matching / buy-box ranking activity against the seller's InsulaCRM lead when a stable lead ID is available. The workflow remains decision-only: it ranks buyer records and does not authorize buyer outreach.
+
+WF-039 records buyer disposition response-state changes, including contact authorization, interest, countering, proof-of-funds states, selection, backup, decline, and disqualification.
+
+WF-040 records buyer selection and exit-strategy readiness, including assignment, novation, double-close, wholetail, resale, hold, or review.
+
+WF-041 records assignment/novation/double-close transaction tracking state and preserves canonical property, seller lead, deal, contract, and buyer identity.
+
+WF-042 records closing coordination status and readiness. It remains coordination-only and does not claim title clearance, funding verification, legal validation, or closing execution.
+
+WF-043 records post-close completion and profit/reconciliation state.
+
+WF-044 records CRM closeout and deal-performance outcome, including calculated/realized profit or loss and final CRM stage.
+
+All seven activity integrations use the same best-effort pattern as WF-035 through WF-037: InsulaCRM activity writes are attempted only when `INSULA_CRM_BASE_URL`, `INSULA_CRM_API_KEY`, and a canonical lead ID are available; failures do not block the underlying workflow result. Each activity write uses a deterministic idempotency key.
+
+This establishes the end-to-end CRM activity chain:
+
+`qualification -> underwriting -> offer -> seller decision -> contract/disposition readiness -> buyer matching -> buyer response -> buyer selection/exit strategy -> transaction -> closing -> post-close -> CRM closeout`.
+
+## Remaining production cutover checks
+
+The repository-side integration is now substantially complete. Before production activation, verify the live n8n environment has `INSULA_CRM_BASE_URL` and `INSULA_CRM_API_KEY`, stable lead IDs are propagated through WF-038-WF-044, and the tenant/API-key isolation and replay behavior are tested against a non-production InsulaCRM environment. Workflow activation and live credential configuration remain deployment operations rather than Git repository changes.

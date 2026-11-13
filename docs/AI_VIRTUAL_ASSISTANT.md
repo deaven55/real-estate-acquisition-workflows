@@ -105,3 +105,21 @@ The assistant therefore has two distinct stages:
 WF-061 does not execute external side effects itself. It produces the controlled execution envelope for the mapped workflow and requires the result to be recorded through the dispatch/receipt and reconciliation layers.
 
 This makes the assistant auditable and replay-safe rather than allowing an LLM to directly call seller, buyer, contract, or closing actions.
+
+## Operating context snapshot
+
+WF-062 creates a normalized context package for the assistant from current pipeline, leads, deals, operating queue, exceptions, approvals, and identity-quality data supplied by the operating system.
+
+It produces a compact decision context containing:
+
+- hot/urgent deals
+- seller follow-up candidates
+- urgent operating queue items
+- blocking exceptions
+- pending human approvals
+- stale active records
+- canonical identity coverage
+- the highest-priority supplied operating action
+- explicit data gaps
+
+This gives the assistant a structured answer source for commands such as “What should I work on right now?” without allowing the assistant to invent current deal state.

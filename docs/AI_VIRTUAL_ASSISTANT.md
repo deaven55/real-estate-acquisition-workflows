@@ -145,3 +145,9 @@ The response explicitly distinguishes:
 - error: the supplied result did not complete safely
 
 WF-064 is compose-only and cannot create external side effects. This keeps natural-language presentation separate from execution authorization.
+
+## End-to-end assistant orchestration
+
+WF-065 is the orchestration gateway for the assistant lifecycle. It establishes the session ID, request ID, deterministic idempotency key, intent/approval state, and explicit workflow handoff sequence across WF-063, WF-060, WF-062, WF-061, and WF-064.
+
+The gateway is orchestration-only. It does not execute seller/buyer/contract/closing side effects. Controlled actions still require WF-061 authorization and the applicable human approval state. Every request carries audit identifiers so the assistant lifecycle can be reconstructed and replayed safely.

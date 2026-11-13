@@ -321,3 +321,24 @@ This establishes the actual AI conversation control loop:
 **Inbound message → identify seller/deal → understand message → check DNC/risk → retrieve current CRM/deal context → decide response mode → generate context-grounded reply → dispatch through business identity → receive provider receipt → log activity → wait for next reply.**
 
 The user has explicitly authorized autonomous email/SMS once the business communication provider, business email, and separate provider-issued business number are configured. That authorization does not mean provider credentials or a phone number are already provisioned.
+
+
+## Communication provider runtime readiness
+
+The communication layer is now provider-aware at the runtime boundary. The GitHub workflows intentionally do not store provider secrets or pretend that a provider account is already connected.
+
+The intended runtime configuration is:
+
+- business email: `dravendealsnc@gmail.com`
+- dedicated business SMS/phone number: provisioned by the selected provider
+- provider API endpoint/account configuration: supplied through protected n8n credentials/environment
+- provider secrets: never committed to GitHub
+- inbound provider webhook: mapped to WF-083
+- outbound dispatch: WF-082
+- conversation analysis: WF-078
+- autonomous response decision: WF-084
+- CRM/audit persistence: InsulaCRM + operating audit layers.
+
+AgenticMail is a viable provider integration target because its official repository documents programmatic email plus SMS/phone support and a self-hosted API/MCP architecture. The OS remains provider-agnostic so the communication transport can be changed without rewriting the CRM, conversation intelligence, or autonomous authorization layers.
+
+The remaining deployment work is configuration rather than architecture: provision the business communication identity/number, configure provider credentials securely, expose the inbound webhook, connect the runtime environment to n8n, and run end-to-end test messages before enabling autonomous production traffic.

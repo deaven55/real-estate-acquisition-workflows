@@ -1,0 +1,250 @@
+{
+  "name": "WF-109 Underwriting Evidence Aggregator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-109-underwriting-evidence-aggregator",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf109-webhook",
+      "name": "Underwriting Evidence Aggregator Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??'').trim();\nconst first=(...v)=>v.find(x=>x!==undefined&&x!==null&&x!=='');\nconst leadId=s(first(input.lead_id,input.identity?.lead_id));\nconst propertyId=s(first(input.property_id,input.identity?.property_id));\nconst dealId=s(first(input.deal_id,input.identity?.deal_id));\nconst propertyType=s(first(input.property_type,input.property?.type)).toLowerCase();\nconst address=s(first(input.property_address,input.property?.address));\nconst id=s(first(dealId,propertyId,leadId));\nconst missing=[];\nif(!id)missing.push('canonical_identity');\nif(!propertyType)missing.push('property_type');\nif(!address&&!propertyId)missing.push('property_address_or_property_id');\n\nconst source=key=>{\n  const v=input[key];\n  if(v===undefined||v===null||v==='') return null;\n  return v;\n};\nconst evidence={\n  valuation:source('valuation')??source('market_value')??source('arv'),\n  comps:source('comps')??source('comps_evidence'),\n  repairs:source('repairs')??source('repair_evidence')??source('estimated_repairs'),\n  risk:source('property_risk')??source('risk_evidence'),\n  buyer_demand:source('buyer_demand')??source('buyer_demand_evidence'),\n  exit_strategy:source('exit_strategy')??source('exit_evidence')\n};\nconst availability={\n  valuation:evidence.valuation!==null,\n  comps:Array.isArray(evidence.comps)?evidence.comps.length>0:evidence.comps!==null,\n  repairs:evidence.repairs!==null,\n  risk:evidence.risk!==null,\n  buyer_demand:evidence.buyer_demand!==null,\n  exit_strategy:evidence.exit_strategy!==null\n};\nconst required=['valuation','comps','repairs','risk','buyer_demand','exit_strategy'];\nconst missingEvidence=required.filter(k=>!availability[k]);\nconst packetId='underwriting-packet:'+(id||'unknown')+':v1';\nconst packet={\n  packet_id:packetId,\n  identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null},\n  property:{type:propertyType||null,address:address||null},\n  evidence,\n  evidence_status:{required,available:Object.keys(availability).filter(k=>availability[k]),missing:missingEvidence,complete:missingEvidence.length===0},\n  policy:{economic_viability_primary:true,reference_70pct_secondary_only:true,property_type_specific_logic:true,land_specific_logic:propertyType.includes('land')||propertyType.includes('vacant')},\n  source_metadata:{request_id:s(input.request_id),evidence_version:s(input.evidence_version)||'v1',aggregated_at:new Date().toISOString()}\n};\nconst status=missing.length?'needs_context':missingEvidence.length?'evidence_incomplete':'evidence_ready';\nreturn[{json:{ok:missing.length===0,status,packet,missing_requirements:missing,missing_evidence:missingEvidence,orchestration:{next_action:missingEvidence.length?'collect_missing_evidence':'send_canonical_packet_to_mao_gate',next_workflow:missingEvidence.length?null:'wf-069-deal-viability-mao-strategy-gate'}}}];"
+      },
+      "id": "wf109-aggregate",
+      "name": "Aggregate Canonical Evidence Packet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "evidence_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf109-ready",
+      "name": "Evidence Packet Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.ACQUISITION_WORKFLOW_BASE_URL}}/webhook/wf-069-deal-viability-mao-strategy",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{$json.packet.identity.lead_id}}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{$json.packet.identity.property_id}}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{$json.packet.identity.deal_id}}"
+            },
+            {
+              "name": "property_type",
+              "value": "={{$json.packet.property.type}}"
+            },
+            {
+              "name": "property_address",
+              "value": "={{$json.packet.property.address}}"
+            },
+            {
+              "name": "valuation",
+              "value": "={{JSON.stringify($json.packet.evidence.valuation)}}"
+            },
+            {
+              "name": "arv",
+              "value": "={{$json.packet.evidence.valuation}}"
+            },
+            {
+              "name": "market_value",
+              "value": "={{$json.packet.evidence.valuation}}"
+            },
+            {
+              "name": "repairs",
+              "value": "={{JSON.stringify($json.packet.evidence.repairs)}}"
+            },
+            {
+              "name": "comps",
+              "value": "={{JSON.stringify($json.packet.evidence.comps)}}"
+            },
+            {
+              "name": "property_risk",
+              "value": "={{JSON.stringify($json.packet.evidence.risk)}}"
+            },
+            {
+              "name": "buyer_demand",
+              "value": "={{JSON.stringify($json.packet.evidence.buyer_demand)}}"
+            },
+            {
+              "name": "exit_strategy",
+              "value": "={{JSON.stringify($json.packet.evidence.exit_strategy)}}"
+            },
+            {
+              "name": "underwriting_packet_id",
+              "value": "={{$json.packet.packet_id}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf109-mao",
+      "name": "Send Canonical Packet to WF-069",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf109-response",
+      "name": "Respond Aggregation Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf109-incomplete",
+      "name": "Respond Evidence Incomplete",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Underwriting Evidence Aggregator Webhook": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Canonical Evidence Packet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Canonical Evidence Packet": {
+      "main": [
+        [
+          {
+            "node": "Evidence Packet Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evidence Packet Complete?": {
+      "main": [
+        [
+          {
+            "node": "Send Canonical Packet to WF-069",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Evidence Incomplete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Canonical Packet to WF-069": {
+      "main": [
+        [
+          {
+            "node": "Respond Aggregation Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf109-v1"
+}

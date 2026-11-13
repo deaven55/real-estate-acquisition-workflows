@@ -195,3 +195,9 @@ WF-071 does not claim a guaranteed market value. Evidence quality and missing da
 ## Repair cost and property condition analysis
 
 WF-072 adds a repair-condition analysis gate. It accepts component-level repair evidence when available and otherwise exposes a clearly labeled heuristic estimate from condition and property size. Estimates are confidence-scored and are never presented as inspection-grade facts. Downstream underwriting must validate significant repair assumptions before final offer decisions.
+
+## Property risk and feasibility analysis
+
+WF-073 adds property-specific feasibility checks for access, road frontage, utilities, septic/well, zoning, flood risk, wetlands, topography, parcel size, and buildability. It flags material risks and unknowns for underwriting and exit-strategy review without pretending that a workflow flag is an authoritative zoning, flood, title, utility, or buildability determination.
+
+For vacant land, these factors can materially change value and buyer demand, so unresolved feasibility issues can reduce MAO or require additional diligence rather than being hidden inside a generic discount percentage.

@@ -279,3 +279,45 @@ When autonomous communication is enabled, human approval does not need to be req
 The user can therefore choose between human-approved communication and an autonomous communication mode. The latter is an explicit operating setting, not an assumption made by the AI.
 
 WF-082 does not itself provision a phone number or create a provider account. Those remain deployment/configuration steps. Once the selected provider and business number/email identity are configured, the assistant can use the controlled communication path for routine seller and buyer conversations and feed replies back into the CRM and conversation-intelligence layers.
+
+
+## Inbound business communication intake and conversation loop
+
+WF-083 adds the inbound communication entry point for the autonomous conversation loop. It accepts provider webhooks for business SMS/email, normalizes sender/recipient/message/thread/provider identifiers, preserves the raw inbound message, and applies DNC suppression before any response path is considered.
+
+The inbound contract requires a provider message ID and conversation/thread ID for replay-safe processing. When CRM identity is not supplied, the event is marked for identity resolution rather than guessing which seller, property, or deal it belongs to.
+
+The intended inbound sequence is:
+
+provider inbound event
+→ WF-083 normalize + deduplicate
+→ CRM identity/thread resolution
+→ WF-078 seller conversation intelligence
+→ WF-084 response-mode decision
+→ response generation using verified CRM/deal context
+→ WF-082 autonomous communication dispatch when explicitly enabled
+→ provider receipt
+→ CRM activity + conversation audit
+→ next inbound message continues the same thread.
+
+DNC remains authoritative at the inbound and outbound boundaries. A stop/unsubscribe request must not be answered by an autonomous sales message.
+
+## AI conversation reply decision and autonomous response gate
+
+WF-084 adds the decision boundary between conversation intelligence and outbound response generation. It distinguishes:
+
+- suppress: DNC/stop signal; no reply
+- human_escalation: risk signals require human review
+- needs_context: required message/channel/context is missing
+- human_approval: autonomous mode is not enabled
+- autonomous_candidate: routine SMS/email can proceed through the configured autonomous path
+
+WF-084 does not invent property facts, seller facts, deal economics, title status, funding status, or legal conclusions. A generated response must use the resolved conversation and CRM context and must retain the same thread identity.
+
+For autonomous candidates, the response is routed through WF-082 rather than directly to a provider. WF-082 remains the outbound authorization/dispatch boundary and requires provider receipts and deterministic idempotency.
+
+This establishes the actual AI conversation control loop:
+
+**Inbound message → identify seller/deal → understand message → check DNC/risk → retrieve current CRM/deal context → decide response mode → generate context-grounded reply → dispatch through business identity → receive provider receipt → log activity → wait for next reply.**
+
+The user has explicitly authorized autonomous email/SMS once the business communication provider, business email, and separate provider-issued business number are configured. That authorization does not mean provider credentials or a phone number are already provisioned.

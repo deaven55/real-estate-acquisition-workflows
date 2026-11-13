@@ -209,3 +209,7 @@ WF-074 adds an evidence-based buyer-demand and exit-strategy layer. It evaluates
 ## Deal scoring and opportunity ranking
 
 WF-075 adds a derived opportunity score and priority tier using available economics, repair, risk, market, buyer-demand, exit-strategy, and data-quality signals. Scores are explicitly derived decision-support metrics, not market facts. Missing material factors reduce decision confidence, and the ranking does not authorize external actions. The ranking principle is deal viability and evidence quality rather than a single percentage-rule cutoff.
+
+## Deal pipeline prioritization and daily action queue
+
+WF-076 turns deal and operating inputs into a derived daily action queue. It prioritizes by opportunity value, urgency, lifecycle stage, blockers, and evidence gaps, then returns top actions and urgent items for the assistant briefing. It is decision support only and does not authorize automatic seller/buyer outreach or other external side effects.

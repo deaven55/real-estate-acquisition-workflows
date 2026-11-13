@@ -179,3 +179,9 @@ The workflow is intentionally gated: a defined endpoint is not treated as live u
 WF-069 establishes the underwriting principle that the 70% rule is a secondary heuristic, not the primary acquisition decision. The primary question is whether the deal can work economically after realistic value, repairs, closing/holding costs, target profit, buyer demand, and exit strategy are considered.
 
 The adapter supports property-type-aware logic and explicitly distinguishes land/vacant-property analysis from residential ARV analysis. A deal may remain viable above or below a 70% reference point when the underlying economics support it. It must not reject a deal solely because it misses 70%.
+
+## Deal analysis explanation
+
+WF-070 adds an explanation layer after economic underwriting. It identifies why a deal works or does not work, highlights strengths and risks, calculates the offer-to-MAO spread and implied margin when inputs permit, and proposes practical levers such as price/terms adjustment, repair verification, comp validation, and buyer-demand validation.
+
+The assistant should explain the economics behind a recommendation rather than treating the 70% heuristic as a pass/fail rule. Missing inputs remain explicit and recommendations are not presented as verified legal, title, or funding conclusions.

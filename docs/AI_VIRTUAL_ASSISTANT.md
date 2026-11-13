@@ -255,3 +255,27 @@ The disposition sequence is therefore:
 contract economics → buyer pool → buy-box compatibility → ranked matches → evidence review → human approval → controlled buyer outreach → buyer response → buyer selection → transaction/closing.
 
 This closes the gap between the acquisition side of the operating system and the disposition side: a deal is not treated as complete merely because it is under contract; the assistant can now explain who appears to fit the deal, why they fit, what evidence is missing, and what should happen next.
+
+
+## Opt-in autonomous email and SMS
+
+WF-082 adds an explicit autonomous communication authorization boundary. The operating system can support automatic outbound email and SMS and AI-assisted inbound reply handling when the user has explicitly enabled autonomous communication for the configured business communication identity.
+
+The autonomous mode is designed around the user's separate business identity rather than a personal phone number. The intended setup is:
+
+business email identity + provider-issued business SMS/phone number → communication provider → wholesaling OS → AI response/qualification → CRM activity/audit trail.
+
+When autonomous communication is enabled, human approval does not need to be requested for every routine email/SMS message. The system still enforces:
+
+- DNC/do-not-contact as a hard suppression
+- provider authentication and secrets outside GitHub
+- deterministic idempotency
+- provider delivery receipts
+- inbound conversation/thread tracking
+- complete outbound and inbound audit records
+- explicit autonomous-mode configuration
+- no unsupported legal, title, funding, or closing claims
+
+The user can therefore choose between human-approved communication and an autonomous communication mode. The latter is an explicit operating setting, not an assumption made by the AI.
+
+WF-082 does not itself provision a phone number or create a provider account. Those remain deployment/configuration steps. Once the selected provider and business number/email identity are configured, the assistant can use the controlled communication path for routine seller and buyer conversations and feed replies back into the CRM and conversation-intelligence layers.

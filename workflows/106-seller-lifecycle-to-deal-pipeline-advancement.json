@@ -1,0 +1,213 @@
+{
+  "name": "WF-106 Seller Lifecycle to Deal Pipeline Advancement & Opportunity Escalation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-106-seller-deal-pipeline-advancement",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf106-webhook",
+      "name": "Seller Deal Pipeline Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??\"\").trim();\nconst lower=v=>s(v).toLowerCase();\nconst lifecycle=lower(input.lifecycle_state??input.lifecycle?.state);\nconst temperature=lower(input.temperature??input.lifecycle?.temperature);\nconst intent=lower(input.intent??input.seller_intent);\nconst motivation=lower(input.motivation??input.motivation_type);\nconst urgency=lower(input.urgency);\nconst dealState=lower(input.deal_state??input.pipeline_state??input.deal_status);\nconst underwriting=lower(input.underwriting_status);\nconst propertyEvidence=Boolean(input.property_id??input.property?.id);\nconst sellerReply=s(input.seller_reply??input.inbound_message??input.message_text);\nconst dnc=input.dnc===true||input.dnc_suppressed===true||lifecycle===\"suppressed\"||intent===\"opt_out\";\nconst leadId=s(input.lead_id??input.identity?.lead_id);\nconst propertyId=s(input.property_id??input.identity?.property_id);\nconst dealId=s(input.deal_id??input.identity?.deal_id);\nconst threadId=s(input.thread_id??input.identity?.thread_id);\nconst requestId=s(input.request_id??input.communication?.request_id);\nconst auditId=s(input.audit_id??input.communication?.audit_id);\nconst missing=[];\nif(!leadId&&!dealId)missing.push(\"lead_id_or_deal_id\");\nif(!requestId&&!auditId)missing.push(\"request_id_or_audit_id\");\nlet pipelineStage=\"seller_follow_up\", opportunity=\"monitor\", nextAction=\"continue_follow_up\", nextWorkflow=\"wf-099-seller-follow-up-timing-cadence\", priority=\"normal\", score=50, reason=\"seller remains in active acquisition follow-up\";\nif(dnc){pipelineStage=\"suppressed\";opportunity=\"none\";nextAction=\"suppress_outreach\";nextWorkflow=null;priority=\"critical\";score=0;reason=\"DNC/opt-out blocks acquisition outreach\";}\nelse if([\"contracted\",\"under_contract\",\"closing\"].some(x=>dealState.includes(x))){pipelineStage=\"transaction\";opportunity=\"active_transaction\";nextAction=\"protect_and_execute_transaction\";nextWorkflow=\"wf-042-closing-coordination\";priority=\"critical\";score=98;reason=\"deal is already in transaction execution\";}\nelse if(dealState.includes(\"negotiat\")||intent===\"negotiation\"){pipelineStage=\"negotiation\";opportunity=\"offer_negotiation\";nextAction=\"advance_negotiation\";nextWorkflow=\"wf-080-offer-negotiation-intelligence\";priority=\"critical\";score=92;reason=\"seller and deal signals support active negotiation\";}\nelse if(dealState.includes(\"offer\")||underwriting===\"offer_ready\"){pipelineStage=\"offer_preparation\";opportunity=\"offer_ready\";nextAction=\"prepare_or_review_offer\";nextWorkflow=\"wf-035-offer-preparation-seller-review\";priority=\"high\";score=88;reason=\"deal evidence indicates offer preparation is the next acquisition milestone\";}\nelse if(underwriting===\"viable\"||underwriting===\"approved\"){pipelineStage=\"underwriting\";opportunity=\"underwriting_qualified\";nextAction=\"advance_to_offer_preparation\";nextWorkflow=\"wf-035-offer-preparation-seller-review\";priority=\"high\";score=85;reason=\"underwriting supports advancing the acquisition\";}\nelse if(propertyEvidence&&(temperature===\"hot\"||temperature===\"warm\")&&(intent===\"positive_interest\"||intent===\"negotiation\"||sellerReply||urgency===\"high\"||motivation)){pipelineStage=\"opportunity_qualification\";opportunity=\"high_potential\";nextAction=\"run_deal_viability_and_property_analysis\";nextWorkflow=\"wf-069-deal-viability-mao-strategy-gate\";priority=\"high\";score=82;reason=\"seller engagement plus property evidence justify deal-level qualification\";}\nelse if(lifecycle===\"reengagement_due\"||lifecycle===\"nurture\"){pipelineStage=\"nurture\";opportunity=\"developing\";nextAction=\"nurture_and_reengage\";nextWorkflow=\"wf-100-seller-silence-reengagement\";priority=\"normal\";score=35;reason=\"seller is not currently ready for aggressive acquisition advancement\";}\nconst actionId=\"deal-pipeline-advance:\"+((leadId||dealId||threadId||\"unknown\"))+\":\"+(requestId||auditId||\"event\")+\":v1\";\nreturn[{json:{ok:missing.length===0,action_id:actionId,pipeline:{stage:pipelineStage,opportunity,priority,score,reason},advancement:{next_action:nextAction,next_workflow:nextWorkflow,autonomous_outbound_allowed:!dnc&&[\"seller_follow_up\",\"opportunity_qualification\",\"offer_preparation\",\"negotiation\"].includes(pipelineStage),requires_human_approval:[\"offer_preparation\",\"negotiation\",\"transaction\"].includes(pipelineStage)},evidence:{lifecycle_state:lifecycle||null,temperature:temperature||null,intent:intent||null,motivation:motivation||null,urgency:urgency||null,deal_state:dealState||null,underwriting_status:underwriting||null,property_evidence:propertyEvidence,seller_reply_present:Boolean(sellerReply)},identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,thread_id:threadId||null},communication:{request_id:requestId||null,audit_id:auditId||null},missing_requirements:missing}}];"
+      },
+      "id": "wf106-decision",
+      "name": "Determine Deal Pipeline Advancement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf106-valid",
+      "name": "Pipeline Advancement Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [560, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/leads/{{$json.identity.lead_id}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "={{$json.pipeline.stage}}"
+            },
+            {
+              "name": "temperature",
+              "value": "={{$json.pipeline.opportunity}}"
+            },
+            {
+              "name": "motivation_score",
+              "value": "={{$json.pipeline.score}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf106-crm",
+      "name": "Sync Acquisition Stage to InsulaCRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [820, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json;\nconst code=Number(input.statusCode??0);\nconst ok=code>=200&&code<300;\nreturn[{json:{ok,action_id:input.action_id??null,pipeline:input.pipeline??null,advancement:input.advancement??null,evidence:input.evidence??null,identity:input.identity??null,communication:input.communication??null,crm_state_sync:{status:ok?\"updated\":\"failed\",status_code:code}}}];"
+      },
+      "id": "wf106-result",
+      "name": "Pipeline Advancement Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf106-response",
+      "name": "Respond Pipeline Advancement",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf106-invalid",
+      "name": "Respond Invalid Pipeline Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [820, 500]
+    }
+  ],
+  "connections": {
+    "Seller Deal Pipeline Webhook": {
+      "main": [
+        [
+          {
+            "node": "Determine Deal Pipeline Advancement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Deal Pipeline Advancement": {
+      "main": [
+        [
+          {
+            "node": "Pipeline Advancement Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pipeline Advancement Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Sync Acquisition Stage to InsulaCRM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Pipeline Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Acquisition Stage to InsulaCRM": {
+      "main": [
+        [
+          {
+            "node": "Pipeline Advancement Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pipeline Advancement Result": {
+      "main": [
+        [
+          {
+            "node": "Respond Pipeline Advancement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  ],
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-106-v1"
+}

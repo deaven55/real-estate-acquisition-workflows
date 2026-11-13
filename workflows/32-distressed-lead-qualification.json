@@ -45,6 +45,72 @@
       ]
     },
     {
+      "id": "wf032-prepare-crm",
+      "name": "Prepare InsulaCRM Lead Payloads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        220
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item=$input.first().json;\nconst records=Array.isArray(item.candidate_records)?item.candidate_records:[];\nfunction splitOwner(name){\n  const parts=String(name||'').trim().split(/\\\\s+/).filter(Boolean);\n  return {first_name:parts.shift()||'Unknown',last_name:parts.join(' ')||'Owner'};\n}\nreturn records.map((candidate,index)=>{\n  const owner=splitOwner(candidate.owner_name);\n  const externalId=String(candidate.external_id||candidate.parcel_id||candidate.normalized_identity_key||candidate.candidate_key||`${item.request_id||'wf032'}:${index}`);\n  return {json:{\n    qualification_context:{\n      request_id:item.request_id||null,\n      state:item.state||null,\n      county:item.county||null,\n      criteria:item.criteria||[],\n      qualification:candidate.qualification||{}\n    },\n    candidate,\n    crm_payload:{\n      first_name:owner.first_name,\n      last_name:owner.last_name,\n      phone:candidate.phone||candidate.owner_phone||null,\n      email:candidate.email||candidate.owner_email||null,\n      source:'distressed_lead_qualification',\n      notes:JSON.stringify({\n        qualification:candidate.qualification||{},\n        matched_criteria:candidate.matched_criteria||[],\n        evidence_count:candidate.evidence_count||0,\n        property_address:candidate.property_address||null,\n        county:item.county||candidate.county||null,\n        state:item.state||candidate.state||null\n      }),\n      property_address:candidate.property_address||null,\n      property_city:candidate.property_city||candidate.city||null,\n      property_state:candidate.property_state||candidate.state||item.state||null,\n      property_zip:candidate.property_zip||candidate.zip||null,\n      property_type:candidate.property_type||null,\n      external_id:externalId,\n      external_source:'wf032_distressed_lead_qualification'\n    }\n  }};\n});"
+      }
+    },
+    {
+      "id": "wf032-sync-crm",
+      "name": "Sync Qualified Lead to InsulaCRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        220,
+        220
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/leads' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'acquisition:qualified-lead:' + ($json.crm_payload.external_source || 'wf032') + ':' + ($json.crm_payload.external_id || 'unknown') + ':v1' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.crm_payload) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "wf032-finalize",
+      "name": "Finalize Qualification + CRM Handoff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        220
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const results=$input.all().map(x=>x.json);\nconst synced=results.filter(r=>r && (r.success===true || r.lead_id || r.data?.lead_id));\nreturn [{json:{\n  success:true,\n  qualification_handoff:true,\n  crm_sync_configured:Boolean($env.INSULA_CRM_BASE_URL && $env.INSULA_CRM_API_KEY),\n  crm_synced_count:synced.length,\n  crm_results:results.map(r=>({success:r.success??Boolean(r.lead_id),lead_id:r.lead_id??r.data?.lead_id??null,duplicate:r.duplicate??false,external_id:r.external_id??null,external_source:r.external_source??null})),\n  message:synced.length?'Qualified candidates were handed off to InsulaCRM using external identity and idempotency protection.':'No CRM lead records were synced; verify InsulaCRM environment configuration and candidate qualification output.'\n}}];"
+      }
+    },
+    {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{$json}}",
@@ -55,8 +121,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        0,
-        0
+        720,
+        220
       ]
     }
   ],
@@ -84,6 +150,39 @@
       ]
     },
     "Qualify Leads": {
+      "main": [
+        [
+          {
+            "node": "Prepare InsulaCRM Lead Payloads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare InsulaCRM Lead Payloads": {
+      "main": [
+        [
+          {
+            "node": "Sync Qualified Lead to InsulaCRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Qualified Lead to InsulaCRM": {
+      "main": [
+        [
+          {
+            "node": "Finalize Qualification + CRM Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Qualification + CRM Handoff": {
       "main": [
         [
           {

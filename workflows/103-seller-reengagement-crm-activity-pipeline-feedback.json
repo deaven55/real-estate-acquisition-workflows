@@ -12,17 +12,23 @@
       "name": "Seller Re-Engagement CRM Feedback Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 300]
+      "position": [
+        0,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??\"\").trim();\nconst status=s(input.status??input.outcome_status??input.provider_receipt?.status).toLowerCase();\nconst event=s(input.event_type??input.outcome??input.provider_receipt?.event_type).toLowerCase();\nconst action=s(input.action??input.next_action).toLowerCase();\nconst channel=s(input.channel??input.communication?.channel).toLowerCase()||\"sms\";\nconst dnc=input.dnc===true||input.dnc_suppressed===true||event===\"opt_out\"||status===\"dnc\";\nconst leadId=s(input.lead_id??input.identity?.lead_id), propertyId=s(input.property_id??input.identity?.property_id), dealId=s(input.deal_id??input.identity?.deal_id), threadId=s(input.thread_id??input.identity?.thread_id);\nconst requestId=s(input.request_id??input.communication?.request_id), auditId=s(input.audit_id??input.communication?.audit_id), providerMessageId=s(input.provider_message_id??input.communication?.provider_message_id);\nconst sellerReply=s(input.seller_reply??input.inbound_message??input.message_text);\nconst missing=[]; if(!leadId&&!dealId)missing.push(\"lead_id_or_deal_id\"); if(!threadId)missing.push(\"thread_id\"); if(!requestId&&!auditId)missing.push(\"request_id_or_audit_id\");\nlet pipelineState=\"reengagement_recorded\", activityEvent=event||status||action||\"reengagement_outcome\", followUpRequired=false, reason=\"re-engagement outcome recorded\";\nif(dnc){pipelineState=\"suppressed\";followUpRequired=false;reason=\"DNC/opt-out recorded; suppress future autonomous outreach\";}\nelse if(sellerReply||event===\"seller_reply\"||event===\"inbound_reply\"){pipelineState=\"seller_replied\";followUpRequired=true;reason=\"seller replied to re-engagement; conversation intelligence required\";}\nelse if(status===\"failed\"||status===\"error\"||status===\"timeout\"||status===\"transport_error\"){pipelineState=\"delivery_attention\";followUpRequired=true;reason=\"re-engagement delivery failed; reconcile before retry\";}\nelse if(status===\"sent\"||status===\"delivered\"||event===\"outbound_sent\"||event===\"outbound_delivered\"){pipelineState=\"contacted\";followUpRequired=true;reason=\"re-engagement delivered; cadence engine controls the next touch\";}\nconst activityId=\"seller-reengagement:\"+((threadId||leadId||dealId||\"unknown\"))+\":\"+(requestId||auditId||\"event\")+\":v1\";\nconst activity={activity_type:\"seller_reengagement\",subject:\"AI seller re-engagement \\"+activityEvent,body:\"Re-engagement outcome: \\"+activityEvent+\". Status: \"+(status||\"unknown\")+\". Pipeline state: \"+pipelineState+\". Reason: \"+reason,lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,external_id:activityId,external_source:\"wholesaling-os-seller-reengagement\",metadata:{channel,thread_id:threadId||null,request_id:requestId||null,audit_id:auditId||null,provider_message_id:providerMessageId||null,dnc,seller_reply_present:Boolean(sellerReply),follow_up_required:followUpRequired}};\nreturn[{json:{ok:missing.length===0,activity,pipeline_feedback:{state:pipelineState,follow_up_required:followUpRequired,reason,identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,thread_id:threadId||null},routing:dnc?{next_workflow:null,dispatch_mode:\"blocked\"}:sellerReply?{next_workflow:\"wf-097-ai-seller-response-intelligence\",dispatch_mode:\"internal_ai_analysis\"}:status.includes(\"fail\")||status===\"timeout\"||status===\"transport_error\"?{next_workflow:\"wf-089-communication-reconciliation\",dispatch_mode:\"internal_reconciliation\"}:{next_workflow:\"wf-099-seller-follow-up-timing-cadence\",dispatch_mode:\"internal_follow_up_queue\"}},missing_requirements:missing}}}];"
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??\"\").trim();\nconst status=s(input.status??input.outcome_status??input.provider_receipt?.status).toLowerCase();\nconst event=s(input.event_type??input.outcome??input.provider_receipt?.event_type).toLowerCase();\nconst action=s(input.action??input.next_action).toLowerCase();\nconst channel=s(input.channel??input.communication?.channel).toLowerCase()||\"sms\";\nconst dnc=input.dnc===true||input.dnc_suppressed===true||event===\"opt_out\"||status===\"dnc\";\nconst leadId=s(input.lead_id??input.identity?.lead_id);\nconst propertyId=s(input.property_id??input.identity?.property_id);\nconst dealId=s(input.deal_id??input.identity?.deal_id);\nconst threadId=s(input.thread_id??input.identity?.thread_id);\nconst requestId=s(input.request_id??input.communication?.request_id);\nconst auditId=s(input.audit_id??input.communication?.audit_id);\nconst providerMessageId=s(input.provider_message_id??input.communication?.provider_message_id);\nconst sellerReply=s(input.seller_reply??input.inbound_message??input.message_text);\nconst missing=[];\nif(!leadId&&!dealId)missing.push(\"lead_id_or_deal_id\");\nif(!threadId)missing.push(\"thread_id\");\nif(!requestId&&!auditId)missing.push(\"request_id_or_audit_id\");\nlet pipelineState=\"reengagement_recorded\";\nlet activityEvent=event||status||action||\"reengagement_outcome\";\nlet followUpRequired=false;\nlet reason=\"re-engagement outcome recorded\";\nif(dnc){pipelineState=\"suppressed\";reason=\"DNC/opt-out recorded; suppress future autonomous outreach\";}\nelse if(sellerReply||event===\"seller_reply\"||event===\"inbound_reply\"){pipelineState=\"seller_replied\";followUpRequired=true;reason=\"seller replied to re-engagement; conversation intelligence required\";}\nelse if([\"failed\",\"error\",\"timeout\",\"transport_error\"].includes(status)){pipelineState=\"delivery_attention\";followUpRequired=true;reason=\"re-engagement delivery failed; reconcile before retry\";}\nelse if([\"sent\",\"delivered\"].includes(status)||event===\"outbound_sent\"||event===\"outbound_delivered\"){pipelineState=\"contacted\";followUpRequired=true;reason=\"re-engagement delivered; cadence engine controls the next touch\";}\nconst activityId=\"seller-reengagement:\"+((threadId||leadId||dealId||\"unknown\"))+\":\"+(requestId||auditId||\"event\")+\":v1\";\nconst activity={activity_type:\"seller_reengagement\",subject:\"AI seller re-engagement \"+activityEvent,body:\"Re-engagement outcome: \"+activityEvent+\". Status: \"+(status||\"unknown\")+\". Pipeline state: \"+pipelineState+\". Reason: \"+reason,lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,external_id:activityId,external_source:\"wholesaling-os-seller-reengagement\",metadata:{channel,thread_id:threadId||null,request_id:requestId||null,audit_id:auditId||null,provider_message_id:providerMessageId||null,dnc,seller_reply_present:Boolean(sellerReply),follow_up_required:followUpRequired}};\nlet routing;\nif(dnc)routing={next_workflow:null,dispatch_mode:\"blocked\"};\nelse if(sellerReply)routing={next_workflow:\"wf-097-ai-seller-response-intelligence\",dispatch_mode:\"internal_ai_analysis\"};\nelse if([\"failed\",\"error\",\"timeout\",\"transport_error\"].includes(status))routing={next_workflow:\"wf-089-communication-reconciliation\",dispatch_mode:\"internal_reconciliation\"};\nelse routing={next_workflow:\"wf-099-seller-follow-up-timing-cadence\",dispatch_mode:\"internal_follow_up_queue\"};\nreturn[{json:{ok:missing.length===0,activity,pipeline_feedback:{state:pipelineState,follow_up_required:followUpRequired,reason,identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,thread_id:threadId||null},routing},missing_requirements:missing}}];"
       },
       "id": "wf103-normalize",
       "name": "Normalize Re-Engagement CRM Feedback",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [300, 300]
+      "position": [
+        300,
+        300
+      ]
     },
     {
       "parameters": {
@@ -51,7 +57,10 @@
       "name": "Feedback Context Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [560, 300]
+      "position": [
+        560,
+        300
+      ]
     },
     {
       "parameters": {
@@ -92,7 +101,10 @@
       "name": "Persist Re-Engagement Activity to InsulaCRM",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [820, 200]
+      "position": [
+        820,
+        200
+      ]
     },
     {
       "parameters": {
@@ -102,7 +114,10 @@
       "name": "Re-Engagement CRM Persistence Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1080, 200]
+      "position": [
+        1080,
+        200
+      ]
     },
     {
       "parameters": {
@@ -116,7 +131,10 @@
       "name": "Respond CRM Feedback Result",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [1340, 200]
+      "position": [
+        1340,
+        200
+      ]
     },
     {
       "parameters": {
@@ -130,30 +148,79 @@
       "name": "Respond Invalid CRM Feedback",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [820, 500]
+      "position": [
+        820,
+        500
+      ]
     }
   ],
   "connections": {
     "Seller Re-Engagement CRM Feedback Webhook": {
-      "main": [[{"node":"Normalize Re-Engagement CRM Feedback","type":"main","index":0}]]
+      "main": [
+        [
+          {
+            "node": "Normalize Re-Engagement CRM Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Normalize Re-Engagement CRM Feedback": {
-      "main": [[{"node":"Feedback Context Valid?","type":"main","index":0}]]
+      "main": [
+        [
+          {
+            "node": "Feedback Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Feedback Context Valid?": {
       "main": [
-        [{"node":"Persist Re-Engagement Activity to InsulaCRM","type":"main","index":0}],
-        [{"node":"Respond Invalid CRM Feedback","type":"main","index":0}]
+        [
+          {
+            "node": "Persist Re-Engagement Activity to InsulaCRM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid CRM Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Persist Re-Engagement Activity to InsulaCRM": {
-      "main": [[{"node":"Re-Engagement CRM Persistence Result","type":"main","index":0}]]
+      "main": [
+        [
+          {
+            "node": "Re-Engagement CRM Persistence Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Re-Engagement CRM Persistence Result": {
-      "main": [[{"node":"Respond CRM Feedback Result","type":"main","index":0}]]
+      "main": [
+        [
+          {
+            "node": "Respond CRM Feedback Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
-  "settings": {"executionOrder":"v1"},
-  "versionId":"wf-103-v1"
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-103-v1"
 }

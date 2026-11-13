@@ -6,7 +6,10 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "parameters": {
         "path": "wholestack-buyer-response-v1",
         "httpMethod": "POST",
@@ -19,7 +22,10 @@
       "name": "Normalize Buyer Response State",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [320, 0],
+      "position": [
+        320,
+        0
+      ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "jsCode": "const input=$input.first().json.body||$input.first().json; const m=input.buyer_matching||{}; const matches=Array.isArray(m.top_matches)?m.top_matches:[]; const requested=String(input.buyer_status??input.response_status??\"\").toLowerCase().trim(); const allowed=[\"queued\",\"reviewed\",\"contact_authorized\",\"contacted\",\"interested\",\"requested_disclosures\",\"countered\",\"proof_of_funds_pending\",\"proof_of_funds_verified\",\"declined\",\"unresponsive\",\"selected\",\"backup\",\"disqualified\"]; const current=allowed.includes(requested)?requested:\"queued\"; const transitions={queued:[\"reviewed\",\"contact_authorized\",\"disqualified\"],reviewed:[\"contact_authorized\",\"disqualified\",\"queued\"],contact_authorized:[\"contacted\",\"queued\",\"disqualified\"],contacted:[\"interested\",\"requested_disclosures\",\"countered\",\"declined\",\"unresponsive\"],interested:[\"requested_disclosures\",\"countered\",\"proof_of_funds_pending\",\"selected\",\"backup\",\"declined\"],requested_disclosures:[\"proof_of_funds_pending\",\"proof_of_funds_verified\",\"declined\",\"unresponsive\"],countered:[\"interested\",\"proof_of_funds_pending\",\"selected\",\"backup\",\"declined\"],proof_of_funds_pending:[\"proof_of_funds_verified\",\"declined\",\"unresponsive\"],proof_of_funds_verified:[\"selected\",\"backup\",\"declined\"],selected:[\"backup\",\"disqualified\"],backup:[\"selected\",\"declined\",\"disqualified\"],declined:[\"queued\",\"disqualified\"],unresponsive:[\"contacted\",\"disqualified\"],disqualified:[\"queued\"]}; const prior=String(input.prior_buyer_status??\"\").toLowerCase().trim(); const transitionValid=!prior||prior===current||(transitions[prior]||[]).includes(current); const selectedBuyer=input.selected_buyer||null; const selectedReady=Boolean(selectedBuyer&&selectedBuyer.buyer_id&&(selectedBuyer.status===\"selected\"||selectedBuyer.proof_of_funds_verified===true)); const buyerStates=matches.map(b=>({...b,status:b.status||\"queued\",transition_valid:true})); return [{json:{...input,buyer_disposition:{property_identity:m.property_identity||input.property_identity||{},buyer_count:buyerStates.length,buyer_states:buyerStates,current_status:current,prior_status:prior||null,transition_valid:transitionValid,allowed_statuses:allowed,selected_buyer:selectedBuyer,selection_ready:selectedReady,outreach_authorized:Boolean(input.outreach_authorized===true&&current===\"contact_authorized\"),next_action:!transitionValid?\"review_invalid_state_transition\":current===\"queued\"?\"review_buyer\":current===\"contact_authorized\"?\"contact_buyer\":current===\"interested\"||current===\"countered\"?\"collect_terms_and_proof_of_funds\":current===\"proof_of_funds_verified\"?\"select_buyer_or_backup\":current===\"selected\"?\"prepare_exit_strategy\":current===\"backup\"?\"retain_as_backup\":current===\"declined\"||current===\"unresponsive\"?\"move_to_next_buyer\":\"review_buyer_state\",policy:\"State-management only. No buyer contact, negotiation, proof-of-funds verification, or legal determination is performed unless an external authorized system explicitly handles that action.\"}}}];"
@@ -30,17 +36,67 @@
       "name": "Respond Buyer State",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [640, 0],
+      "position": [
+        640,
+        0
+      ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
-        "options": {"responseCode": 200}
+        "options": {
+          "responseCode": 200
+        }
       }
+    },
+    {
+      "id": "insula-buyer-response-state-activity",
+      "name": "Sync Buyer disposition response state updated to InsulaCRM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        620,
+        480
+      ],
+      "parameters": {
+        "jsCode": "const input=$input.first().json;\ntry {\n  const base=$env.INSULA_CRM_BASE_URL, apiKey=$env.INSULA_CRM_API_KEY;\n  const leadId=Number(input.insulaLeadId||input.leadId||input.lead_id||input.property_identity?.lead_id||input.identity?.lead_id||input.transaction_ids?.lead_id||input.crm_update?.lead_id||0);\n  if(base&&apiKey&&leadId){\n    const payload=input.buyer_response_state||input.buyer_matching||input.buyer_disposition||input.exit_strategy_gate||input;\n    await this.helpers.httpRequest({\n      method:'POST',url:base+'/api/v1/activities',\n      headers:{'X-API-Key':apiKey,'Content-Type':'application/json',\n        'Idempotency-Key':'acquisition:buyer-response-state:'+leadId+':'+String(input.candidate_key||input.normalized_identity_key||input.external_id||input.dealId||input.deal_id||'record')+':v1'},\n      body:{lead_id:leadId,type:'stage_change',\n        subject:\"Buyer disposition response state updated\",\n        body:'Workflow event: buyer-response-state. Status/readiness: '+String(payload.status||payload.readiness||payload.current_status||payload.closeout_status||payload.post_close_status||payload.transaction_status||'updated')+'. Next action: '+String(payload.next_action||input.next_action||'review').slice(0,500)},\n      json:true\n    });\n  }\n}catch(error){ console.log('InsulaCRM activity sync failed:',error.message); }\nreturn [{json:input}];"
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
-    "Webhook": {"main": [[{"node": "Normalize Buyer Response State", "type": "main", "index": 0}]]},
-    "Normalize Buyer Response State": {"main": [[{"node": "Respond Buyer State", "type": "main", "index": 0}]]}
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Buyer Response State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Buyer Response State": {
+      "main": [
+        [
+          {
+            "node": "insula-buyer-response-state-activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "insula-buyer-response-state-activity": {
+      "main": [
+        [
+          {
+            "node": "Respond Buyer State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "settings": {
     "executionOrder": "v1",

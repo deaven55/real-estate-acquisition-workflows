@@ -1,18 +1,147 @@
 {
-  "name":"WF-100 Seller Silence & Re-Engagement Intelligence",
-  "nodes":[
-    {"parameters":{"httpMethod":"POST","path":"wf-100-seller-silence-reengagement","responseMode":"responseNode","options":{}},"id":"wf100-webhook","name":"Seller Silence Webhook","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[0,300]},
-    {"parameters":{"jsCode":"const input=$json.body??$json; const s=v=>String(v??\\\"\\\").trim(); const intent=s(input.intent??input.strategy?.intent).toLowerCase(); const cadence=s(input.recommended_follow_up_window??input.cadence).toLowerCase(); const channel=s(input.channel??input.last_channel).toLowerCase()||\\\"sms\\\"; const attempts=Number(input.contact_attempts??input.attempt_count??0); const unanswered=Number(input.unanswered_attempts??input.silence_count??attempts); const days=Number(input.days_since_last_contact??input.days_since_last_attempt??0); const replies=Number(input.reply_count??0); const dnc=input.dnc===true||input.dnc_suppressed===true||intent===\\\"opt_out\\\"; const leadId=s(input.lead_id??input.identity?.lead_id), dealId=s(input.deal_id??input.identity?.deal_id), threadId=s(input.thread_id??input.identity?.thread_id); const missing=[]; if(!leadId&&!dealId)missing.push(\\\"lead_id_or_deal_id\\\"); if(!threadId)missing.push(\\\"thread_id\\\"); let action=\\\"monitor\\\",status=\\\"active\\\",reason=\\\"insufficient silence evidence for re-engagement change\\\",nextChannel=channel,reengagementWindow=\\\"24h\\\",priority=\\\"normal\\\"; if(dnc){action=\\\"suppress\\\";status=\\\"suppressed\\\";reason=\\\"DNC/opt-out active\\\";reengagementWindow=\\\"none\\\";priority=\\\"critical\\\";} else if(attempts>=5||unanswered>=5){action=\\\"stop_active_pursuit\\\";status=\\\"recycle_or_nurture\\\";reason=\\\"repeated unanswered contact attempts indicate contact fatigue\\\";reengagementWindow=\\\"30d\\\";priority=\\\"low\\\";} else if(days>=30&&attempts>=3){action=\\\"reengage_with_new_angle\\\";status=\\\"reengagement_due\\\";reason=\\\"extended seller silence after multiple attempts\\\";nextChannel=channel===\\\"sms\\\"?\\\"email\\\":\\\"sms\\\";reengagementWindow=\\\"now\\\";priority=\\\"normal\\\";} else if(days>=14&&attempts>=2){action=\\\"change_channel_and_message\\\";status=\\\"reengagement_due\\\";reason=\\\"seller silence warrants a different channel and fresh value proposition\\\";nextChannel=channel===\\\"sms\\\"?\\\"email\\\":\\\"sms\\\";reengagementWindow=\\\"now\\\";priority=\\\"normal\\\";} else if(days>=7&&attempts>=2){action=\\\"soft_reengage\\\";status=\\\"reengagement_due\\\";reason=\\\"seller has gone quiet after repeated attempts\\\";reengagementWindow=\\\"now\\\";} else if(attempts>=1&&days>=3){action=\\\"wait_then_follow_up\\\";status=\\\"waiting\\\";reason=\\\"early silence; avoid premature contact fatigue\\\";reengagementWindow=\\\"48h\\\";} if(replies>0&&action!==\\\"suppress\\\"){action=\\\"return_to_conversation_intelligence\\\";status=\\\"engaged\\\";reason=\\\"seller has replied; silence logic no longer applies\\\";reengagementWindow=\\\"now\\\";} const recycleEligible=action===\\\"stop_active_pursuit\\\"&&input.qualified_lead!==false&&input.dnc!==true; const actionId=\\\"seller-silence:\"+((threadId||leadId||dealId||\\\"unknown\\\"))+\\\":\"+(input.request_id||input.action_id||\\\"event\\\")+\\\":v1\"; return[{json:{ok:missing.length===0,action:{action_id:actionId,next_action:action,status,reason,priority,next_channel:nextChannel,reengagement_window:reengagementWindow,contact_fatigue:attempts>=3||unanswered>=3,stop_active_pursuit:action===\\\"stop_active_pursuit\\\",recycle_eligible:recycleEligible,deterministic:true},identity:{lead_id:leadId||null,deal_id:dealId||null,thread_id:threadId||null},evidence:{contact_attempts:attempts,unanswered_attempts:unanswered,days_since_last_contact:days,reply_count:replies,last_channel:channel},routing:{next_workflow:dnc?null:action===\\\"return_to_conversation_intelligence\\\"?\\\"wf-097-ai-seller-response-intelligence\\\":recycleEligible?\\\"wf-076-deal-pipeline-prioritization\\\":\\\"wf-096-seller-follow-up-action-engine\\\",dispatch_mode:dnc?\\\"blocked\\\":\\\"internal_follow_up_queue\\\"},missing_requirements:missing}}];"}}, "id":"wf100-analysis","name":"Analyze Seller Silence","type":"n8n-nodes-base.code","typeVersion":2,"position":[300,300]},
-    {"parameters":{"conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict","version":2},"conditions":[{"leftValue":"={{$json.ok}}","rightValue":true,"operator":{"type":"boolean","operation":"equals"}}],"combinator":"and"},"options":{}},"id":"wf100-valid","name":"Silence Context Valid?","type":"n8n-nodes-base.if","typeVersion":2.2,"position":[560,300]},
-    {"parameters":{"respondWith":"json","responseBody":"={{$json}}","options":{"responseCode":200}},"id":"wf100-response","name":"Respond Re-Engagement Decision","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.4,"position":[820,200]},
-    {"parameters":{"respondWith":"json","responseBody":"={{$json}}","options":{"responseCode":400}},"id":"wf100-invalid","name":"Respond Invalid Silence Context","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.4,"position":[820,480]}
+  "name": "WF-100 Seller Silence & Re-Engagement Intelligence",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-100-seller-silence-reengagement",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf100-webhook",
+      "name": "Seller Silence Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??\"\").trim();\nconst intent=s(input.intent??input.strategy?.intent).toLowerCase();\nconst channel=s(input.channel??input.last_channel).toLowerCase()||\"sms\";\nconst attempts=Number(input.contact_attempts??input.attempt_count??0);\nconst unanswered=Number(input.unanswered_attempts??input.silence_count??attempts);\nconst days=Number(input.days_since_last_contact??input.days_since_last_attempt??0);\nconst replies=Number(input.reply_count??0);\nconst dnc=input.dnc===true||input.dnc_suppressed===true||intent===\"opt_out\";\nconst leadId=s(input.lead_id??input.identity?.lead_id), dealId=s(input.deal_id??input.identity?.deal_id), threadId=s(input.thread_id??input.identity?.thread_id);\nconst missing=[];\nif(!leadId&&!dealId)missing.push(\"lead_id_or_deal_id\");\nif(!threadId)missing.push(\"thread_id\");\nlet action=\"monitor\",status=\"active\",reason=\"insufficient silence evidence for re-engagement change\",nextChannel=channel,reengagementWindow=\"24h\",priority=\"normal\";\nif(dnc){action=\"suppress\";status=\"suppressed\";reason=\"DNC/opt-out active\";reengagementWindow=\"none\";priority=\"critical\";}\nelse if(attempts>=5||unanswered>=5){action=\"stop_active_pursuit\";status=\"recycle_or_nurture\";reason=\"repeated unanswered contact attempts indicate contact fatigue\";reengagementWindow=\"30d\";priority=\"low\";}\nelse if(days>=30&&attempts>=3){action=\"reengage_with_new_angle\";status=\"reengagement_due\";reason=\"extended seller silence after multiple attempts\";nextChannel=channel===\"sms\"?\"email\":\"sms\";reengagementWindow=\"now\";}\nelse if(days>=14&&attempts>=2){action=\"change_channel_and_message\";status=\"reengagement_due\";reason=\"seller silence warrants a different channel and fresh value proposition\";nextChannel=channel===\"sms\"?\"email\":\"sms\";reengagementWindow=\"now\";}\nelse if(days>=7&&attempts>=2){action=\"soft_reengage\";status=\"reengagement_due\";reason=\"seller has gone quiet after repeated attempts\";reengagementWindow=\"now\";}\nelse if(attempts>=1&&days>=3){action=\"wait_then_follow_up\";status=\"waiting\";reason=\"early silence; avoid premature contact fatigue\";reengagementWindow=\"48h\";}\nif(replies>0&&action!==\"suppress\"){action=\"return_to_conversation_intelligence\";status=\"engaged\";reason=\"seller has replied; silence logic no longer applies\";reengagementWindow=\"now\";}\nconst recycleEligible=action===\"stop_active_pursuit\"&&input.qualified_lead!==false&&input.dnc!==true;\nconst actionId=\"seller-silence:\"+((threadId||leadId||dealId||\"unknown\"))+\":\"+(input.request_id||input.action_id||\"event\")+\":v1\";\nreturn[{json:{ok:missing.length===0,action:{action_id:actionId,next_action:action,status,reason,priority,next_channel:nextChannel,reengagement_window:reengagementWindow,contact_fatigue:attempts>=3||unanswered>=3,stop_active_pursuit:action===\"stop_active_pursuit\",recycle_eligible:recycleEligible,deterministic:true},identity:{lead_id:leadId||null,deal_id:dealId||null,thread_id:threadId||null},evidence:{contact_attempts:attempts,unanswered_attempts:unanswered,days_since_last_contact:days,reply_count:replies,last_channel:channel},routing:{next_workflow:dnc?null:action===\"return_to_conversation_intelligence\"?\"wf-097-ai-seller-response-intelligence\":recycleEligible?\"wf-076-deal-pipeline-prioritization\":\"wf-096-seller-follow-up-action-engine\",dispatch_mode:dnc?\"blocked\":\"internal_follow_up_queue\"},missing_requirements:missing}}];"
+      },
+      "id": "wf100-analysis",
+      "name": "Analyze Seller Silence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf100-valid",
+      "name": "Silence Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf100-response",
+      "name": "Respond Re-Engagement Decision",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf100-invalid",
+      "name": "Respond Invalid Silence Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        480
+      ]
+    }
   ],
-  "connections":{
-    "Seller Silence Webhook":{"main":[[{"node":"Analyze Seller Silence","type":"main","index":0}]]},
-    "Analyze Seller Silence":{"main":[[{"node":"Silence Context Valid?","type":"main","index":0}]]},
-    "Silence Context Valid?":{"main":[[{"node":"Respond Re-Engagement Decision","type":"main","index":0}],[{"node":"Respond Invalid Silence Context","type":"main","index":0}]]}
+  "connections": {
+    "Seller Silence Webhook": {
+      "main": [
+        [
+          {
+            "node": "Analyze Seller Silence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Seller Silence": {
+      "main": [
+        [
+          {
+            "node": "Silence Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Silence Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Re-Engagement Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Silence Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "active":false,
-  "settings":{"executionOrder":"v1"},
-  "versionId":"wf-100-v1"
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-100-v1"
 }

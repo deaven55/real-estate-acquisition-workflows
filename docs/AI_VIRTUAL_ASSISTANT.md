@@ -217,3 +217,7 @@ WF-076 turns deal and operating inputs into a derived daily action queue. It pri
 ## Seller follow-up intelligence
 
 WF-077 adds seller follow-up prioritization using contact recency, scheduled follow-up timing, seller status, supplied sentiment, and suppression state. It produces an assistant-ready follow-up queue and seller-risk view. DNC/do-not-contact is treated as a hard suppression signal; the workflow does not infer seller intent and does not perform automatic outreach.
+
+## Seller conversation and response intelligence
+
+WF-078 analyzes supplied seller messages for response signals, objections, price/timeline/property-condition mentions, and escalation risks. It produces a recommended next action and response mode while preserving the raw message and explicitly avoiding certainty about seller intent. Seller contact remains human-approved; the workflow never sends a response automatically.

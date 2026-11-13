@@ -39,7 +39,7 @@
       "id":"wf082-receipt","name":"Normalize WF-085 Dispatch Receipt","type":"n8n-nodes-base.code","typeVersion":2,"position":[1240,200]
     },
     {
-      "parameters": {"respondWith":"json","responseBody":"={{$json}}","options":{"responseCode":"={{$json.dispatch_result?.status==='sent'?200:502}}"},
+      "parameters": {"respondWith":"json","responseBody":"={{$json}}","options":{"responseCode":"={{$json.dispatch_result?.status==='sent'?200:502}}"}},
       "id":"wf082-response","name":"Respond Dispatch Receipt","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.4,"position":[1480,200]
     },
     {

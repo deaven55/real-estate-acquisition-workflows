@@ -205,3 +205,7 @@ For vacant land, these factors can materially change value and buyer demand, so 
 ## Buyer demand and exit strategy analysis
 
 WF-074 adds an evidence-based buyer-demand and exit-strategy layer. It evaluates available buyer matches, demand signals, expected assignment spread, and proposed exit strategy, while explicitly distinguishing missing evidence from weak demand or negative economics. It does not guarantee a buyer, proof of funds, closing ability, or disposition outcome, and it does not perform automatic outreach.
+
+## Deal scoring and opportunity ranking
+
+WF-075 adds a derived opportunity score and priority tier using available economics, repair, risk, market, buyer-demand, exit-strategy, and data-quality signals. Scores are explicitly derived decision-support metrics, not market facts. Missing material factors reduce decision confidence, and the ranking does not authorize external actions. The ranking principle is deal viability and evidence quality rather than a single percentage-rule cutoff.

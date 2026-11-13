@@ -221,3 +221,9 @@ WF-077 adds seller follow-up prioritization using contact recency, scheduled fol
 ## Seller conversation and response intelligence
 
 WF-078 analyzes supplied seller messages for response signals, objections, price/timeline/property-condition mentions, and escalation risks. It produces a recommended next action and response mode while preserving the raw message and explicitly avoiding certainty about seller intent. Seller contact remains human-approved; the workflow never sends a response automatically.
+
+## Communication identity and AgenticMail integration
+
+WF-079 establishes the communication dispatch boundary for the wholesaling OS. The intended business email identity is `dravendealsnc@gmail.com`. The design supports a separate business SMS/phone identity through AgenticMail rather than requiring the user's personal cell number. AgenticMail provides programmatic email and SMS/phone access and can integrate Google Voice or 46elks for phone-number access. The workflow only prepares/authorizes communication; external messages require human approval and a provider receipt before being considered sent.
+
+Runtime configuration must be supplied through protected environment/credential storage; API keys, passwords, and provider secrets must never be committed to GitHub.

@@ -151,3 +151,11 @@ WF-064 is compose-only and cannot create external side effects. This keeps natur
 WF-065 is the orchestration gateway for the assistant lifecycle. It establishes the session ID, request ID, deterministic idempotency key, intent/approval state, and explicit workflow handoff sequence across WF-063, WF-060, WF-062, WF-061, and WF-064.
 
 The gateway is orchestration-only. It does not execute seller/buyer/contract/closing side effects. Controlled actions still require WF-061 authorization and the applicable human approval state. Every request carries audit identifiers so the assistant lifecycle can be reconstructed and replayed safely.
+
+## Tool/data adapter contract
+
+WF-066 defines the controlled adapter boundary between the assistant and the wholesaling operating system. It maps supported intents to the existing workflow/CRM routes and standardizes request_id, session_id, canonical identity, deterministic idempotency, read-only versus side-effect capability, approval state, and receipt requirements.
+
+Supported adapter routes include portfolio analytics, CRM lead lookup/activity, operating queue, deal/control-plane lookup, underwriting, buyer matching, pipeline status, production readiness, approval status, offer lifecycle, buyer disposition, transaction tracking, and closing coordination.
+
+WF-066 is a contract gate rather than a direct external executor. It prevents missing identity/contract fields from reaching downstream tools and preserves the read-only-by-default and human-approval boundaries.

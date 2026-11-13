@@ -173,3 +173,9 @@ Read operations remain the default. Any side-effect-capable operation is approva
 WF-068 is the first live-capable assistant data adapter. It accepts a lead read request, validates the runtime CRM base URL/API key and request/session/lead identity, then performs a read-only GET against the known InsulaCRM endpoint when the runtime contract is configured. It never performs a write and does not infer missing CRM data.
 
 The workflow is intentionally gated: a defined endpoint is not treated as live until the required runtime environment values are present. The response preserves request/session identity, source-of-truth, provenance, and no-inference behavior.
+
+## Deal viability over rigid discount rules
+
+WF-069 establishes the underwriting principle that the 70% rule is a secondary heuristic, not the primary acquisition decision. The primary question is whether the deal can work economically after realistic value, repairs, closing/holding costs, target profit, buyer demand, and exit strategy are considered.
+
+The adapter supports property-type-aware logic and explicitly distinguishes land/vacant-property analysis from residential ARV analysis. A deal may remain viable above or below a 70% reference point when the underlying economics support it. It must not reject a deal solely because it misses 70%.

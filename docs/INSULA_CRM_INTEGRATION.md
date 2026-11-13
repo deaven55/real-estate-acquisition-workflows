@@ -127,3 +127,12 @@ WF-032 (`32-distressed-lead-qualification.json`) now hands only `qualified_for_r
 
 This establishes the next canonical boundary: acquisition qualification -> InsulaCRM seller/property record -> underwriting/deal pipeline. The next integration slice is to make the qualification handoff consume the canonical WF-031/WF-030 identity fields end-to-end and then connect the resulting CRM lead/deal IDs into WF-033/WF-034 without re-keying or losing provenance.
 
+
+
+## Offer-to-disposition CRM activity handoff
+
+WF-035 now records offer-draft preparation as an InsulaCRM activity when a canonical Insula lead ID is present. The activity is idempotent and explicitly records that the offer is draft-only and not authorized for sending.
+
+WF-036 now records seller offer lifecycle decisions (sent, countered, accepted, rejected, expired, withdrawn, contract-pending, or executed) as InsulaCRM activities while preserving the existing lifecycle and disposition handoff behavior.
+
+WF-037 now records contract/disposition readiness evaluation as an InsulaCRM activity, including readiness state, contract/strategy readiness, buyer-matching readiness, next action, and missing fields. These activity writes are best-effort and do not block the acquisition workflow if CRM activity logging fails.

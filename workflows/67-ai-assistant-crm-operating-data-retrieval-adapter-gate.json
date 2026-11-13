@@ -1,0 +1,84 @@
+{
+  "name": "WF-067 AI Assistant CRM & Operating Data Retrieval Adapter Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-067-ai-assistant-data-retrieval",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf067-webhook",
+      "name": "AI Assistant Data Retrieval Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "wf-067-ai-assistant-data-retrieval"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const op=s(input.operation??input.action??'lookup').toLowerCase(); const resource=s(input.resource??'').toLowerCase(); const id=s(input.id??input.lead_id??input.leadId??input.property_id??input.propertyId??input.deal_id??input.dealId??input.buyer_id??input.buyerId); const requestId=s(input.request_id??input.requestId); const sessionId=s(input.session_id??input.sessionId); const allowed={lead:['get','lookup','list','update'],property:['get','lookup','list','update'],activity:['create','list'],deal:['get','lookup','list'],buyer:['get','lookup','list'],queue:['get','list'],approval:['get','list'],pipeline:['get','list'],analytics:['get','snapshot'],production_health:['get','snapshot']}; const crm={lead:{lookup:{method:'GET',path:id?'/api/v1/leads/'+encodeURIComponent(id):'/api/v1/leads'},get:{method:'GET',path:id?'/api/v1/leads/'+encodeURIComponent(id):'/api/v1/leads'},update:{method:'PUT',path:id?'/api/v1/leads/'+encodeURIComponent(id):null},list:{method:'GET',path:'/api/v1/leads'}},property:{update:{method:'PUT',path:id?'/api/v1/properties/'+encodeURIComponent(id):null},lookup:{method:'GET',path:id?'/api/v1/properties/'+encodeURIComponent(id):'/api/v1/properties'},get:{method:'GET',path:id?'/api/v1/properties/'+encodeURIComponent(id):'/api/v1/properties'},list:{method:'GET',path:'/api/v1/properties'}},activity:{create:{method:'POST',path:'/api/v1/activities'},list:{method:'GET',path:'/api/v1/activities'}}}; const routes={deal:'wf-051-unified-operational-control-plane',queue:'wf-059-operating-queue',approval:'wf-052-human-approval-authorization',pipeline:'wf-046-acquisition-pipeline-orchestration',analytics:'wf-045-portfolio-performance',production_health:'wf-047-production-readiness',buyer:'wf-038-buyer-matching'}; const supported=Boolean(allowed[resource]?.includes(op)); const target=crm[resource]?.[op]??(routes[resource]?{method:'POST',path:'/'+routes[resource]}:null); const readOnly=['get','lookup','list','snapshot'].includes(op); const missing=['request_id','session_id','resource','operation'].filter(k=>!s(input[k])); if(!supported)missing.push('supported_resource_operation'); if(['lead','property','deal','buyer'].includes(resource)&&['get','lookup','update'].includes(op)&&!id)missing.push('canonical_record_id'); const sideEffect=!readOnly; const approvalState=s(input.approval_state??'not_required').toLowerCase(); if(sideEffect&&approvalState!=='approved')missing.push('human_approval'); return[{json:{ok:missing.length===0,adapter_version:'1',request_id:requestId||null,session_id:sessionId||null,resource:resource||null,operation:op||null,source_of_truth:resource==='lead'||resource==='property'||resource==='activity'?'InsulaCRM':routes[resource]||null,target:target,read_only:readOnly,side_effect_capable:sideEffect,authorization:{approval_required:sideEffect,approval_state:approvalState,dispatch_allowed:missing.length===0},request_contract:{id:id||null,filters:input.filters??null,payload:input.payload??null},response_contract:{resource,operation:'result',must_preserve:['request_id','session_id','source_of_truth','provenance','retrieved_at','record_count'],no_inference:true},provenance:{adapter:'wf-067',source_of_truth:resource==='lead'||resource==='property'||resource==='activity'?'InsulaCRM':routes[resource]||null,live_execution:false},missing_requirements:missing,next_action:missing.length?'Resolve missing contract requirements before execution.':'Execute the mapped read/data adapter and return a receipt with provenance.',policy:{read_only_by_default:true,approved_side_effect_only:true,no_direct_external_side_effects:true,no_inference:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf067-adapter",
+      "name": "Normalize CRM & Operating Data Retrieval Contract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf067-response",
+      "name": "Respond Data Retrieval Contract",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        600,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "AI Assistant Data Retrieval Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize CRM & Operating Data Retrieval Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize CRM & Operating Data Retrieval Contract": {
+      "main": [
+        [
+          {
+            "node": "Respond Data Retrieval Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf067-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

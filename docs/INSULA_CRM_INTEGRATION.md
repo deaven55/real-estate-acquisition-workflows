@@ -121,4 +121,9 @@ The acquisition stack is ready to retire Close CRM as a CRM dependency when:
 - duplicate checks use Insula external identity plus normalized phone/address;
 - a replayed n8n execution does not create duplicate CRM records;
 - tenant/API-key isolation is verified in a non-production test.
+## Qualification-to-CRM handoff
+
+WF-032 (`32-distressed-lead-qualification.json`) now hands only `qualified_for_review` candidates to `POST /api/v1/leads`. The handoff splits owner identity into CRM name fields, carries property identity and qualification evidence in notes, uses `external_id` + `external_source` for stable identity, and sends a deterministic `Idempotency-Key`. Candidates that fail the evidence-based qualification gate remain in the qualification audit output and are not written as CRM leads.
+
+This establishes the next canonical boundary: acquisition qualification -> InsulaCRM seller/property record -> underwriting/deal pipeline. The next integration slice is to make the qualification handoff consume the canonical WF-031/WF-030 identity fields end-to-end and then connect the resulting CRM lead/deal IDs into WF-033/WF-034 without re-keying or losing provenance.
 

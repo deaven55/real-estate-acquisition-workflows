@@ -227,3 +227,7 @@ WF-078 analyzes supplied seller messages for response signals, objections, price
 WF-079 establishes the communication dispatch boundary for the wholesaling OS. The intended business email identity is `dravendealsnc@gmail.com`. The design supports a separate business SMS/phone identity through AgenticMail rather than requiring the user's personal cell number. AgenticMail provides programmatic email and SMS/phone access and can integrate Google Voice or 46elks for phone-number access. The workflow only prepares/authorizes communication; external messages require human approval and a provider receipt before being considered sent.
 
 Runtime configuration must be supplied through protected environment/credential storage; API keys, passwords, and provider secrets must never be committed to GitHub.
+
+## Offer negotiation intelligence
+
+WF-080 connects seller asks/counters to economic MAO, target profit, current offer, and available cost assumptions. It derives a negotiation range and walk-away threshold from the supplied economics and recommends whether to accept within economics, negotiate toward MAO, or obtain new evidence before proceeding. It does not automatically negotiate or send seller messages.

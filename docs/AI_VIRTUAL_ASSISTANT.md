@@ -159,3 +159,11 @@ WF-066 defines the controlled adapter boundary between the assistant and the who
 Supported adapter routes include portfolio analytics, CRM lead lookup/activity, operating queue, deal/control-plane lookup, underwriting, buyer matching, pipeline status, production readiness, approval status, offer lifecycle, buyer disposition, transaction tracking, and closing coordination.
 
 WF-066 is a contract gate rather than a direct external executor. It prevents missing identity/contract fields from reaching downstream tools and preserves the read-only-by-default and human-approval boundaries.
+
+## CRM and operating-data retrieval adapter
+
+WF-067 defines the standardized data-retrieval contract used by the assistant before live execution is wired. It covers InsulaCRM lead/property/activity reads and updates plus adapters for deals, buyers, operating queue, approvals, pipeline, portfolio analytics, and production readiness.
+
+The adapter preserves request/session identity, source-of-truth, provenance, retrieved-at metadata, record counts, and no-inference behavior. InsulaCRM reads use the known API contract and base URL; non-CRM resources route to their established workflow gates. WF-067 does not claim live execution merely because a route is defined.
+
+Read operations remain the default. Any side-effect-capable operation is approval-controlled and must not execute without explicit human approval.

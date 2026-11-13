@@ -231,3 +231,27 @@ Runtime configuration must be supplied through protected environment/credential 
 ## Offer negotiation intelligence
 
 WF-080 connects seller asks/counters to economic MAO, target profit, current offer, and available cost assumptions. It derives a negotiation range and walk-away threshold from the supplied economics and recommends whether to accept within economics, negotiate toward MAO, or obtain new evidence before proceeding. It does not automatically negotiate or send seller messages.
+
+
+## Buyer matching and disposition intelligence
+
+WF-081 connects contracted deal economics to the buyer database and disposition decision support. It ranks supplied buyer candidates against the contract/property using available buy-box compatibility, property type, price capacity, market fit, demand signals, and buyer evidence.
+
+WF-081 returns:
+
+- ranked buyer candidates
+- derived match scores
+- match reasons
+- missing buyer evidence
+- expected assignment spread when supplied
+- disposition priority
+- top buyer candidate
+- whether buyer outreach is structurally ready for human review
+
+Buyer evidence is preserved rather than upgraded into unsupported claims. In particular, the workflow does not claim proof of funds or closing ability unless corresponding evidence is supplied, does not guarantee a buyer, and never performs automatic buyer outreach.
+
+The disposition sequence is therefore:
+
+contract economics → buyer pool → buy-box compatibility → ranked matches → evidence review → human approval → controlled buyer outreach → buyer response → buyer selection → transaction/closing.
+
+This closes the gap between the acquisition side of the operating system and the disposition side: a deal is not treated as complete merely because it is under contract; the assistant can now explain who appears to fit the deal, why they fit, what evidence is missing, and what should happen next.

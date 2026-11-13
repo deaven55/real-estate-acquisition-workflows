@@ -12,240 +12,106 @@
       "name": "Webhook — Runtime Dispatch",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        0,
-        0
-      ],
+      "position": [0,0],
       "webhookId": "wf-085-communication-runtime"
     },
     {
       "parameters": {
-        "jsCode": "const body = $json.body ?? $json;\\nconst channel = String(body.channel || '').toLowerCase();\\nconst action = String(body.action || 'send').toLowerCase();\\nconst requestId = String(body.request_id || body.requestId || '');\\nconst idempotencyKey = String(body.idempotency_key || body.idempotencyKey || requestId);\\nconst authorized = body.authorization?.authorized === true || body.autonomous_authorized === true;\\nconst dnc = body.dnc === true || body.compliance?.dnc === true;\\nconst recipient = String(body.recipient || body.to || '').trim();\\nconst message = String(body.message || body.body || '').trim();\\nconst subject = String(body.subject || '').trim();\\n\\nconst errors = [];\\nif (!['sms','email'].includes(channel)) errors.push('channel must be sms or email');\\nif (!['send','reply'].includes(action)) errors.push('action must be send or reply');\\nif (!requestId) errors.push('request_id is required');\\nif (!idempotencyKey) errors.push('idempotency_key is required');\\nif (!authorized) errors.push('authorization envelope is not approved');\\nif (dnc) errors.push('DNC suppression is active');\\nif (!recipient) errors.push('recipient is required');\\nif (!message) errors.push('message is required');\\nif (channel === 'email' && !subject && action === 'send') errors.push('subject is required for email send');\\n\\nreturn [{ json: {\\n  ...body,\\n  channel, action, request_id: requestId, idempotency_key: idempotencyKey,\\n  authorized, dnc, recipient, message, subject,\\n  runtime_ready: errors.length === 0,\\n  validation_errors: errors\\n} }];"
+        "jsCode": "const body=$json.body??$json; const channel=String(body.channel||'').toLowerCase(); const action=String(body.action||'send').toLowerCase(); const requestId=String(body.request_id||body.requestId||''); const idempotencyKey=String(body.idempotency_key||body.idempotencyKey||requestId); const authorized=body.authorization?.authorized===true||body.autonomous_authorized===true; const dnc=body.dnc===true||body.compliance?.dnc===true; const recipient=String(body.recipient||body.to||'').trim(); const message=String(body.message||body.body||'').trim(); const subject=String(body.subject||'').trim(); const errors=[]; if(!['sms','email'].includes(channel))errors.push('channel must be sms or email'); if(!['send','reply'].includes(action))errors.push('action must be send or reply'); if(!requestId)errors.push('request_id is required'); if(!idempotencyKey)errors.push('idempotency_key is required'); if(!authorized)errors.push('authorization envelope is not approved'); if(dnc)errors.push('DNC suppression is active'); if(!recipient)errors.push('recipient is required'); if(!message)errors.push('message is required'); if(channel==='email'&&!subject&&action==='send')errors.push('subject is required for email send'); return[{json:{...body,channel,action,request_id:requestId,idempotency_key:idempotencyKey,authorized,dnc,recipient,message,subject,runtime_ready:errors.length===0,validation_errors:errors}}];"
       },
       "id": "wf085-normalize",
       "name": "Normalize + Authorization Gate",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        220,
-        0
-      ]
+      "position": [220,0]
     },
     {
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "leftValue": "={{$json.runtime_ready}}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
+          "options": {"caseSensitive":true,"leftValue":"","typeValidation":"strict","version":2},
+          "conditions": [{"leftValue":"={{$json.runtime_ready}}","rightValue":true,"operator":{"type":"boolean","operation":"equals"}}],
+          "combinator":"and"
         },
         "options": {}
       },
-      "id": "wf085-valid",
-      "name": "Valid Dispatch?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        440,
-        0
-      ]
+      "id":"wf085-valid",
+      "name":"Valid Dispatch?",
+      "type":"n8n-nodes-base.if",
+      "typeVersion":2.2,
+      "position":[440,0]
     },
     {
       "parameters": {
-        "jsCode": "const base = String($env.AGENTICMAIL_API_URL || '').replace(/\\\\/$/, '');\\nconst apiKey = String($env.AGENTICMAIL_API_KEY || '');\\nconst emailPath = String($env.AGENTICMAIL_EMAIL_SEND_PATH || '/api/agenticmail/mail/send');\\nconst smsPath = String($env.AGENTICMAIL_SMS_SEND_PATH || '');\\nconst channel = $json.channel;\\nif (!base) throw new Error('AGENTICMAIL_API_URL is not configured at runtime');\\nif (!apiKey) throw new Error('AGENTICMAIL_API_KEY is not configured at runtime');\\nif (channel === 'sms' && !smsPath) throw new Error('AGENTICMAIL_SMS_SEND_PATH is not configured for SMS runtime');\\n\\nconst path = channel === 'email' ? emailPath : smsPath;\\nconst payload = channel === 'email'\\n  ? { to: [$json.recipient], subject: $json.subject, body: $json.message, ...( $json.reply_to ? { replyTo: $json.reply_to } : {} ) }\\n  : { to: $json.recipient, message: $json.message, ...( $json.from ? { from: $json.from } : {} ) };\\n\\nreturn [{ json: { ...$json, transport_url: base + path, transport_payload: payload, transport_headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json', 'Idempotency-Key': $json.idempotency_key } } }];"
+        "jsCode": "const base=String($env.AGENTICMAIL_API_URL||'').replace(/\\/$/,''); const apiKey=String($env.AGENTICMAIL_API_KEY||''); const emailPath=String($env.AGENTICMAIL_EMAIL_SEND_PATH||'/api/agenticmail/mail/send'); const smsPath=String($env.AGENTICMAIL_SMS_SEND_PATH||''); const channel=$json.channel; if(!base)throw new Error('AGENTICMAIL_API_URL is not configured at runtime'); if(!apiKey)throw new Error('AGENTICMAIL_API_KEY is not configured at runtime'); if(channel==='sms'&&!smsPath)throw new Error('AGENTICMAIL_SMS_SEND_PATH is not configured for SMS runtime'); const path=channel==='email'?emailPath:smsPath; const payload=channel==='email'?{to:[$json.recipient],subject:$json.subject,body:$json.message,...($json.reply_to?{replyTo:$json.reply_to}:{})}:{to:$json.recipient,message:$json.message,...($json.from?{from:$json.from}:{})}; return[{json:{...$json,transport_url:base+path,transport_payload:payload,transport_headers:{Authorization:'Bearer '+apiKey,'Content-Type':'application/json','Idempotency-Key':$json.idempotency_key}}}];"
       },
-      "id": "wf085-transport",
-      "name": "Build AgenticMail Transport Request",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        680,
-        0
-      ]
+      "id":"wf085-transport",
+      "name":"Build AgenticMail Transport Request",
+      "type":"n8n-nodes-base.code",
+      "typeVersion":2,
+      "position":[680,0]
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{$json.transport_url}}",
-        "sendHeaders": true,
-        "headerParametersUi": {
-          "parameter": [
-            {
-              "name": "Authorization",
-              "value": "={{$json.transport_headers.Authorization}}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "Idempotency-Key",
-              "value": "={{$json.transport_headers['Idempotency-Key']}}"
-            }
-          ]
-        },
-        "sendBody": true,
-        "contentType": "json",
-        "bodyParametersUi": {
-          "parameter": []
-        },
-        "jsonBody": "={{JSON.stringify($json.transport_payload)}}",
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          }
-        }
+        "method":"POST",
+        "url":"={{$json.transport_url}}",
+        "sendHeaders":true,
+        "headerParametersUi":{"parameter":[{"name":"Authorization","value":"={{$json.transport_headers.Authorization}}"},{"name":"Content-Type","value":"application/json"},{"name":"Idempotency-Key","value":"={{$json.transport_headers['Idempotency-Key']}}"}]},
+        "sendBody":true,
+        "contentType":"json",
+        "bodyParametersUi":{"parameter":[]},
+        "jsonBody":"={{JSON.stringify($json.transport_payload)}}",
+        "options":{"response":{"response":{"neverError":true}}}
       },
-      "id": "wf085-http",
-      "name": "AgenticMail API",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        920,
-        0
-      ]
+      "id":"wf085-http",
+      "name":"AgenticMail API",
+      "type":"n8n-nodes-base.httpRequest",
+      "typeVersion":4.2,
+      "position":[920,0]
     },
     {
       "parameters": {
-        "jsCode": "const status = Number($response.statusCode || 0);\\nconst ok = status >= 200 && status < 300;\\nconst original = $('Build AgenticMail Transport Request').first().json;\\nreturn [{ json: {\\n  status: ok ? 'sent' : 'transport_error',\\n  provider: 'agenticmail',\\n  channel: original.channel,\\n  action: original.action,\\n  request_id: original.request_id,\\n  idempotency_key: original.idempotency_key,\\n  recipient: original.recipient,\\n  thread_id: original.thread_id || original.conversation_id || null,\\n  provider_status_code: status,\\n  provider_response: $json,\\n  receipt_at: new Date().toISOString()\\n} }];"
+        "jsCode": "const status=Number($response.statusCode||0); const ok=status>=200&&status<300; const original=$('Build AgenticMail Transport Request').first().json; return[{json:{status:ok?'sent':'transport_error',provider:'agenticmail',channel:original.channel,action:original.action,request_id:original.request_id,idempotency_key:original.idempotency_key,recipient:original.recipient,thread_id:original.thread_id||original.conversation_id||null,provider_status_code:status,provider_response:$json,receipt_at:new Date().toISOString(),transport_ok:ok}}];"
       },
-      "id": "wf085-receipt",
-      "name": "Normalize Provider Receipt",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1160,
-        0
-      ]
+      "id":"wf085-receipt",
+      "name":"Normalize Provider Receipt",
+      "type":"n8n-nodes-base.code",
+      "typeVersion":2,
+      "position":[1160,0]
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{$json}}",
-        "options": {
-          "responseCode": 200
-        }
+        "respondWith":"json",
+        "responseBody":"={{$json}}",
+        "options":{"responseCode":"={{$json.transport_ok===false?502:200}}"}
       },
-      "id": "wf085-response",
-      "name": "Return Receipt",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.4,
-      "position": [
-        1380,
-        0
-      ]
+      "id":"wf085-response",
+      "name":"Return Receipt",
+      "type":"n8n-nodes-base.respondToWebhook",
+      "typeVersion":1.4,
+      "position":[1380,0]
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ { status: 'blocked', request_id: $json.request_id || null, validation_errors: $json.validation_errors || ['dispatch validation failed'] } }}",
-        "options": {
-          "responseCode": 400
-        }
+        "respondWith":"json",
+        "responseBody":"={{ { status: 'blocked', request_id: $json.request_id || null, validation_errors: $json.validation_errors || ['dispatch validation failed'] } }}",
+        "options":{"responseCode":400}
       },
-      "id": "wf085-blocked",
-      "name": "Return Validation Block",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.4,
-      "position": [
-        680,
-        220
-      ]
+      "id":"wf085-blocked",
+      "name":"Return Validation Block",
+      "type":"n8n-nodes-base.respondToWebhook",
+      "typeVersion":1.4,
+      "position":[680,220]
     }
   ],
-  "connections": {
-    "Webhook — Runtime Dispatch": {
-      "main": [
-        [
-          {
-            "node": "Normalize + Authorization Gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Normalize + Authorization Gate": {
-      "main": [
-        [
-          {
-            "node": "Valid Dispatch?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Valid Dispatch?": {
-      "main": [
-        [
-          {
-            "node": "Build AgenticMail Transport Request",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Return Validation Block",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build AgenticMail Transport Request": {
-      "main": [
-        [
-          {
-            "node": "AgenticMail API",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "AgenticMail API": {
-      "main": [
-        [
-          {
-            "node": "Normalize Provider Receipt",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Normalize Provider Receipt": {
-      "main": [
-        [
-          {
-            "node": "Return Receipt",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
+  "connections":{
+    "Webhook — Runtime Dispatch":{"main":[[{"node":"Normalize + Authorization Gate","type":"main","index":0}]]},
+    "Normalize + Authorization Gate":{"main":[[{"node":"Valid Dispatch?","type":"main","index":0}]]},
+    "Valid Dispatch?":{"main":[[{"node":"Build AgenticMail Transport Request","type":"main","index":0}],[{"node":"Return Validation Block","type":"main","index":0}]]},
+    "Build AgenticMail Transport Request":{"main":[[{"node":"AgenticMail API","type":"main","index":0}]]},
+    "AgenticMail API":{"main":[[{"node":"Normalize Provider Receipt","type":"main","index":0}]]},
+    "Normalize Provider Receipt":{"main":[[{"node":"Return Receipt","type":"main","index":0}]]}
   },
-  "active": false,
-  "settings": {
-    "executionOrder": "v1"
-  },
-  "versionId": "wf-085-v1"
+  "active":false,
+  "settings":{"executionOrder":"v1"},
+  "versionId":"wf-085-v2"
 }

@@ -1,0 +1,229 @@
+{
+  "name": "WF-107 Deal Opportunity Qualification & Underwriting Trigger Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-107-deal-opportunity-qualification",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf107-webhook",
+      "name": "Deal Opportunity Qualification Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??'').trim();\nconst lower=v=>s(v).toLowerCase();\nconst leadId=s(input.lead_id??input.identity?.lead_id);\nconst propertyId=s(input.property_id??input.identity?.property_id);\nconst dealId=s(input.deal_id??input.identity?.deal_id);\nconst threadId=s(input.thread_id??input.identity?.thread_id);\nconst propertyType=lower(input.property_type??input.asset_type??input.property?.type);\nconst lifecycle=lower(input.lifecycle_state??input.lifecycle?.state);\nconst temperature=lower(input.temperature??input.lifecycle?.temperature);\nconst intent=lower(input.intent??input.seller_intent);\nconst motivation=lower(input.motivation??input.motivation_type);\nconst urgency=lower(input.urgency);\nconst sellerReply=s(input.seller_reply??input.inbound_message??input.message_text);\nconst dnc=input.dnc===true||input.dnc_suppressed===true||intent==='opt_out'||lifecycle==='suppressed';\nconst hasProperty=Boolean(propertyId||input.property?.address||input.property_address);\nconst valuation=Number.isFinite(Number(input.arv??input.market_value??input.estimated_market_value));\nconst comps=Array.isArray(input.comps)&&input.comps.length>0;\nconst repairs=Number.isFinite(Number(input.repairs??input.estimated_repairs));\nconst riskEvidence=Boolean(input.risk_evidence||input.property_risk||input.flood_zone||input.zoning);\nconst missing=[];\nif(!leadId&&!dealId)missing.push('lead_id_or_deal_id');\nif(!propertyId&&!hasProperty)missing.push('property_identity_or_address');\nif(!propertyType)missing.push('property_type');\nconst engaged=temperature==='hot'||temperature==='warm'||intent==='positive_interest'||intent==='negotiation'||Boolean(sellerReply)||urgency==='high'||Boolean(motivation);\nlet status='not_ready',reason='insufficient seller/property evidence for underwriting';\nif(dnc){status='suppressed';reason='DNC/opt-out prevents autonomous acquisition progression';}\nelse if(missing.length){status='needs_data';reason='required deal identity/property context is missing';}\nelse if(!engaged){status='monitor';reason='property exists but seller engagement does not yet justify underwriting spend';}\nelse{status='qualified';reason='seller engagement and property identity justify deal-level underwriting';}\nconst analysisRequestId='underwriting-request:'+(dealId||propertyId||leadId||threadId)+':v1';\nconst analysisRequest={request_id:analysisRequestId,lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,thread_id:threadId||null,property_type:propertyType||null,property_address:s(input.property_address??input.property?.address),seller:{intent:intent||null,motivation:motivation||null,urgency:urgency||null,reply_present:Boolean(sellerReply)},evidence:{arv_or_market_value:input.arv??input.market_value??input.estimated_market_value??null,repairs:input.repairs??input.estimated_repairs??null,comps:input.comps??[],risk_evidence:input.risk_evidence??null},policy:{economic_viability_primary:true,reference_70pct_secondary_only:true,property_type_specific_logic:true,no_inference:true}};\nconst nextWorkflow=status==='qualified'?'wf-069-deal-viability-mao-strategy-gate':status==='monitor'?'wf-099-seller-follow-up-timing-cadence':null;\nreturn[{json:{ok:status!=='needs_data',qualification:{status,reason,score:status==='qualified'?82:status==='monitor'?50:0,engaged},analysis_request:status==='qualified'?analysisRequest:null,next:{workflow:nextWorkflow,action:status==='qualified'?'run_underwriting_and_mao_analysis':status==='monitor'?'continue_seller_follow_up':status==='suppressed'?'suppress_outreach':'collect_missing_deal_context'},requirements:{missing,available:{valuation,comps,repairs,risk_evidence}},identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,thread_id:threadId||null},dnc}}}];"
+      },
+      "id": "wf107-qualify",
+      "name": "Qualify Deal Opportunity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.qualification.status}}",
+              "rightValue": "qualified",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf107-qualified",
+      "name": "Underwriting Trigger Qualified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [560, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.ACQUISITION_WORKFLOW_BASE_URL}}/webhook/wf-069-deal-viability-mao-strategy",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{$json.analysis_request.lead_id}}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{$json.analysis_request.property_id}}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{$json.analysis_request.deal_id}}"
+            },
+            {
+              "name": "property_type",
+              "value": "={{$json.analysis_request.property_type}}"
+            },
+            {
+              "name": "property_address",
+              "value": "={{$json.analysis_request.property_address}}"
+            },
+            {
+              "name": "arv",
+              "value": "={{$json.analysis_request.evidence.arv_or_market_value}}"
+            },
+            {
+              "name": "repairs",
+              "value": "={{$json.analysis_request.evidence.repairs}}"
+            },
+            {
+              "name": "comps",
+              "value": "={{$json.analysis_request.evidence.comps}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf107-underwriting",
+      "name": "Trigger WF-069 Deal Viability Underwriting",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [820, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json; const code=Number(r.statusCode??200); const transportOk=code>=200&&code<300; return[{json:{ok:transportOk,triggered_workflow:'wf-069-deal-viability-mao-strategy-gate',underwriting_trigger:{status:transportOk?'dispatched':'dispatch_failed',request_id:($input.first().json.analysis_request?.request_id??null),provider_status_code:code},response:r}}];"
+      },
+      "id": "wf107-result",
+      "name": "Underwriting Trigger Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf107-response",
+      "name": "Respond Underwriting Trigger",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf107-not-qualified",
+      "name": "Respond Not Yet Qualified",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [820, 500]
+    }
+  ],
+  "connections": {
+    "Deal Opportunity Qualification Webhook": {
+      "main": [
+        [
+          {
+            "node": "Qualify Deal Opportunity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualify Deal Opportunity": {
+      "main": [
+        [
+          {
+            "node": "Underwriting Trigger Qualified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Underwriting Trigger Qualified?": {
+      "main": [
+        [
+          {
+            "node": "Trigger WF-069 Deal Viability Underwriting",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Yet Qualified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger WF-069 Deal Viability Underwriting": {
+      "main": [
+        [
+          {
+            "node": "Underwriting Trigger Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Underwriting Trigger Result": {
+      "main": [
+        [
+          {
+            "node": "Respond Underwriting Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf107-v1"
+}

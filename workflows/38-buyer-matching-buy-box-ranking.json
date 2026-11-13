@@ -47,6 +47,20 @@
           "responseCode": 200
         }
       }
+    },
+    {
+      "id": "insula-buyer-matching-activity",
+      "name": "Sync Buyer matching / buy-box ranking completed to InsulaCRM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        620,
+        480
+      ],
+      "parameters": {
+        "jsCode": "const input=$input.first().json;\ntry {\n  const base=$env.INSULA_CRM_BASE_URL, apiKey=$env.INSULA_CRM_API_KEY;\n  const leadId=Number(input.insulaLeadId||input.leadId||input.lead_id||input.property_identity?.lead_id||input.identity?.lead_id||input.transaction_ids?.lead_id||input.crm_update?.lead_id||0);\n  if(base&&apiKey&&leadId){\n    const payload=input.buyer_matching||input.buyer_matching||input.buyer_disposition||input.exit_strategy_gate||input;\n    await this.helpers.httpRequest({\n      method:'POST',url:base+'/api/v1/activities',\n      headers:{'X-API-Key':apiKey,'Content-Type':'application/json',\n        'Idempotency-Key':'acquisition:buyer-matching:'+leadId+':'+String(input.candidate_key||input.normalized_identity_key||input.external_id||input.dealId||input.deal_id||'record')+':v1'},\n      body:{lead_id:leadId,type:'stage_change',\n        subject:\"Buyer matching / buy-box ranking completed\",\n        body:'Workflow event: buyer-matching. Status/readiness: '+String(payload.status||payload.readiness||payload.current_status||payload.closeout_status||payload.post_close_status||payload.transaction_status||'updated')+'. Next action: '+String(payload.next_action||input.next_action||'review').slice(0,500)},\n      json:true\n    });\n  }\n}catch(error){ console.log('InsulaCRM activity sync failed:',error.message); }\nreturn [{json:input}];"
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -62,6 +76,17 @@
       ]
     },
     "Rank Buyers Against Buy Box": {
+      "main": [
+        [
+          {
+            "node": "insula-buyer-matching-activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "insula-buyer-matching-activity": {
       "main": [
         [
           {

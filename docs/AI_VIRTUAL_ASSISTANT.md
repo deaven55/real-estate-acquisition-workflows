@@ -191,3 +191,7 @@ The assistant should explain the economics behind a recommendation rather than t
 WF-071 adds an evidence-first adapter for comparable sales and market evidence. It preserves raw comp fields and provenance, separates verified from unverified evidence, summarizes comparable sale prices, and uses property-type-aware methodology. Vacant land uses land-sales/price-per-acre analysis rather than residential ARV assumptions.
 
 WF-071 does not claim a guaranteed market value. Evidence quality and missing data remain explicit inputs to downstream underwriting and deal viability decisions.
+
+## Repair cost and property condition analysis
+
+WF-072 adds a repair-condition analysis gate. It accepts component-level repair evidence when available and otherwise exposes a clearly labeled heuristic estimate from condition and property size. Estimates are confidence-scored and are never presented as inspection-grade facts. Downstream underwriting must validate significant repair assumptions before final offer decisions.

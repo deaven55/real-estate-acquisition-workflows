@@ -92,3 +92,16 @@ Before production activation:
 ## Current status
 
 WF-060 is implemented in the acquisition workflow repository on feature/insula-crm-integration. It establishes the AI assistant command contract and safety boundary. It does not claim that the conversational UI, LLM provider, or production deployment has already been connected.
+
+## Dispatch and execution boundary
+
+WF-061 adds the tool-dispatch boundary between assistant intent and workflow execution. It creates a deterministic request envelope containing request_id, idempotency_key, intent, workflow_route, canonical identity, authorization state, and receipt requirements.
+
+The assistant therefore has two distinct stages:
+
+1. WF-060 interprets the user's command and identifies the correct capability.
+2. WF-061 validates the execution contract and permits dispatch only when the request is structurally valid and any required human approval is explicitly approved.
+
+WF-061 does not execute external side effects itself. It produces the controlled execution envelope for the mapped workflow and requires the result to be recorded through the dispatch/receipt and reconciliation layers.
+
+This makes the assistant auditable and replay-safe rather than allowing an LLM to directly call seller, buyer, contract, or closing actions.

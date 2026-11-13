@@ -2,12 +2,20 @@
   "name": "WF-042 Closing Coordination & Transaction Status Gate",
   "nodes": [
     {
-      "parameters": { "httpMethod": "POST", "path": "wf-042-closing-coordination", "responseMode": "responseNode", "options": {} },
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-042-closing-coordination",
+        "responseMode": "responseNode",
+        "options": {}
+      },
       "id": "wf042-webhook",
       "name": "Closing Coordination Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 300],
+      "position": [
+        0,
+        300
+      ],
       "webhookId": "wf042-closing-coordination"
     },
     {
@@ -18,25 +26,84 @@
       "name": "Normalize Closing Status",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [300, 300]
+      "position": [
+        300,
+        300
+      ]
     },
     {
-      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
       "id": "wf042-response",
       "name": "Respond Closing Coordination",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [600, 300]
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "id": "insula-closing-coordination-activity",
+      "name": "Sync Closing coordination state updated to InsulaCRM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        480
+      ],
+      "parameters": {
+        "jsCode": "const input=$input.first().json;\ntry {\n  const base=$env.INSULA_CRM_BASE_URL, apiKey=$env.INSULA_CRM_API_KEY;\n  const leadId=Number(input.insulaLeadId||input.leadId||input.lead_id||input.property_identity?.lead_id||input.identity?.lead_id||input.transaction_ids?.lead_id||input.crm_update?.lead_id||0);\n  if(base&&apiKey&&leadId){\n    const payload=input.closing_coordination||input.buyer_matching||input.buyer_disposition||input.exit_strategy_gate||input;\n    await this.helpers.httpRequest({\n      method:'POST',url:base+'/api/v1/activities',\n      headers:{'X-API-Key':apiKey,'Content-Type':'application/json',\n        'Idempotency-Key':'acquisition:closing-coordination:'+leadId+':'+String(input.candidate_key||input.normalized_identity_key||input.external_id||input.dealId||input.deal_id||'record')+':v1'},\n      body:{lead_id:leadId,type:'stage_change',\n        subject:\"Closing coordination state updated\",\n        body:'Workflow event: closing-coordination. Status/readiness: '+String(payload.status||payload.readiness||payload.current_status||payload.closeout_status||payload.post_close_status||payload.transaction_status||'updated')+'. Next action: '+String(payload.next_action||input.next_action||'review').slice(0,500)},\n      json:true\n    });\n  }\n}catch(error){ console.log('InsulaCRM activity sync failed:',error.message); }\nreturn [{json:input}];"
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
-    "Closing Coordination Webhook": { "main": [[{ "node": "Normalize Closing Status", "type": "main", "index": 0 }]] },
-    "Normalize Closing Status": { "main": [[{ "node": "Respond Closing Coordination", "type": "main", "index": 0 }]] }
+    "Closing Coordination Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Closing Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Closing Status": {
+      "main": [
+        [
+          {
+            "node": "insula-closing-coordination-activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "insula-closing-coordination-activity": {
+      "main": [
+        [
+          {
+            "node": "Respond Closing Coordination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "pinData": {},
   "active": false,
-  "settings": { "executionOrder": "v1" },
+  "settings": {
+    "executionOrder": "v1"
+  },
   "versionId": "wf042-1",
-  "meta": { "templateCredsSetupCompleted": true },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
   "tags": []
 }

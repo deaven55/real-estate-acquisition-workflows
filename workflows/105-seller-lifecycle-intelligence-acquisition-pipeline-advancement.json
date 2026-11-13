@@ -1,0 +1,213 @@
+{
+  "name": "WF-105 Seller Lifecycle Intelligence & Acquisition Pipeline Advancement",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-105-seller-lifecycle-intelligence",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf105-webhook",
+      "name": "Seller Lifecycle Intelligence Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??\"\").trim();\nconst lower=v=>s(v).toLowerCase();\nconst status=lower(input.status??input.lifecycle_status??input.outcome_status);\nconst event=lower(input.event_type??input.outcome);\nconst intent=lower(input.intent??input.seller_intent);\nconst motivation=lower(input.motivation??input.motivation_type);\nconst urgency=lower(input.urgency);\nconst pipeline=lower(input.pipeline_state??input.deal_status??input.status);\nconst dnc=input.dnc===true||input.dnc_suppressed===true||event===\"opt_out\"||status===\"dnc\";\nconst reply=s(input.seller_reply??input.inbound_message??input.message_text);\nconst leadId=s(input.lead_id??input.identity?.lead_id);\nconst propertyId=s(input.property_id??input.identity?.property_id);\nconst dealId=s(input.deal_id??input.identity?.deal_id);\nconst threadId=s(input.thread_id??input.identity?.thread_id);\nconst requestId=s(input.request_id??input.communication?.request_id);\nconst auditId=s(input.audit_id??input.communication?.audit_id);\nconst attempts=Math.max(0,Number(input.contact_attempts??input.attempts??0)||0);\nconst unanswered=Math.max(0,Number(input.unanswered_attempts??0)||0);\nconst daysSilent=Math.max(0,Number(input.days_since_last_contact??input.days_silent??0)||0);\nconst missing=[];\nif(!leadId&&!dealId)missing.push(\"lead_id_or_deal_id\");\nif(!requestId&&!auditId)missing.push(\"request_id_or_audit_id\");\nlet lifecycle=\"active_follow_up\", temperature=\"warm\", nextAction=\"monitor_and_follow_up\", nextWorkflow=\"wf-099-seller-follow-up-timing-cadence\", priority=\"normal\", score=50, reason=\"active seller lifecycle; continue evidence-based follow-up\";\nif(dnc){lifecycle=\"suppressed\";temperature=\"cold\";nextAction=\"suppress_outreach\";nextWorkflow=null;priority=\"critical\";score=0;reason=\"DNC/opt-out; seller must remain suppressed\";}\nelse if(reply||intent===\"positive_interest\"||intent===\"negotiation\"){lifecycle=intent===\"negotiation\"?\"negotiating\":\"engaged\";temperature=\"hot\";nextAction=intent===\"negotiation\"?\"advance_offer_negotiation\":\"advance_acquisition_conversation\";nextWorkflow=intent===\"negotiation\"?\"wf-080-offer-negotiation-intelligence\":\"wf-097-ai-seller-response-intelligence\";priority=\"high\";score=85;reason=\"seller engagement indicates an actionable acquisition opportunity\";}\nelse if([\"contracted\",\"under_contract\",\"closing\"].some(x=>pipeline.includes(x))){lifecycle=\"transaction_active\";temperature=\"hot\";nextAction=\"protect_transaction_and_coordinate_close\";nextWorkflow=\"wf-042-closing-coordination\";priority=\"critical\";score=95;reason=\"transaction is active; prioritize execution and closing coordination\";}\nelse if(motivation.includes(\"urgent\")||urgency===\"high\"||daysSilent<=2&&attempts>0){lifecycle=\"time_sensitive\";temperature=\"hot\";nextAction=\"time_sensitive_follow_up\";nextWorkflow=\"wf-099-seller-follow-up-timing-cadence\";priority=\"high\";score=75;reason=\"seller or deal signals indicate a short decision window\";}\nelse if(attempts>=5&&unanswered>=3){lifecycle=\"nurture\";temperature=\"cold\";nextAction=\"stop_active_pursuit_and_recycle\";nextWorkflow=\"wf-100-seller-silence-reengagement\";priority=\"normal\";score=25;reason=\"contact fatigue threshold reached without response\";}\nelse if(daysSilent>=30&&attempts>=3){lifecycle=\"reengagement_due\";temperature=\"warm\";nextAction=\"reengage_with_new_angle\";nextWorkflow=\"wf-101-seller-reengagement-message\";priority=\"normal\";score=45;reason=\"seller has gone silent long enough to justify a new re-engagement angle\";}\nelse if(intent===\"negative_interest\"){lifecycle=\"nurture\";temperature=\"cold\";nextAction=\"respectfully_close_or_nurture\";nextWorkflow=\"wf-099-seller-follow-up-timing-cadence\";priority=\"normal\";score=15;reason=\"seller signal is negative; avoid aggressive pursuit\";}\nconst actionId=\"seller-lifecycle-intel:\"+((leadId||dealId||threadId||\"unknown\"))+\":\"+(requestId||auditId||\"event\")+\":v1\";\nreturn[{json:{ok:missing.length===0,action_id:actionId,lifecycle:{state:lifecycle,temperature,priority,score,reason},acquisition_advancement:{next_action:nextAction,next_workflow:nextWorkflow,autonomous_outbound_allowed:!dnc&&[\"engaged\",\"negotiating\",\"time_sensitive\",\"reengagement_due\"].includes(lifecycle),evidence:{intent:intent||null,motivation:motivation||null,urgency:urgency||null,pipeline_state:pipeline||null,attempts,unanswered_attempts:unanswered,days_silent:daysSilent}},identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,thread_id:threadId||null},communication:{request_id:requestId||null,audit_id:auditId||null,status:status||null,event:event||null,seller_reply_present:Boolean(reply)},missing_requirements:missing}}];"
+      },
+      "id": "wf105-intelligence",
+      "name": "Calculate Seller Lifecycle & Advancement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf105-valid",
+      "name": "Lifecycle Intelligence Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [560, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/leads/{{$json.identity.lead_id}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "={{$json.lifecycle.state}}"
+            },
+            {
+              "name": "temperature",
+              "value": "={{$json.lifecycle.temperature}}"
+            },
+            {
+              "name": "motivation_score",
+              "value": "={{$json.lifecycle.score}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf105-crm",
+      "name": "Advance Seller State in InsulaCRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [820, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json;\nconst code=Number(input.statusCode??0);\nconst crmOk=code>=200&&code<300;\nreturn[{json:{ok:crmOk,action_id:input.action_id??null,lifecycle:input.lifecycle??null,acquisition_advancement:input.acquisition_advancement??null,identity:input.identity??null,communication:input.communication??null,crm_state_sync:{status:crmOk?\"updated\":\"failed\",status_code:code}}}];"
+      },
+      "id": "wf105-result",
+      "name": "Lifecycle Advancement Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf105-response",
+      "name": "Respond Lifecycle Intelligence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf105-invalid",
+      "name": "Respond Invalid Intelligence Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [820, 500]
+    }
+  ],
+  "connections": {
+    "Seller Lifecycle Intelligence Webhook": {
+      "main": [
+        [
+          {
+            "node": "Calculate Seller Lifecycle & Advancement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Seller Lifecycle & Advancement": {
+      "main": [
+        [
+          {
+            "node": "Lifecycle Intelligence Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lifecycle Intelligence Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Advance Seller State in InsulaCRM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Intelligence Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Advance Seller State in InsulaCRM": {
+      "main": [
+        [
+          {
+            "node": "Lifecycle Advancement Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lifecycle Advancement Result": {
+      "main": [
+        [
+          {
+            "node": "Respond Lifecycle Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-105-v1"
+}

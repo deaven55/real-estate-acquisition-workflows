@@ -123,3 +123,11 @@ It produces a compact decision context containing:
 - explicit data gaps
 
 This gives the assistant a structured answer source for commands such as “What should I work on right now?” without allowing the assistant to invent current deal state.
+
+## Session continuity
+
+WF-063 provides the assistant with a normalized session context so multi-turn commands can carry forward the active lead, property, deal, buyer, session goal, unresolved operating items, approval state, and operating-context references.
+
+The continuity boundary is explicit: references such as “this deal,” “that property,” “continue,” or “follow up” must resolve against session context before dispatch. If the referenced identity is missing, the assistant must resolve it rather than guess. Explicit identity changes take precedence and must be recorded for audit.
+
+WF-063 does not execute side effects. It hands normalized context to WF-060 for intent interpretation and WF-061 for routing/authorization, while WF-062 supplies the current operating snapshot.

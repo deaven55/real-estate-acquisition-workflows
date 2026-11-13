@@ -1,29 +1,84 @@
 {
-  "name":"WF-082 Autonomous Communication Authorization & Dispatch Gate",
-  "nodes":[
+  "name": "WF-082 Autonomous Communication Authorization & Dispatch Gate",
+  "nodes": [
     {
-      "parameters":{"httpMethod":"POST","path":"wf-082-autonomous-communication-dispatch","responseMode":"responseNode","options":{}},
-      "id":"wf082-webhook","name":"Autonomous Communication Dispatch Webhook","type":"n8n-nodes-base.webhook","webhookId":"wf-082-autonomous-communication-dispatch","typeVersion":2,"position":[0,300]
-    },
-    {
-      "parameters":{
-        "jsCode":"const input=$json.body??$json; const s=v=>String(v??'').trim(); const arr=v=>Array.isArray(v)?v:[]; const channel=s(input.channel??input.type).toLowerCase(); const recipient=s(input.recipient??input.to); const message=s(input.message??input.body); const account=s(input.account??input.sender_identity??'business'); const autoAllowed=input.autonomous_communication_enabled===true||input.auto_send_enabled===true; const recipientSuppressed=input.do_not_contact===true||input.dnc===true; const approval=s(input.approval_state).toLowerCase(); const provider=s(input.provider).toLowerCase(); const id=s(input.request_id??input.external_id); const gaps=[]; if(!id)gaps.push('request_id'); if(!['sms','email'].includes(channel))gaps.push('supported_channel_sms_or_email'); if(!recipient)gaps.push('recipient'); if(!message)gaps.push('message'); if(!provider)gaps.push('provider'); if(!autoAllowed)gaps.push('autonomous_communication_enabled'); const blocked=recipientSuppressed||gaps.length>0; const dispatchAllowed=!blocked; const mode=autoAllowed?'autonomous_opt_in':'human_approval'; return[{json:{ok:dispatchAllowed,adapter:'wf-082',communication:{channel,recipient,message,account,provider,mode,autonomous_communication_enabled:autoAllowed},authorization:{dispatch_allowed:dispatchAllowed,recipient_suppressed:recipientSuppressed,approval_state:approval,autonomous_opt_in_required:true},execution:{request_id:id,idempotency_key:'ai-communication:'+channel+':'+(id||'missing')+':v1',receipt_required:true,reply_handling_enabled:true,thread_or_conversation_tracking:true},missing_requirements:gaps,next_action:blocked?(recipientSuppressed?'Do not contact this recipient; DNC suppression is authoritative.':'Complete communication runtime configuration before dispatch.'):'Dispatch through the configured business communication provider and persist the provider receipt; inbound replies should return through the same conversation identity for AI response handling.',policy:{autonomous_email_and_sms_allowed_when_explicitly_enabled:true,human_approval_not_required_after_explicit_autonomous_opt_in:true,dnc_hard_suppression:true,no_personal_number_required:true,provider_credentials_must_remain_outside_github:true,provider_receipt_required:true,all_outbound_and_inbound_messages_audited:true,ai_reply_generation_allowed:true,no_legal_claims:true}}}];"
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-082-autonomous-communication-dispatch",
+        "responseMode": "responseNode",
+        "options": {}
       },
-      "id":"wf082-policy","name":"Evaluate Autonomous Communication Policy","type":"n8n-nodes-base.code","typeVersion":2,"position":[320,300]
+      "id": "wf082-webhook",
+      "name": "Autonomous Communication Dispatch Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-082-autonomous-communication-dispatch",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
     },
     {
-      "parameters":{"respondWith":"json","responseBody":"={{ $json }}","options":{}},
-      "id":"wf082-response","name":"Respond Autonomous Communication Dispatch","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.4,"position":[640,300]
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const arr=v=>Array.isArray(v)?v:[]; const channel=s(input.channel??input.type).toLowerCase(); const recipient=s(input.recipient??input.to); const message=s(input.message??input.body); const account=s(input.account??input.sender_identity??'business'); const autoAllowed=input.autonomous_communication_enabled===true||input.auto_send_enabled===true; const recipientSuppressed=input.do_not_contact===true||input.dnc===true; const approval=s(input.approval_state).toLowerCase(); const provider=s(input.provider).toLowerCase(); const providerApiUrl=s(input.provider_api_url??input.agenticmail_api_url); const providerAccount=s(input.provider_account??input.account_id); const providerConfigured=!!providerApiUrl||!!providerAccount; const id=s(input.request_id??input.external_id); const gaps=[]; if(!id)gaps.push('request_id'); if(!['sms','email'].includes(channel))gaps.push('supported_channel_sms_or_email'); if(!recipient)gaps.push('recipient'); if(!message)gaps.push('message'); if(!provider)gaps.push('provider'); if(!providerConfigured)gaps.push('provider_runtime_configuration'); if(!autoAllowed)gaps.push('autonomous_communication_enabled'); const blocked=recipientSuppressed||gaps.length>0; const dispatchAllowed=!blocked; const mode=autoAllowed?'autonomous_opt_in':'human_approval'; return[{json:{ok:dispatchAllowed,adapter:'wf-082',communication:{channel,recipient,message,account,provider,provider_runtime_configured:providerConfigured,mode,autonomous_communication_enabled:autoAllowed},authorization:{dispatch_allowed:dispatchAllowed,recipient_suppressed:recipientSuppressed,approval_state:approval,autonomous_opt_in_required:true},execution:{request_id:id,idempotency_key:'ai-communication:'+channel+':'+(id||'missing')+':v1',receipt_required:true,reply_handling_enabled:true,thread_or_conversation_tracking:true},missing_requirements:gaps,next_action:blocked?(recipientSuppressed?'Do not contact this recipient; DNC suppression is authoritative.':'Complete communication runtime configuration before dispatch.'):'Dispatch through the configured business communication provider and persist the provider receipt; inbound replies should return through the same conversation identity for AI response handling.',policy:{autonomous_email_and_sms_allowed_when_explicitly_enabled:true,human_approval_not_required_after_explicit_autonomous_opt_in:true,dnc_hard_suppression:true,no_personal_number_required:true,provider_credentials_must_remain_outside_github:true,provider_runtime_configuration_required:true,provider_receipt_required:true,all_outbound_and_inbound_messages_audited:true,ai_reply_generation_allowed:true,no_legal_claims:true}}}];"
+      },
+      "id": "wf082-policy",
+      "name": "Evaluate Autonomous Communication Policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf082-response",
+      "name": "Respond Autonomous Communication Dispatch",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
     }
   ],
-  "connections":{
-    "Autonomous Communication Dispatch Webhook":{"main":[[{"node":"Evaluate Autonomous Communication Policy","type":"main","index":0}]]},
-    "Evaluate Autonomous Communication Policy":{"main":[[{"node":"Respond Autonomous Communication Dispatch","type":"main","index":0}]]}
+  "connections": {
+    "Autonomous Communication Dispatch Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Autonomous Communication Policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Autonomous Communication Policy": {
+      "main": [
+        [
+          {
+            "node": "Respond Autonomous Communication Dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "pinData":{},
-  "active":false,
-  "settings":{"executionOrder":"v1"},
-  "versionId":"wf082-1",
-  "meta":{"templateCredsSetupCompleted":true},
-  "tags":[]
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf082-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
 }

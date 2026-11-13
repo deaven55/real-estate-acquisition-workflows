@@ -185,3 +185,9 @@ The adapter supports property-type-aware logic and explicitly distinguishes land
 WF-070 adds an explanation layer after economic underwriting. It identifies why a deal works or does not work, highlights strengths and risks, calculates the offer-to-MAO spread and implied margin when inputs permit, and proposes practical levers such as price/terms adjustment, repair verification, comp validation, and buyer-demand validation.
 
 The assistant should explain the economics behind a recommendation rather than treating the 70% heuristic as a pass/fail rule. Missing inputs remain explicit and recommendations are not presented as verified legal, title, or funding conclusions.
+
+## Comparable sales and market evidence
+
+WF-071 adds an evidence-first adapter for comparable sales and market evidence. It preserves raw comp fields and provenance, separates verified from unverified evidence, summarizes comparable sale prices, and uses property-type-aware methodology. Vacant land uses land-sales/price-per-acre analysis rather than residential ARV assumptions.
+
+WF-071 does not claim a guaranteed market value. Evidence quality and missing data remain explicit inputs to downstream underwriting and deal viability decisions.

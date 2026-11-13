@@ -213,3 +213,7 @@ WF-075 adds a derived opportunity score and priority tier using available econom
 ## Deal pipeline prioritization and daily action queue
 
 WF-076 turns deal and operating inputs into a derived daily action queue. It prioritizes by opportunity value, urgency, lifecycle stage, blockers, and evidence gaps, then returns top actions and urgent items for the assistant briefing. It is decision support only and does not authorize automatic seller/buyer outreach or other external side effects.
+
+## Seller follow-up intelligence
+
+WF-077 adds seller follow-up prioritization using contact recency, scheduled follow-up timing, seller status, supplied sentiment, and suppression state. It produces an assistant-ready follow-up queue and seller-risk view. DNC/do-not-contact is treated as a hard suppression signal; the workflow does not infer seller intent and does not perform automatic outreach.

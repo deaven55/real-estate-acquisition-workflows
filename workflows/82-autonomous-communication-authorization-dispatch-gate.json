@@ -2,60 +2,242 @@
   "name": "WF-082 Autonomous Communication Authorization & Dispatch Gate",
   "nodes": [
     {
-      "parameters": {"httpMethod":"POST","path":"wf-082-autonomous-communication-dispatch","responseMode":"responseNode","options":{}},
-      "id":"wf082-webhook","name":"Autonomous Communication Dispatch Webhook","type":"n8n-nodes-base.webhook","webhookId":"wf-082-autonomous-communication-dispatch","typeVersion":2,"position":[0,300]
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-082-autonomous-communication-dispatch",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf082-webhook",
+      "name": "Autonomous Communication Dispatch Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-082-autonomous-communication-dispatch",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode":"const input=$json.body??$json; const s=v=>String(v??'').trim(); const channel=s(input.channel??input.type).toLowerCase(); const recipient=s(input.recipient??input.to); const message=s(input.message??input.body); const account=s(input.account??input.sender_identity??'business'); const autoAllowed=input.autonomous_communication_enabled===true||input.auto_send_enabled===true; const recipientSuppressed=input.do_not_contact===true||input.dnc===true; const approval=s(input.approval_state).toLowerCase(); const provider=s(input.provider||'agenticmail').toLowerCase(); const providerApiUrl=s(input.provider_api_url??input.agenticmail_api_url); const providerAccount=s(input.provider_account??input.account_id); const providerConfigured=!!providerApiUrl||!!providerAccount; const id=s(input.request_id??input.external_id); const gaps=[]; if(!id)gaps.push('request_id'); if(!['sms','email'].includes(channel))gaps.push('supported_channel_sms_or_email'); if(!recipient)gaps.push('recipient'); if(!message)gaps.push('message'); if(!provider)gaps.push('provider'); if(!providerConfigured&&!s($env.COMMUNICATION_RUNTIME_BASE_URL))gaps.push('communication_runtime_configuration'); if(!autoAllowed)gaps.push('autonomous_communication_enabled'); const blocked=recipientSuppressed||gaps.length>0; const dispatchAllowed=!blocked; return[{json:{...input,ok:dispatchAllowed,adapter:'wf-082',communication:{channel,recipient,message,account,provider,provider_runtime_configured:providerConfigured,mode:autoAllowed?'autonomous_opt_in':'human_approval',autonomous_communication_enabled:autoAllowed},authorization:{dispatch_allowed:dispatchAllowed,recipient_suppressed:recipientSuppressed,approval_state:approval,autonomous_opt_in_required:true},execution:{request_id:id,idempotency_key:'ai-communication:'+channel+':'+(id||'missing')+':v1',receipt_required:true,reply_handling_enabled:true,thread_or_conversation_tracking:true},missing_requirements:gaps,next_action:blocked?(recipientSuppressed?'Do not contact this recipient; DNC suppression is authoritative.':'Complete communication runtime configuration before dispatch.'):'Dispatch through WF-085 configured business communication runtime and persist the provider receipt.',policy:{autonomous_email_and_sms_allowed_when_explicitly_enabled:true,human_approval_not_required_after_explicit_autonomous_opt_in:true,dnc_hard_suppression:true,no_personal_number_required:true,provider_credentials_must_remain_outside_github:true,provider_runtime_configuration_required:true,provider_receipt_required:true,all_outbound_and_inbound_messages_audited:true,ai_reply_generation_allowed:true,no_legal_claims:true}}}];"
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const channel=s(input.channel??input.type).toLowerCase(); const recipient=s(input.recipient??input.to); const message=s(input.message??input.body); const account=s(input.account??input.sender_identity??'business'); const autoAllowed=input.autonomous_communication_enabled===true||input.auto_send_enabled===true; const recipientSuppressed=input.do_not_contact===true||input.dnc===true; const approval=s(input.approval_state).toLowerCase(); const provider=s(input.provider||'agenticmail').toLowerCase(); const providerApiUrl=s(input.provider_api_url??input.agenticmail_api_url); const providerAccount=s(input.provider_account??input.account_id); const providerConfigured=!!providerApiUrl||!!providerAccount; const id=s(input.request_id??input.external_id); const gaps=[]; if(!id)gaps.push('request_id'); if(!['sms','email'].includes(channel))gaps.push('supported_channel_sms_or_email'); if(!recipient)gaps.push('recipient'); if(!message)gaps.push('message'); if(!provider)gaps.push('provider'); if(!s($env.COMMUNICATION_RUNTIME_BASE_URL))gaps.push('communication_runtime_base_url'); if(!autoAllowed)gaps.push('autonomous_communication_enabled'); const blocked=recipientSuppressed||gaps.length>0; const dispatchAllowed=!blocked; return[{json:{...input,ok:dispatchAllowed,adapter:'wf-082',communication:{channel,recipient,message,account,provider,provider_runtime_configured:providerConfigured,mode:autoAllowed?'autonomous_opt_in':'human_approval',autonomous_communication_enabled:autoAllowed},authorization:{dispatch_allowed:dispatchAllowed,recipient_suppressed:recipientSuppressed,approval_state:approval,autonomous_opt_in_required:true},execution:{request_id:id,idempotency_key:'ai-communication:'+channel+':'+(id||'missing')+':v1',receipt_required:true,reply_handling_enabled:true,thread_or_conversation_tracking:true},missing_requirements:gaps,next_action:blocked?(recipientSuppressed?'Do not contact this recipient; DNC suppression is authoritative.':'Complete communication runtime configuration before dispatch.'):'Dispatch through WF-085 configured business communication runtime and persist the provider receipt.',policy:{autonomous_email_and_sms_allowed_when_explicitly_enabled:true,human_approval_not_required_after_explicit_autonomous_opt_in:true,dnc_hard_suppression:true,no_personal_number_required:true,provider_credentials_must_remain_outside_github:true,provider_runtime_configuration_required:true,provider_receipt_required:true,all_outbound_and_inbound_messages_audited:true,ai_reply_generation_allowed:true,no_legal_claims:true}}}];"
       },
-      "id":"wf082-policy","name":"Evaluate Autonomous Communication Policy","type":"n8n-nodes-base.code","typeVersion":2,"position":[320,300]
+      "id": "wf082-policy",
+      "name": "Evaluate Autonomous Communication Policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
     },
     {
       "parameters": {
-        "conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict","version":2},"conditions":[{"leftValue":"={{$json.authorization.dispatch_allowed}}","rightValue":true,"operator":{"type":"boolean","operation":"equals"}}],"combinator":"and"},"options":{}
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.authorization.dispatch_allowed}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
-      "id":"wf082-allowed","name":"Dispatch Allowed?","type":"n8n-nodes-base.if","typeVersion":2.2,"position":[540,300]
+      "id": "wf082-allowed",
+      "name": "Dispatch Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        540,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode":"const base=String($env.COMMUNICATION_RUNTIME_BASE_URL||'').replace(/\\/$/,''); if(!base)throw new Error('COMMUNICATION_RUNTIME_BASE_URL is not configured at runtime'); const body={channel:$json.communication.channel,action:$json.action||'send',recipient:$json.communication.recipient,message:$json.communication.message,subject:$json.subject||'',request_id:$json.execution.request_id,idempotency_key:$json.execution.idempotency_key,thread_id:$json.thread_id||$json.conversation_id||null,authorization:{authorized:true,source:'wf-082'},dnc:false,provider:$json.communication.provider}; return[{json:{...$json,runtime_url:base+'/webhook/wf-085-communication-runtime',runtime_request:body}}];"
+        "jsCode": "const base=String($env.COMMUNICATION_RUNTIME_BASE_URL||'').replace(/\\/$/,''); if(!base)throw new Error('COMMUNICATION_RUNTIME_BASE_URL is not configured at runtime'); const body={channel:$json.communication.channel,action:$json.action||'send',recipient:$json.communication.recipient,message:$json.communication.message,subject:$json.subject||'',request_id:$json.execution.request_id,idempotency_key:$json.execution.idempotency_key,thread_id:$json.thread_id||$json.conversation_id||null,authorization:{authorized:true,source:'wf-082'},dnc:false,provider:$json.communication.provider}; return[{json:{...$json,runtime_url:base+'/webhook/wf-085-communication-runtime',runtime_request:body}}];"
       },
-      "id":"wf082-build","name":"Build WF-085 Runtime Request","type":"n8n-nodes-base.code","typeVersion":2,"position":[760,200]
+      "id": "wf082-build",
+      "name": "Build WF-085 Runtime Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        200
+      ]
     },
     {
       "parameters": {
-        "method":"POST","url":"={{$json.runtime_url}}","sendHeaders":true,
-        "headerParametersUi":{"parameter":[{"name":"Content-Type","value":"application/json"}]},
-        "sendBody":true,"contentType":"json","bodyParametersUi":{"parameter":[]},"jsonBody":"={{JSON.stringify($json.runtime_request)}}",
-        "options":{"response":{"response":{"neverError":true}}}
+        "method": "POST",
+        "url": "={{$json.runtime_url}}",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersUi": {
+          "parameter": []
+        },
+        "jsonBody": "={{JSON.stringify($json.runtime_request)}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
       },
-      "id":"wf082-runtime","name":"Call WF-085 Communication Runtime","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[1000,200]
+      "id": "wf082-runtime",
+      "name": "Call WF-085 Communication Runtime",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        200
+      ]
     },
     {
       "parameters": {
-        "jsCode":"const original=$('Build WF-085 Runtime Request').first().json; const status=Number($response.statusCode||0); const providerReceipt=$json; const success=status>=200&&status<300&&providerReceipt.status==='sent'; return[{json:{...original,dispatch_result:{status:success?'sent':'failed',http_status:status,provider_receipt:providerReceipt,receipt_required:true},next_action:success?'Persist provider receipt and CRM activity; inbound replies must preserve the same thread identity.':'Do not mark communication as sent. Route the transport failure to retry/reconciliation and preserve the idempotency key.'}}];"
+        "jsCode": "const original=$('Build WF-085 Runtime Request').first().json; const status=Number($response.statusCode||0); const providerReceipt=$json; const success=status>=200&&status<300&&providerReceipt.status==='sent'; return[{json:{...original,dispatch_result:{status:success?'sent':'failed',http_status:status,provider_receipt:providerReceipt,receipt_required:true},next_action:success?'Persist provider receipt and CRM activity; inbound replies must preserve the same thread identity.':'Do not mark communication as sent. Route the transport failure to retry/reconciliation and preserve the idempotency key.'}}];"
       },
-      "id":"wf082-receipt","name":"Normalize WF-085 Dispatch Receipt","type":"n8n-nodes-base.code","typeVersion":2,"position":[1240,200]
+      "id": "wf082-receipt",
+      "name": "Normalize WF-085 Dispatch Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        200
+      ]
     },
     {
-      "parameters": {"respondWith":"json","responseBody":"={{$json}}","options":{"responseCode":"={{$json.dispatch_result?.status==='sent'?200:502}}"}},
-      "id":"wf082-response","name":"Respond Dispatch Receipt","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.4,"position":[1480,200]
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": "={{$json.dispatch_result?.status==='sent'?200:502}}"
+        }
+      },
+      "id": "wf082-response",
+      "name": "Respond Dispatch Receipt",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1480,
+        200
+      ]
     },
     {
-      "parameters": {"respondWith":"json","responseBody":"={{$json}}","options":{"responseCode":400}},
-      "id":"wf082-blocked","name":"Respond Dispatch Block","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.4,"position":[760,480]
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf082-blocked",
+      "name": "Respond Dispatch Block",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        760,
+        480
+      ]
     }
   ],
-  "connections":{
-    "Autonomous Communication Dispatch Webhook":{"main":[[{"node":"Evaluate Autonomous Communication Policy","type":"main","index":0}]]},
-    "Evaluate Autonomous Communication Policy":{"main":[[{"node":"Dispatch Allowed?","type":"main","index":0}]]},
-    "Dispatch Allowed?":{"main":[[{"node":"Build WF-085 Runtime Request","type":"main","index":0}],[{"node":"Respond Dispatch Block","type":"main","index":0}]]},
-    "Build WF-085 Runtime Request":{"main":[[{"node":"Call WF-085 Communication Runtime","type":"main","index":0}]]},
-    "Call WF-085 Communication Runtime":{"main":[[{"node":"Normalize WF-085 Dispatch Receipt","type":"main","index":0}]]},
-    "Normalize WF-085 Dispatch Receipt":{"main":[[{"node":"Respond Dispatch Receipt","type":"main","index":0}]]}
+  "connections": {
+    "Autonomous Communication Dispatch Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Autonomous Communication Policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Autonomous Communication Policy": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Allowed?": {
+      "main": [
+        [
+          {
+            "node": "Build WF-085 Runtime Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Dispatch Block",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build WF-085 Runtime Request": {
+      "main": [
+        [
+          {
+            "node": "Call WF-085 Communication Runtime",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF-085 Communication Runtime": {
+      "main": [
+        [
+          {
+            "node": "Normalize WF-085 Dispatch Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize WF-085 Dispatch Receipt": {
+      "main": [
+        [
+          {
+            "node": "Respond Dispatch Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "active":false,
-  "settings":{"executionOrder":"v1"},
-  "versionId":"wf-082-v2"
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-082-v3"
 }

@@ -32,6 +32,20 @@
       }
     },
     {
+      "id": "insula-offer-decision-activity",
+      "name": "Sync Seller Offer Decision to InsulaCRM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        620,
+        180
+      ],
+      "parameters": {
+        "jsCode": "const input=$input.first().json;\ntry {\n  const base=$env.INSULA_CRM_BASE_URL, apiKey=$env.INSULA_CRM_API_KEY;\n  const leadId=Number(input.insulaLeadId||input.leadId||input.lead_id||input.offer?.lead_id||0);\n  const lifecycle=input.offer_lifecycle||{};\n  if(base&&apiKey&&leadId){\n    await this.helpers.httpRequest({\n      method:'POST', url:base+'/api/v1/activities',\n      headers:{'X-API-Key':apiKey,'Content-Type':'application/json',\n        'Idempotency-Key':'acquisition:offer-decision:'+leadId+':'+String(input.offer_id||lifecycle.offer_id||'offer')+':'+String(lifecycle.status||'unknown')+':v1'},\n      body:{lead_id:leadId,type:'stage_change',\n        subject:'Seller offer decision: '+String(lifecycle.status||'unknown'),\n        body:'Offer lifecycle decision recorded. Previous status: '+String(lifecycle.previous_status||'none')+'. Current status: '+String(lifecycle.status||'unknown')+'. CRM stage: '+String(lifecycle.crm_stage||'offer_review_needed')+'. Next action: '+String(lifecycle.next_action||'review_required')+'. Transition valid: '+String(lifecycle.transition_valid===true)+'.'},\n      json:true\n    });\n  }\n}catch(error){ console.log('InsulaCRM seller offer decision activity sync failed:',error.message); }\nreturn [{json:input}];"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
       "id": "response",
       "name": "Respond Lifecycle Result",
       "type": "n8n-nodes-base.respondToWebhook",
@@ -94,7 +108,7 @@
       "main": [
         [
           {
-            "node": "Disposition Readiness Endpoint",
+            "node": "Sync Seller Offer Decision to InsulaCRM",
             "type": "main",
             "index": 0
           }
@@ -106,6 +120,17 @@
         [
           {
             "node": "Respond Lifecycle Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Seller Offer Decision to InsulaCRM": {
+      "main": [
+        [
+          {
+            "node": "Disposition Readiness Endpoint",
             "type": "main",
             "index": 0
           }

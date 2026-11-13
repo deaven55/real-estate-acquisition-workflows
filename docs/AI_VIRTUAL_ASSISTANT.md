@@ -167,3 +167,9 @@ WF-067 defines the standardized data-retrieval contract used by the assistant be
 The adapter preserves request/session identity, source-of-truth, provenance, retrieved-at metadata, record counts, and no-inference behavior. InsulaCRM reads use the known API contract and base URL; non-CRM resources route to their established workflow gates. WF-067 does not claim live execution merely because a route is defined.
 
 Read operations remain the default. Any side-effect-capable operation is approval-controlled and must not execute without explicit human approval.
+
+## Live InsulaCRM read adapter
+
+WF-068 is the first live-capable assistant data adapter. It accepts a lead read request, validates the runtime CRM base URL/API key and request/session/lead identity, then performs a read-only GET against the known InsulaCRM endpoint when the runtime contract is configured. It never performs a write and does not infer missing CRM data.
+
+The workflow is intentionally gated: a defined endpoint is not treated as live until the required runtime environment values are present. The response preserves request/session identity, source-of-truth, provenance, and no-inference behavior.

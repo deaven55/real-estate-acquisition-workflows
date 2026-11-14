@@ -1,0 +1,74 @@
+{
+  "name": "WF-122 — Contract Readiness & Agreement Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-122-contract-readiness-agreement-gate",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf122-webhook",
+      "name": "WF-122 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-900, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b=$json.body??$json,r=b.acceptance??b;const requestId=String(b.request_id??r.request_id??'wf122-'+Date.now()),leadId=r.lead_id??b.lead_id??null,propertyId=r.property_id??b.property_id??null,dealId=r.deal_id??b.deal_id??null,propertyAddress=r.property_address??b.property_address??r.address??b.address??null,agreedPrice=Number(r.agreed_price??b.agreed_price??r.purchase_price??b.purchase_price),mao=Number(r.mao_ceiling??b.mao_ceiling??r.mao??b.mao),underwritingStatus=String(r.underwriting_status??b.underwriting_status??r.decision_status??b.decision_status??'').toLowerCase(),acceptanceEvidence=r.seller_acceptance_evidence??b.seller_acceptance_evidence??r.acceptance_evidence??b.acceptance_evidence??null,agreementType=String(r.agreement_type??b.agreement_type??r.contract_type??b.contract_type??'').toLowerCase(),strategy=r.exit_strategy??b.exit_strategy??r.transaction_strategy??b.transaction_strategy??null,dnc=Boolean(r.dnc??b.dnc),sellerName=r.seller_name??b.seller_name??null;const missing=[];if(!leadId)missing.push('lead_id');if(!propertyId&&!propertyAddress)missing.push('property_identity');if(!dealId)missing.push('deal_id');if(!Number.isFinite(agreedPrice)||agreedPrice<=0)missing.push('agreed_price');if(!Number.isFinite(mao)||mao<=0)missing.push('mao_ceiling');if(!acceptanceEvidence)missing.push('seller_acceptance_evidence');if(!agreementType)missing.push('agreement_type');if(!underwritingStatus)missing.push('underwriting_status');const acceptedUnderwriting=['approved','approval','approved_for_offer'].includes(underwritingStatus);const priceWithinMao=Number.isFinite(agreedPrice)&&Number.isFinite(mao)&&agreedPrice<=mao;const evidenceText=typeof acceptanceEvidence==='string'?acceptanceEvidence:JSON.stringify(acceptanceEvidence??'');const hasAcceptanceSignal=/accept|accepted|agreed|yes|verbal|signed|counter accepted/i.test(evidenceText);const supportedAgreement=['assignment','novation','double_close','double-close','purchase_agreement'].includes(agreementType);let status='ready',nextState='contract_ready',route='wf-037-contract-disposition-readiness',reason='All contract-readiness gates passed';if(dnc){status='blocked';nextState='suppressed';route='none';reason='DNC/STOP suppression';}else if(missing.length){status='blocked';nextState='missing_contract_inputs';route='human_review';reason='Required contract-readiness inputs are missing';}else if(!acceptedUnderwriting){status='blocked';nextState='underwriting_not_approved';route='human_review';reason='Underwriting must remain approved before contract readiness';}else if(!priceWithinMao){status='blocked';nextState='price_exceeds_mao';route='human_review';reason='Agreed price exceeds the current MAO ceiling';}else if(!hasAcceptanceSignal){status='human_review';nextState='acceptance_unverified';route='human_review';reason='Seller acceptance evidence is not sufficiently explicit';}else if(!supportedAgreement){status='human_review';nextState='agreement_type_review';route='human_review';reason='Agreement type requires human/legal workflow review';}const normalizedAgreement=agreementType==='double-close'||agreementType==='double_close'?'double_close':agreementType;const spread=Number.isFinite(mao)&&Number.isFinite(agreedPrice)?Math.max(0,mao-agreedPrice):null;const packetRequirements=['seller_identity_verification','property_identity_verification','accepted_purchase_price','approved_underwriting_evidence','seller_acceptance_evidence','agreement_type','contract_form_and_signing_workflow'];if(normalizedAgreement==='assignment')packetRequirements.push('assignment_disposition_terms');if(normalizedAgreement==='novation')packetRequirements.push('novation_approval_and_replacement_buyer_terms');if(normalizedAgreement==='double_close')packetRequirements.push('closing_funding_and_title_coordination');const readinessId='contract-readiness:'+(dealId||propertyId||leadId)+':'+requestId+':v1';return[{json:{workflow:'WF-122',workflow_version:'1.0',request_id:requestId,contract_readiness_id:readinessId,status,next_state,route,reason,lead_id:leadId,property_id:propertyId,deal_id:dealId,seller_name:sellerName,property_address:propertyAddress,agreement_type:normalizedAgreement,agreed_price:agreedPrice,mao_ceiling:mao,spread_to_mao:spread,seller_acceptance_evidence:acceptanceEvidence,underwriting_status:underwritingStatus,exit_strategy:strategy,dnc,missing_items:missing,contract_packet_requirements:packetRequirements,approval:{human_approval_required:true,legal_review_not_automatically_provided:true},guardrails:{never_exceed_mao:true,underwriting_must_remain_approved:true,seller_acceptance_must_be_evidenced:true,no_invented_title_or_legal_facts:true,no_automatic_legal_guarantees:true,human_approval_before_contract_issuance:true},crm_activity:{activity_type:'contract_readiness_gate',subject:'WF-122 contract readiness — '+status,lead_id:leadId,property_id:propertyId,deal_id:dealId,external_id:readinessId,external_source:'wholesaling-os-contract',metadata:{contract_readiness_id:readinessId,status,next_state,route,agreement_type:normalizedAgreement,agreed_price:agreedPrice,mao_ceiling:mao,spread_to_mao:spread,missing_items:missing,reason}}}}];"
+      },
+      "id": "wf122-normalize",
+      "name": "Evaluate Contract Readiness",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-600, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;let valid=true,reason='validated';if(!r.contract_readiness_id||!r.status||!r.next_state||!r.route)valid=false,reason='invalid_readiness_contract';if(r.status==='ready'&&(r.agreed_price>r.mao_ceiling||r.underwriting_status!=='approved'&&r.underwriting_status!=='approval'&&r.underwriting_status!=='approved_for_offer'))valid=false,reason='ready_state_guardrail_failure';if(r.status==='ready'&&r.route!=='wf-037-contract-disposition-readiness')valid=false,reason='ready_route_mismatch';if(r.dnc&&r.route!=='none')valid=false,reason='dnc_route_mismatch';return[{json:{...r,validation_status:valid?'validated':'blocked',validation_reason:valid?reason:reason, status:valid?r.status:'blocked', next_state:valid?r.next_state:'human_review', route:valid?r.route:'human_review'}}];"
+      },
+      "id": "wf122-validate",
+      "name": "Validate Contract Guardrails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-300, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {"parameters":[{"name":"X-API-Key","value":"={{$env.INSULA_CRM_API_KEY}}"},{"name":"Content-Type","value":"application/json"}]},
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({ activity_type: $json.crm_activity.activity_type, subject: $json.crm_activity.subject, body: JSON.stringify({ contract_readiness_id: $json.contract_readiness_id, status: $json.status, next_state: $json.next_state, route: $json.route, agreement_type: $json.agreement_type, agreed_price: $json.agreed_price, mao_ceiling: $json.mao_ceiling, spread_to_mao: $json.spread_to_mao, missing_items: $json.missing_items, seller_acceptance_evidence: $json.seller_acceptance_evidence, reason: $json.reason, guardrails: $json.guardrails }), lead_id: $json.crm_activity.lead_id, property_id: $json.crm_activity.property_id, deal_id: $json.crm_activity.deal_id, external_id: $json.crm_activity.external_id, external_source: $json.crm_activity.external_source, metadata: $json.crm_activity.metadata }) }}",
+        "options": {"response":{"response":{"neverError":true}}}
+      },
+      "id": "wf122-crm",
+      "name": "Persist Contract Readiness Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;return[{json:{...r,crm_persistence_attempted:true,crm_persistence_status:$json.statusCode>=200&&$json.statusCode<300?'persisted':'failed',next_action:{route:r.route,next_state:r.next_state,request_id:r.request_id,contract_readiness_id:r.contract_readiness_id}}}];"
+      },
+      "id": "wf122-return",
+      "name": "Return Contract Readiness",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    }
+  ],
+  "connections": {
+    "WF-122 Webhook": {"main":[[{"node":"Evaluate Contract Readiness","type":"main","index":0}]]},
+    "Evaluate Contract Readiness": {"main":[[{"node":"Validate Contract Guardrails","type":"main","index":0}]]},
+    "Validate Contract Guardrails": {"main":[[{"node":"Persist Contract Readiness Audit","type":"main","index":0}]]},
+    "Persist Contract Readiness Audit": {"main":[[{"node":"Return Contract Readiness","type":"main","index":0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder":"v1"},
+  "versionId": "wf122-v1"
+}

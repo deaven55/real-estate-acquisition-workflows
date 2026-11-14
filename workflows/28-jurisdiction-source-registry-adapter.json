@@ -1,0 +1,110 @@
+{
+  "name": "WholeStack WF-028: Jurisdiction Source Registry Adapter",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-jurisdiction-source-registry-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "fetch",
+      "name": "Fetch Canonical Registry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.WHOLESTACK_REGISTRY_URL || 'https://raw.githubusercontent.com/deaven55/real-estate-acquisition-workflows/main/config/jurisdiction-source-registry.json' }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "resolve",
+      "name": "Resolve Jurisdiction Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input=$('Webhook').first().json.body||$('Webhook').first().json; const raw=$input.first().json; let registry=raw; if(typeof raw==='string'){try{registry=JSON.parse(raw);}catch(e){registry={};}} if(raw?.data && typeof raw.data==='object') registry=raw.data; const state=String(input.state||'').trim().toUpperCase(); const county=String(input.county||'').trim().toLowerCase(); const key='US-'+state; const entry=registry?.jurisdictions?.[key]||null; const normalizeCounty=s=>String(s||'').trim().toLowerCase().replace(/\\\\s+county$/,'').replace(/\\\\s+/g,' '); const countyEntry=entry?.counties ? Object.entries(entry.counties).find(([name,v])=>normalizeCounty(name)===county || (Array.isArray(v?.aliases)&&v.aliases.some(a=>normalizeCounty(a)===county))) : null; const curated=[...(entry?.state_sources||[]),...((countyEntry?.[1]?.sources)||[])]; const discovered=Array.isArray(input.official_sources)?input.official_sources:[]; const seen=new Set(); const merged=[...curated,...discovered].filter(s=>{const k=String(s?.url||s?.source_record_id||s?.name||'').toLowerCase(); if(!k||seen.has(k)) return false; seen.add(k); return true;}); const blocked=merged.filter(s=>s.commercial_live_query_allowed===false); return [{json:{request_id:input.request_id||null,state,county:input.county||'',city:input.city||'',zip:input.zip||'',criteria:Array.isArray(input.criteria)?input.criteria:[],property_type:input.property_type||null,limit:input.limit||10,search_notes:input.search_notes||'',official_sources:merged.slice(0,50),curated_source_count:curated.length,discovered_source_count:discovered.length,commercial_restrictions:blocked,source_resolution:{registry_key:key,county_key:county||null,curated_match:curated.length>0,county_registry_match:Boolean(countyEntry),discovery_fallback_used:curated.length===0,registry_version:registry?.version||null,registry_source:$env.WHOLESTACK_REGISTRY_URL||'github:main/config/jurisdiction-source-registry.json',policy:'canonical provider-neutral registry; official sources first; discovery supplements unknown or incomplete jurisdictions; commercially restricted live sources are flagged rather than silently queried'}}}];"
+      }
+    },
+    {
+      "id": "response",
+      "name": "Respond Registry Resolution",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Fetch Canonical Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Canonical Registry": {
+      "main": [
+        [
+          {
+            "node": "Resolve Jurisdiction Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Jurisdiction Sources": {
+      "main": [
+        [
+          {
+            "node": "Respond Registry Resolution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

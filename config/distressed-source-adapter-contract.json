@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "description": "Provider-neutral contract for criterion-specific official public-record adapters. Adapters must return evidence, not inferred distress.",
+  "criteria": {
+    "tax_delinquent": {
+      "source_types": [
+        "county_tax",
+        "tax_delinquency",
+        "county_property"
+      ],
+      "required": [
+        "owner_name",
+        "property_address",
+        "source_url_or_record_id"
+      ],
+      "signal_fields": [
+        "tax_status",
+        "delinquent_tax_amount",
+        "tax_due_date",
+        "parcel_id"
+      ]
+    },
+    "probate": {
+      "source_types": [
+        "court_probate",
+        "probate_record",
+        "estate_record"
+      ],
+      "required": [
+        "party_name_or_owner_name",
+        "source_url_or_record_id"
+      ],
+      "signal_fields": [
+        "case_number",
+        "case_type",
+        "estate_name",
+        "decedent_name",
+        "property_address",
+        "parcel_id"
+      ]
+    },
+    "pre_foreclosure": {
+      "source_types": [
+        "foreclosure",
+        "court_record",
+        "land_record"
+      ],
+      "required": [
+        "party_name_or_owner_name",
+        "source_url_or_record_id"
+      ],
+      "signal_fields": [
+        "case_number",
+        "foreclosure_type",
+        "default_date",
+        "sale_date",
+        "property_address",
+        "parcel_id"
+      ]
+    },
+    "fixer_upper": {
+      "source_types": [
+        "permit_code_enforcement",
+        "permit_record",
+        "code_enforcement",
+        "property_record"
+      ],
+      "required": [
+        "property_address_or_parcel_id",
+        "source_url_or_record_id"
+      ],
+      "signal_fields": [
+        "permit_type",
+        "permit_status",
+        "violation_type",
+        "violation_status",
+        "inspection_date",
+        "condition_signal",
+        "property_address",
+        "parcel_id"
+      ]
+    },
+    "distressed": {
+      "source_types": [
+        "county_tax",
+        "tax_delinquency",
+        "foreclosure",
+        "court_record",
+        "permit_code_enforcement",
+        "property_record"
+      ],
+      "required": [
+        "source_url_or_record_id"
+      ],
+      "signal_fields": [
+        "tax_status",
+        "delinquent_tax_amount",
+        "foreclosure_signal",
+        "court_signal",
+        "permit_signal",
+        "code_violation_signal",
+        "property_address",
+        "parcel_id"
+      ]
+    }
+  },
+  "rules": [
+    "Never infer distress solely from missing data.",
+    "Every positive criterion signal must be traceable to a source record.",
+    "Preserve source_url or source_record_id for every evidence item.",
+    "Keep unknown fields null and expose missing_fields.",
+    "Do not treat a court portal as the official court record; preserve its public-docket status.",
+    "Do not automatically contact sellers from a signal alone; compliance and human review remain downstream gates."
+  ],
+  "adapter_output": {
+    "request_id": "string",
+    "criterion": "string",
+    "source": {
+      "name": "string",
+      "type": "string",
+      "url": "string",
+      "commercial_live_query_allowed": "boolean|null"
+    },
+    "records": [
+      {
+        "source_record_id": "string|null",
+        "source_url": "string",
+        "source_observed_at": "ISO-8601",
+        "owner_name": "string|null",
+        "property_address": "string|null",
+        "parcel_id": "string|null",
+        "signal": "string",
+        "signal_strength": "confirmed|probable|needs_review",
+        "structured_facts": "object",
+        "raw_attributes": "object"
+      }
+    ],
+    "limitations": [
+      "string"
+    ],
+    "missing_fields": [
+      "string"
+    ]
+  }
+}

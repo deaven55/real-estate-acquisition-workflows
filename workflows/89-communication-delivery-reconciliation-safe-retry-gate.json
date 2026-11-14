@@ -1,0 +1,105 @@
+{
+  "name": "WF-089 Communication Delivery Reconciliation & Safe Retry Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-089-communication-reconciliation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf089-webhook",
+      "name": "Communication Reconciliation Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const status=s(input.status??input.dispatch_result?.status).toLowerCase(); const channel=s(input.channel??input.communication?.channel).toLowerCase(); const recipient=s(input.recipient??input.communication?.recipient); const requestId=s(input.request_id??input.execution?.request_id); const idem=s(input.idempotency_key??input.execution?.idempotency_key); const dnc=input.dnc===true||input.do_not_contact===true||input.recipient_suppressed===true; const retryCount=Number(input.retry_count??0); const maxRetries=Math.max(0,Number($env.COMMUNICATION_MAX_RETRIES??2)); const retryable=input.retryable!==false&&['failed','error','timeout','transport_error'].includes(status); const providerReceipt=input.provider_receipt??input.dispatch_result?.provider_receipt??null; const gaps=[]; if(!requestId)gaps.push('request_id'); if(!idem)gaps.push('idempotency_key'); if(!['sms','email'].includes(channel))gaps.push('supported_channel_sms_or_email'); if(!recipient)gaps.push('recipient'); if(dnc)gaps.push('dnc_suppression'); if(retryCount>=maxRetries)gaps.push('retry_limit_reached'); const retryAllowed=retryable&&!dnc&&gaps.length===0; const nextRetry=retryCount+1; return[{json:{...input,ok:true,adapter:'wf-089',reconciliation:{original_status:status,retryable,retry_allowed:retryAllowed,dnc_suppressed:dnc,retry_count:retryCount,max_retries:maxRetries,next_retry_count:nextRetry,provider_receipt:providerReceipt},execution:{request_id:requestId,idempotency_key:idem,recipient,channel,receipt_required:true},safety:{never_retry_dnc:true,never_generate_new_idempotency_key:true,never_mark_failed_delivery_as_sent:true,never_retry_after_limit:true,provider_receipt_required:true},missing_requirements:gaps,next_action:retryAllowed?'Retry through the existing authorized dispatch path using the same idempotency key; reconcile the new provider receipt.':dnc?'Do not retry. DNC suppression is authoritative.':retryCount>=maxRetries?'Do not retry. Retry limit reached; escalate for human review.':retryable?'Do not retry until required reconciliation fields are present.':'No retry required; preserve the existing delivery outcome.'}}}];"
+      },
+      "id": "wf089-reconcile",
+      "name": "Evaluate Delivery Reconciliation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [{"leftValue": "={{$json.reconciliation.retry_allowed}}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf089-allowed",
+      "name": "Safe Retry Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.COMMUNICATION_RUNTIME_BASE_URL.replace(/\\/$/,'')}}/webhook/wf-082-autonomous-communication-dispatch",
+        "sendHeaders": true,
+        "headerParametersUi": {"parameter": [{"name": "Content-Type", "value": "application/json"}]},
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersUi": {"parameter": []},
+        "jsonBody": "={{JSON.stringify({channel:$json.execution.channel,recipient:$json.execution.recipient,message:$json.message,subject:$json.subject||'',request_id:$json.execution.request_id,idempotency_key:$json.execution.idempotency_key,thread_id:$json.thread_id||$json.conversation_id||null,provider:$json.provider||'agenticmail',autonomous_communication_enabled:true,dnc:false,retry_count:$json.reconciliation.next_retry_count})}}",
+        "options": {"response": {"response": {"neverError": true}}}
+      },
+      "id": "wf089-retry",
+      "name": "Retry Existing Authorized Dispatch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior=$('Evaluate Delivery Reconciliation').first().json; const status=Number($response.statusCode||0); const receipt=$json; const sent=status>=200&&status<300&&receipt.dispatch_result?.status==='sent'; return[{json:{...prior,reconciliation:{...prior.reconciliation,retry_result:sent?'sent':'failed',retry_http_status:status,retry_provider_receipt:receipt},next_action:sent?'Retry provider receipt received. Reconcile it against the original idempotency key and persist the delivery activity.':'Retry did not produce a successful provider receipt. Do not create another idempotency key; escalate or wait for the next controlled retry policy.'}}}];"
+      },
+      "id": "wf089-result",
+      "name": "Normalize Retry Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {"responseCode": "={{$json.reconciliation?.retry_allowed?($json.reconciliation?.retry_result==='sent'?200:502):200}}"}
+      },
+      "id": "wf089-response",
+      "name": "Respond Reconciliation Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1240, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {"responseCode": 200}
+      },
+      "id": "wf089-no-retry",
+      "name": "Respond No Retry",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [760, 480]
+    }
+  ],
+  "connections": {
+    "Communication Reconciliation Webhook": {"main": [[{"node": "Evaluate Delivery Reconciliation", "type": "main", "index": 0}]]},
+    "Evaluate Delivery Reconciliation": {"main": [[{"node": "Safe Retry Allowed?", "type": "main", "index": 0}]]},
+    "Safe Retry Allowed?": {"main": [[{"node": "Retry Existing Authorized Dispatch", "type": "main", "index": 0}], [{"node": "Respond No Retry", "type": "main", "index": 0}]]},
+    "Retry Existing Authorized Dispatch": {"main": [[{"node": "Normalize Retry Receipt", "type": "main", "index": 0}]]},
+    "Normalize Retry Receipt": {"main": [[{"node": "Respond Reconciliation Result", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "wf-089-v1"
+}

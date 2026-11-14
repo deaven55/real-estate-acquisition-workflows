@@ -1,0 +1,37 @@
+{
+  "name":"WF-108 Underwriting Evidence Orchestrator",
+  "nodes":[
+    {
+      "parameters":{"httpMethod":"POST","path":"wf-108-underwriting-evidence-orchestrator","responseMode":"responseNode","options":{}},
+      "id":"wf108-webhook","name":"Underwriting Evidence Webhook","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[0,300]
+    },
+    {
+      "parameters":{"jsCode":"const input=$json.body??$json;\nconst s=v=>String(v??'').trim();\nconst id=s(input.deal_id??input.property_id??input.lead_id??input.identity?.deal_id??input.identity?.property_id??input.identity?.lead_id);\nconst leadId=s(input.lead_id??input.identity?.lead_id);\nconst propertyId=s(input.property_id??input.identity?.property_id);\nconst dealId=s(input.deal_id??input.identity?.deal_id);\nconst propertyType=s(input.property_type??input.asset_type??input.property?.type).toLowerCase();\nconst address=s(input.property_address??input.property?.address);\nconst missing=[];\nif(!id)missing.push('canonical_identity');\nif(!propertyType)missing.push('property_type');\nif(!address&&!propertyId)missing.push('property_address_or_property_id');\nconst tasks=[];\nif(!Array.isArray(input.comps)||!input.comps.length)tasks.push({key:'comps',workflow:'wf-071-comps-market-evidence-adapter',required:true});\nif(input.arv==null&&input.market_value==null)tasks.push({key:'valuation',workflow:'wf-071-comps-market-evidence-adapter',required:true});\nif(input.repairs==null&&input.estimated_repairs==null)tasks.push({key:'repairs',workflow:'wf-072-repair-cost-property-condition-analysis',required:true});\nif(!input.property_risk&&!input.risk_evidence)tasks.push({key:'risk',workflow:'wf-073-property-risk-feasibility-analysis',required:true});\nif(!input.buyer_demand&&!input.exit_strategy)tasks.push({key:'buyer_demand',workflow:'wf-074-buyer-demand-exit-strategy-analysis',required:true});\nconst propertySpecific=propertyType.includes('land')||propertyType.includes('vacant');\nconst evidence={identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null},property:{type:propertyType||null,address:address||null},existing:{arv:input.arv??input.market_value??null,market_value:input.market_value??null,repairs:input.repairs??input.estimated_repairs??null,comps:Array.isArray(input.comps)?input.comps:[],property_risk:input.property_risk??input.risk_evidence??null,buyer_demand:input.buyer_demand??null,exit_strategy:input.exit_strategy??null,valuation_available:input.arv!=null||input.market_value!=null,repairs_available:input.repairs!=null||input.estimated_repairs!=null,risk_available:Boolean(input.property_risk||input.risk_evidence),buyer_demand_available:Boolean(input.buyer_demand||input.exit_strategy)},policy:{economic_viability_primary:true,reference_70pct_secondary_only:true,property_type_specific_logic:true,land_specific_logic:propertySpecific}};\nconst request_id='evidence-orchestration:'+(id||'unknown')+':v1';\nconst status=missing.length?'needs_context':tasks.length?'evidence_required':'evidence_ready';\nreturn[{json:{ok:missing.length===0,status,request_id,evidence,required_tasks:tasks,orchestration:{next_action:tasks.length?'collect_missing_underwriting_evidence':'send_complete_evidence_to_mao_gate',next_workflow:tasks.length?tasks[0].workflow:'wf-069-deal-viability-mao-strategy-gate',parallelizable_tasks:tasks.map(x=>x.key),all_required_evidence_present:tasks.length===0},identity:evidence.identity,missing_requirements:missing}}];"},"id":"wf108-orchestrate","name":"Orchestrate Underwriting Evidence","type":"n8n-nodes-base.code","typeVersion":2,"position":[300,300]
+    },
+    {
+      "parameters":{"conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict","version":2},"conditions":[{"leftValue":"={{$json.status}}","rightValue":"evidence_ready","operator":{"type":"string","operation":"equals"}}],"combinator":"and"},"options":{}},
+      "id":"wf108-ready","name":"Evidence Complete?","type":"n8n-nodes-base.if","typeVersion":2.2,"position":[560,300]
+    },
+    {
+      "parameters":{"method":"POST","url":"={{$env.ACQUISITION_WORKFLOW_BASE_URL}}/webhook/wf-069-deal-viability-mao-strategy","sendHeaders":true,"headerParameters":{"parameters":[{"name":"Content-Type","value":"application/json"}]},"sendBody":true,"contentType":"json","bodyParameters":{"parameters":[{"name":"lead_id","value":"={{$json.identity.lead_id}}"},{"name":"property_id","value":"={{$json.identity.property_id}}"},{"name":"deal_id","value":"={{$json.identity.deal_id}}"},{"name":"property_type","value":"={{$json.evidence.property.type}}"},{"name":"property_address","value":"={{$json.evidence.property.address}}"},{"name":"arv","value":"={{$json.evidence.existing.arv}}"},{"name":"market_value","value":"={{$json.evidence.existing.market_value}}"},{"name":"repairs","value":"={{$json.evidence.existing.repairs}}"},{"name":"comps","value":"={{JSON.stringify($json.evidence.existing.comps)}}"},{"name":"property_risk","value":"={{JSON.stringify($json.evidence.existing.property_risk)}}"},{"name":"buyer_demand","value":"={{JSON.stringify($json.evidence.existing.buyer_demand)}}"},{"name":"exit_strategy","value":"={{JSON.stringify($json.evidence.existing.exit_strategy)}}"}]},"options":{"response":{"response":{"neverError":true}}}},
+      "id":"wf108-mao","name":"Send Complete Evidence to WF-069","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[820,200]
+    },
+    {
+      "parameters":{"respondWith":"json","responseBody":"={{$json}}","options":{"responseCode":200}},
+      "id":"wf108-response","name":"Respond Evidence Orchestration","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.4,"position":[1080,200]
+    },
+    {
+      "parameters":{"respondWith":"json","responseBody":"={{$json}}","options":{"responseCode":200}},
+      "id":"wf108-missing","name":"Respond Evidence Required","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.4,"position":[820,500]
+    }
+  ],
+  "connections":{
+    "Underwriting Evidence Webhook":{"main":[[{"node":"Orchestrate Underwriting Evidence","type":"main","index":0}]]},
+    "Orchestrate Underwriting Evidence":{"main":[[{"node":"Evidence Complete?","type":"main","index":0}]]},
+    "Evidence Complete?":{"main":[[{"node":"Send Complete Evidence to WF-069","type":"main","index":0}],[{"node":"Respond Evidence Required","type":"main","index":0}]]},
+    "Send Complete Evidence to WF-069":{"main":[[{"node":"Respond Evidence Orchestration","type":"main","index":0}]]}
+  },
+  "active":false,
+  "settings":{"executionOrder":"v1"},
+  "versionId":"wf108-v2"
+}

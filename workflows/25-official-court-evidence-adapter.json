@@ -1,0 +1,82 @@
+{
+  "name": "WholeStack WF-025: Official Court Probate Foreclosure Evidence Adapter",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "parameters": {
+        "path": "wholestack-official-court-evidence-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare Court Source Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b=$input.first().json.body||$input.first().json; const supported=new Set(['probate','pre_foreclosure','distressed']); const criteria=[...new Set((Array.isArray(b.criteria)?b.criteria:[]).map(c=>String(c).toLowerCase()).filter(c=>supported.has(c)))]; const sources=(Array.isArray(b.sources)?b.sources:[]).filter(s=>s&&s.url&&['court_probate','probate_record','estate_record','foreclosure','court_record','land_record'].includes(String(s.type||s.source_type||'').toLowerCase())&&s.commercial_live_query_allowed!==false); return [{json:{request_id:String(b.request_id||('court-'+Date.now())),state:b.state||null,county:b.county||null,city:b.city||null,zip:b.zip||null,parcel_id:b.parcel_id||null,owner_name:b.owner_name||null,property_address:b.property_address||null,limit:Math.min(100,Math.max(1,Number(b.limit||25))),criteria,sources}}];"
+      }
+    },
+    {
+      "id": "split",
+      "name": "Split Court Sources",
+      "type": "n8n-nodes-base.code",
+      "position": [480, 0],
+      "parameters": {"mode":"runOnceForAllItems","jsCode":"const x=$input.first().json; return (x.sources||[]).flatMap(s=>(x.criteria||[]).map(c=>({json:{...x,source:s,criterion:c}})));"}
+    },
+    {
+      "id": "fetch",
+      "name": "Fetch Official Court Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [720, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.source.url }}",
+        "sendHeaders": true,
+        "headerParameters": {"parameters":[{"name":"Accept","value":"application/json,text/html,text/plain,*/*"}]},
+        "options":{"timeout":120000},
+        "response":{"response":{"neverError":true,"responseFormat":"text"}}
+      }
+    },
+    {
+      "id": "normalize",
+      "name": "Normalize Court Evidence",
+      "type": "n8n-nodes-base.code",
+      "position": [960, 0],
+      "parameters": {
+        "mode":"runOnceForAllItems",
+        "jsCode":"const meta=$('Split Court Sources').item.json; const raw=$json; const status=Number(raw.statusCode||200); let body=raw.body??raw.data??raw; if(typeof body!=='string') body=JSON.stringify(body); let parsed=null; try{parsed=JSON.parse(body);}catch(e){} const rows=parsed?(Array.isArray(parsed)?parsed:(parsed.records||parsed.data||parsed.cases||parsed.results||parsed.features||[])):[]; const arr=Array.isArray(rows)?rows:[]; const pick=(a,keys)=>{for(const k of keys){if(a?.[k]!==undefined&&a?.[k]!==null&&String(a[k]).trim()!=='')return a[k];}return null;}; const text=body.toLowerCase(); const genericSignal=meta.criterion==='probate'?/probate|estate|decedent|executor|administrator/.test(text):meta.criterion==='pre_foreclosure'?/foreclos|default|lis pendens|notice of sale|power of sale/.test(text):/probate|estate|decedent|foreclos|default|lis pendens|notice of sale/.test(text); const base=arr.length?arr:[{_source_text:body.slice(0,20000)}]; const records=base.slice(0,meta.limit).map(r=>{const a=r.attributes&&typeof r.attributes==='object'?r.attributes:r; const blob=JSON.stringify(a); const signal=meta.criterion==='probate'?/probate|estate|decedent|executor|administrator/i.test(blob):meta.criterion==='pre_foreclosure'?/foreclos|default|lis pendens|notice of sale|power of sale/i.test(blob):/probate|estate|decedent|foreclos|default|lis pendens|notice of sale/i.test(blob); if(!signal && !genericSignal)return null; const caseNo=pick(a,['case_number','case_no','caseid','case_id','docket','docket_number','record_id','id']); return {source_record_id:String(caseNo||pick(a,['parcel_id','parcelid','pin','pid'])||''),source_url:meta.source.url,source_observed_at:new Date().toISOString(),owner_name:pick(a,['owner_name','owner','party_name','defendant','respondent','decedent_name','estate_name']),property_address:pick(a,['property_address','site_address','situs_address','address','property','situs']),parcel_id:pick(a,['parcel_id','parcelid','pin','pid']),signal:meta.criterion,signal_strength:signal?'probable':'needs_review',structured_facts:{case_number:caseNo,case_type:pick(a,['case_type','type','nature_of_action']),estate_name:pick(a,['estate_name','estate']),decedent_name:pick(a,['decedent_name','decedent']),foreclosure_type:pick(a,['foreclosure_type','sale_type']),default_date:pick(a,['default_date']),sale_date:pick(a,['sale_date','sale_datetime']),public_docket_status:meta.source.type==='court_record'||meta.source.type==='court_probate'?'public_docket_or_index':'source_record',raw:a},raw_attributes:a};}).filter(Boolean); return [{json:{success:status>=200&&status<300,request_id:meta.request_id,criterion:meta.criterion,source:meta.source,records,limitations:status>=400?['Official court source returned HTTP '+status+'.']:[],missing_fields:records.filter(r=>!r.owner_name||(!r.property_address&&!r.parcel_id)).map(r=>r.source_record_id||'unknown'),policy:'Court portal/index results are public-docket evidence only unless the source explicitly identifies the official record. Do not represent portal data as the certified official court record.'}}];"
+      }
+    },
+    {
+      "id": "respond",
+      "name": "Respond Court Evidence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 0],
+      "parameters": {
+        "respondWith":"json",
+        "responseBody":"={{ JSON.stringify({success:true,request_id:$('Prepare Court Source Requests').first().json.request_id,criterion_results:$input.all().map(i=>i.json),policy:'Court evidence remains traceable and labeled public-docket/index evidence when applicable; downstream review is required before outreach.'}) }}",
+        "options":{"responseCode":200}
+      }
+    }
+  ],
+  "connections":{
+    "Webhook":{"main":[[{"node":"Prepare Court Source Requests","type":"main","index":0}]]},
+    "Prepare Court Source Requests":{"main":[[{"node":"Split Court Sources","type":"main","index":0}]]},
+    "Split Court Sources":{"main":[[{"node":"Fetch Official Court Source","type":"main","index":0}]]},
+    "Fetch Official Court Source":{"main":[[{"node":"Normalize Court Evidence","type":"main","index":0}]]},
+    "Normalize Court Evidence":{"main":[[{"node":"Respond Court Evidence","type":"main","index":0}]]}
+  },
+  "settings":{"executionOrder":"v1","callerPolicy":"workflowsFromSameOwner","availableInMCP":false},
+  "active":false
+}

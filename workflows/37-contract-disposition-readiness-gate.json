@@ -1,0 +1,147 @@
+{
+  "name": "WholeStack WF-037: Contract & Disposition Readiness Gate",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-disposition-readiness-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "gate",
+      "name": "Evaluate Contract & Disposition Readiness",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input=$input.first().json.body||$input.first().json; const lifecycle=input.offer_lifecycle||{}; const status=String(input.offer_status||lifecycle.status||input.status||\\\"\\\").toLowerCase(); const executed=status===\\\"executed\\\"||lifecycle.disposition_handoff_ready===true; const identityReady=Boolean(input.candidate_key||input.normalized_identity_key||input.parcel_id||input.propertyId||input.dealId||input.deal_id); const contract=input.contract||{}; const contractReady=Boolean(input.contract_id||contract.contract_id||input.executed_contract_id||contract.executed_contract_id); const strategy=String(input.disposition_strategy||input.exit_strategy||\\\"\\\").trim().toLowerCase(); const allowedStrategies=[\\\"assignment\\\",\\\"double_close\\\",\\\"novation\\\",\\\"wholetail\\\",\\\"rehab\\\",\\\"hold\\\",\\\"other\\\"]; const strategyReady=allowedStrategies.includes(strategy); const price=Number(input.assignment_price??input.assignment_fee??input.disposition_price); const contractPrice=Number(input.contract_price??input.purchase_price??input.agreed_purchase_price); const dates={contract_execution_date:input.contract_execution_date||contract.execution_date||null,closing_date:input.closing_date||contract.closing_date||null,inspection_deadline:input.inspection_deadline||contract.inspection_deadline||null}; const missing=[]; if(!identityReady)missing.push(\\\"property_identity\\\"); if(!executed)missing.push(\\\"executed_offer_or_contract_status\\\"); if(!contractReady)missing.push(\\\"executed_contract_id\\\"); if(!strategyReady)missing.push(\\\"disposition_strategy\\\"); if(!Number.isFinite(contractPrice)||contractPrice<=0)missing.push(\\\"contract_price\\\"); if(strategy===\\\"assignment\\\"&&(!Number.isFinite(price)||price<=0))missing.push(\\\"assignment_price_or_fee\\\"); const ready=executed&&missing.length===0; const requestId=input.disposition_request_id||input.dealId||input.deal_id||input.candidate_key||input.normalized_identity_key||null; const matchRequest=ready?{request_id:requestId,property_identity:{candidate_key:input.candidate_key||null,normalized_identity_key:input.normalized_identity_key||null,parcel_id:input.parcel_id||null,property_id:input.propertyId||null,address:input.property_address||input.address||null},contract:{contract_id:input.contract_id||contract.contract_id||input.executed_contract_id||contract.executed_contract_id,contract_price:contractPrice,execution_date:dates.contract_execution_date,closing_date:dates.closing_date},disposition_strategy:strategy,assignment_price:Number.isFinite(price)&&price>0?price:null,financials:{arv:input.arv??null,repairs:input.repair_estimate??input.repairs??null,estimated_spread:input.estimated_spread??null},buyer_match_status:\\\"ready_for_buyer_matching\\\",missing_fields:[],source_context:{evidence_count:input.evidence_count??null,evidence_source_types:input.evidence_source_types??[],source_url:input.source_url||null}}:null; const crmStage=ready?\\\"disposition_ready\\\":executed?\\\"disposition_review_needed\\\":\\\"offer_executed_required\\\"; return [{json:{...input,disposition_readiness:{ready,executed_status:executed,identity_ready:identityReady,contract_ready:contractReady,strategy_ready:strategyReady,missing_fields:missing,crm_stage:crmStage,next_action:ready?\\\"match_buyers\\\":executed?\\\"complete_contract_and_disposition_data\\\":\\\"complete_offer_execution\\\",buyer_matching_ready:ready},disposition_match_request:matchRequest}}];"
+      }
+    },
+    {
+      "id": "insula-disposition-readiness-activity",
+      "name": "Sync Disposition Readiness to InsulaCRM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        620,
+        180
+      ],
+      "parameters": {
+        "jsCode": "const input=$input.first().json;\ntry{\n const base=$env.INSULA_CRM_BASE_URL, apiKey=$env.INSULA_CRM_API_KEY;\n const leadId=Number(input.insulaLeadId||input.leadId||input.lead_id||input.offer?.lead_id||0);\n const d=input.disposition_readiness||{};\n if(base&&apiKey&&leadId){\n  await this.helpers.httpRequest({\n   method:'POST',url:base+'/api/v1/activities',\n   headers:{'X-API-Key':apiKey,'Content-Type':'application/json',\n    'Idempotency-Key':'acquisition:disposition-readiness:'+leadId+':'+String(input.disposition_request_id||input.dealId||input.candidate_key||'request')+':v1'},\n   body:{lead_id:leadId,type:'stage_change',\n    subject:'Disposition readiness: '+String(d.crm_stage||'disposition_review_needed'),\n    body:'Disposition readiness evaluated. Ready: '+String(d.ready===true)+'. Executed status: '+String(d.executed_status===true)+'. Contract ready: '+String(d.contract_ready===true)+'. Strategy ready: '+String(d.strategy_ready===true)+'. Buyer matching ready: '+String(d.buyer_matching_ready===true)+'. Next action: '+String(d.next_action||'review_required')+'. Missing fields: '+String((d.missing_fields||[]).join(', ')||'none')+'.'},\n   json:true\n  });\n }\n}catch(error){console.log('InsulaCRM disposition readiness activity sync failed:',error.message);}\nreturn [{json:input}];"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "response",
+      "name": "Respond Disposition Readiness",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        620,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "buyerMatch",
+      "name": "Buyer Matching Endpoint",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        920,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-buyer-matching-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Contract & Disposition Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Contract & Disposition Readiness": {
+      "main": [
+        [
+          {
+            "node": "Sync Disposition Readiness to InsulaCRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buyer Matching Endpoint": {
+      "main": [
+        [
+          {
+            "node": "Respond Disposition Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Disposition Readiness to InsulaCRM": {
+      "main": [
+        [
+          {
+            "node": "Buyer Matching Endpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

@@ -1,0 +1,147 @@
+{
+  "name": "WF-092 Communication Case Reconstruction",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-092-communication-case-reconstruction",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf092-webhook",
+      "name": "Communication Case Reconstruction Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const events=Array.isArray(input.events)?input.events:(Array.isArray(input.audit_events)?input.audit_events:[]); const leadId=s(input.lead_id); const propertyId=s(input.property_id); const dealId=s(input.deal_id); const threadId=s(input.thread_id??input.conversation_id); const requestId=s(input.request_id); const dnc=input.dnc===true||input.do_not_contact===true; const normalized=events.map((e,i)=>{const x=e??{}; return{sequence:i+1,event_type:s(x.event_type??x.status??'communication_event').toLowerCase(),direction:s(x.direction??'').toLowerCase(),channel:s(x.channel??'').toLowerCase(),status:s(x.status??'').toLowerCase(),request_id:s(x.request_id),idempotency_key:s(x.idempotency_key),audit_id:s(x.audit_id),thread_id:s(x.thread_id??x.conversation_id),sender:s(x.sender),recipient:s(x.recipient),lead_id:s(x.lead_id)||leadId||null,property_id:s(x.property_id)||propertyId||null,deal_id:s(x.deal_id)||dealId||null,dnc_suppressed:x.dnc_suppressed===true||x.dnc===true,provider_receipt:x.provider_receipt??null,recorded_at:s(x.recorded_at??x.timestamp)};}).filter(e=>e.audit_id||e.request_id||e.recorded_at); const chronological=[...normalized].sort((a,b)=>String(a.recorded_at).localeCompare(String(b.recorded_at))); const latestInbound=[...chronological].reverse().find(e=>e.direction==='inbound')??null; const latestOutbound=[...chronological].reverse().find(e=>e.direction==='outbound')??null; const latest=chronological[chronological.length-1]??null; const unresolved=latestInbound&&(!latestOutbound||String(latestInbound.recorded_at)>String(latestOutbound.recorded_at)); const participants=[...new Set(chronological.flatMap(e=>[e.sender,e.recipient]).filter(Boolean))]; const channels=[...new Set(chronological.map(e=>e.channel).filter(Boolean))]; const threads=[...new Set(chronological.map(e=>e.thread_id).filter(Boolean))]; const statuses=[...new Set(chronological.map(e=>e.status).filter(Boolean))]; const deliveryFailures=chronological.filter(e=>['failed','error','timeout','transport_error'].includes(e.status)); const gaps=[]; if(!threadId&&!threads.length)gaps.push('thread_id_or_event_thread_id'); if(!chronological.length)gaps.push('events'); const resolvedThread=threadId||threads[0]||null; const caseId='communication-case:'+(resolvedThread||requestId||'unidentified')+':v1'; return[{json:{ok:gaps.length===0,case:{case_id:caseId,thread_id:resolvedThread,lead_id:leadId||normalized.find(e=>e.lead_id)?.lead_id||null,property_id:propertyId||normalized.find(e=>e.property_id)?.property_id||null,deal_id:dealId||normalized.find(e=>e.deal_id)?.deal_id||null,dnc_suppressed:dnc||normalized.some(e=>e.dnc_suppressed),participants,channels,event_count:chronological.length,latest_event:latest,latest_inbound:latestInbound,latest_outbound:latestOutbound,outstanding_response:unresolved,delivery_failures:deliveryFailures.length,delivery_status:deliveryFailures.length?'attention_required':latestOutbound?.status||'unknown',timeline:chronological},reconstruction:{source:'supplied_communication_audit_events',crm_read_adapter_required:!chronological.length,provider_receipts_preserved:chronological.some(e=>e.provider_receipt!==null),deterministic:true},missing_requirements:gaps,next_action:gaps.length?'Supply the missing thread or audit events before reconstructing the case.':dnc?'Case reconstructed; outbound response remains suppressed while DNC is active.':unresolved?'Case reconstructed; latest inbound message appears to require a response decision.':deliveryFailures.length?'Case reconstructed; delivery failures require reconciliation review.':'Case reconstructed; no outstanding response is inferred from the supplied events.'}}}];"
+      },
+      "id": "wf092-reconstruct",
+      "name": "Reconstruct Communication Case",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf092-valid",
+      "name": "Case Reconstruction Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf092-response",
+      "name": "Respond Reconstructed Case",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf092-invalid",
+      "name": "Respond Reconstruction Gap",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        450
+      ]
+    }
+  ],
+  "connections": {
+    "Communication Case Reconstruction Webhook": {
+      "main": [
+        [
+          {
+            "node": "Reconstruct Communication Case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconstruct Communication Case": {
+      "main": [
+        [
+          {
+            "node": "Case Reconstruction Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case Reconstruction Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Reconstructed Case",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Reconstruction Gap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-092-v1"
+}

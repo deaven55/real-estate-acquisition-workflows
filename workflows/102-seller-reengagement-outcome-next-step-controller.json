@@ -1,0 +1,132 @@
+{
+  "name": "WF-102 Seller Re-Engagement Outcome & Next-Step Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-102-seller-reengagement-outcome",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf102-webhook",
+      "name": "Seller Re-Engagement Outcome Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??\"\").trim();\nconst status=s(input.status??input.delivery_status??input.provider_receipt?.status).toLowerCase();\nconst event=s(input.event_type??input.outcome??input.provider_receipt?.event_type).toLowerCase();\nconst channel=s(input.channel??input.message?.channel).toLowerCase()||\"sms\";\nconst dnc=input.dnc===true||input.dnc_suppressed===true||event===\"opt_out\"||status===\"dnc\";\nconst sellerReply=s(input.seller_reply??input.inbound_message??input.message_text);\nconst providerMessageId=s(input.provider_message_id??input.provider_receipt?.provider_message_id);\nconst requestId=s(input.request_id??input.message?.request_id);\nconst auditId=s(input.audit_id);\nconst leadId=s(input.lead_id??input.identity?.lead_id), dealId=s(input.deal_id??input.identity?.deal_id), threadId=s(input.thread_id??input.identity?.thread_id);\nconst missing=[]; if(!leadId&&!dealId)missing.push(\"lead_id_or_deal_id\"); if(!threadId)missing.push(\"thread_id\"); if(!requestId)missing.push(\"request_id\");\nlet action=\"monitor\", nextWorkflow=\"wf-099-seller-follow-up-timing-cadence\", dispatchMode=\"internal_follow_up_queue\", reason=\"re-engagement outcome recorded; continue monitoring\", priority=\"normal\";\nif(dnc){action=\"suppress\";nextWorkflow=null;dispatchMode=\"blocked\";reason=\"DNC/opt-out detected; suppress future autonomous outreach\";priority=\"critical\";}\nelse if(sellerReply||event===\"seller_reply\"||event===\"inbound_reply\"){action=\"analyze_seller_reply\";nextWorkflow=\"wf-097-ai-seller-response-intelligence\";dispatchMode=\"internal_ai_analysis\";reason=\"seller replied to re-engagement; return to conversation intelligence before responding\";priority=\"high\";}\nelse if(status===\"failed\"||status===\"error\"||status===\"timeout\"||status===\"transport_error\"){action=\"reconcile_delivery\";nextWorkflow=\"wf-089-communication-reconciliation\";dispatchMode=\"internal_reconciliation\";reason=\"re-engagement delivery failed or timed out\";priority=\"high\";}\nelse if(status===\"sent\"||status===\"delivered\"||event===\"outbound_sent\"||event===\"outbound_delivered\"){action=\"wait_for_response\";nextWorkflow=\"wf-099-seller-follow-up-timing-cadence\";dispatchMode=\"internal_follow_up_queue\";reason=\"re-engagement delivered; do not send another message immediately\";}\nelse {action=\"human_review\";nextWorkflow=\"wf-078-seller-conversation-response-intelligence\";dispatchMode=\"human_review\";reason=\"outcome is not sufficiently classified for autonomous action\";priority=\"normal\";}\nconst actionId=\"seller-reengagement-outcome:\"+((threadId||leadId||dealId||\"unknown\"))+\":\"+(requestId||auditId||\"event\")+\":v1\";\nreturn[{json:{ok:missing.length===0,action:{action_id:actionId,next_action:action,status:status||event||\"unknown\",reason,priority,deterministic:true},identity:{lead_id:leadId||null,deal_id:dealId||null,thread_id:threadId||null},communication:{channel,request_id:requestId||null,provider_message_id:providerMessageId||null,audit_id:auditId||null,seller_reply_present:Boolean(sellerReply),dnc},routing:{next_workflow:nextWorkflow,dispatch_mode:dispatchMode},missing_requirements:missing}}];"
+      },
+      "id": "wf102-analysis",
+      "name": "Classify Re-Engagement Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf102-valid",
+      "name": "Outcome Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [560, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf102-response",
+      "name": "Respond Re-Engagement Outcome",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [820, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf102-invalid",
+      "name": "Respond Invalid Outcome Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [820, 480]
+    }
+  ],
+  "connections": {
+    "Seller Re-Engagement Outcome Webhook": {
+      "main": [
+        [
+          {
+            "node": "Classify Re-Engagement Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Re-Engagement Outcome": {
+      "main": [
+        [
+          {
+            "node": "Outcome Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outcome Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Re-Engagement Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Outcome Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-102-v1"
+}

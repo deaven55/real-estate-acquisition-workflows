@@ -1,0 +1,82 @@
+{
+  "name": "WholeStack WF-034: Acquisition Decision & Offer Readiness Gate",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-acquisition-decision-gate-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "decision",
+      "name": "Calculate Acquisition Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input=$input.first().json.body||$input.first().json;\nconst u=input.underwriting_pipeline||input.underwriting||input;\nconst n=v=>{const x=Number(v);return Number.isFinite(x)?x:null};\nconst arv=n(input.arv??u.arv??u.after_repair_value);\nconst repairs=n(input.repair_estimate??u.repair_estimate??u.repairs);\nconst holding=n(input.holding_costs??u.holding_costs);\nconst closing=n(input.closing_costs??u.closing_costs);\nconst assignment=n(input.assignment_fee??u.assignment_fee);\nconst maoPct=n(input.mao_percentage??u.mao_percentage);\nconst providedMao=n(input.mao??u.mao??u.maximum_allowable_offer);\nconst missing=[];\nfor(const [k,v] of Object.entries({arv,repairs,holding,closing,assignment})){if(v===null)missing.push(k)}\nif(maoPct===null&&providedMao===null)missing.push('mao_percentage_or_mao');\nconst mao=providedMao!==null?providedMao:(arv!==null&&maoPct!==null?arv*maoPct-(repairs||0)-(holding||0)-(closing||0)-(assignment||0):null);\nconst evidenceCount=n(input.evidence_count)??0;\nconst identityReady=Boolean(input.candidate_key||input.normalized_identity_key||input.parcel_id||input.external_id);\nconst underwritingStatus=String(input.underwriting_status||u.status||'review').toLowerCase();\nconst decision=missing.length||!identityReady||evidenceCount<1?'needs_data':(underwritingStatus==='rejected'||underwritingStatus==='declined'?'not_approved':(mao!==null?'offer_ready':'needs_data'));\nconst offerReady=decision==='offer_ready';\nreturn [{json:{...input,acquisition_decision:{decision,offer_ready:offerReady,mao,mao_method:providedMao!==null?'provided':(mao!==null?'arv_x_mao_percentage_minus_costs':'unavailable'),inputs:{arv,repairs,holding,closing,assignment,mao_percentage:maoPct},missing_fields:missing,identity_ready:identityReady,evidence_count:evidenceCount,underwriting_status:underwritingStatus,disposition_readiness:offerReady?'ready_for_offer_review':'not_ready'},crm_stage:offerReady?'offer_ready':(decision==='not_approved'?'underwriting_rejected':'underwriting_review')}}];"
+      }
+    },
+    {
+      "id": "response",
+      "name": "Respond Decision",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        620,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Calculate Acquisition Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Acquisition Decision": {
+      "main": [
+        [
+          {
+            "node": "Respond Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

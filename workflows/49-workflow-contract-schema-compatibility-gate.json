@@ -1,0 +1,42 @@
+{
+  "name": "WF-049 Workflow Contract & Schema Compatibility Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-049-workflow-contract-compatibility", "responseMode": "responseNode", "options": {} },
+      "id": "wf049-webhook",
+      "name": "Workflow Contract Compatibility Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-049-workflow-contract-compatibility"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const records=Array.isArray(input.contracts)?input.contracts:Array.isArray(input.records)?input.records:[]; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const requiredByStage={new:['canonical_identity'],normalized:['canonical_identity','provenance'],qualified:['canonical_identity','evidence_status'],underwriting:['canonical_identity','qualification'],offer_ready:['canonical_identity','underwriting_status','acquisition_decision'],offer_sent:['canonical_identity','offer_id'],seller_countered:['canonical_identity','offer_id'],contracted:['canonical_identity','executed_contract_id'],buyer_matching:['canonical_identity','executed_contract_id','disposition_strategy'],buyer_selected:['canonical_identity','executed_contract_id','selected_buyer'],transaction_pending:['canonical_identity','executed_contract_id','selected_buyer'],closing_pending:['canonical_identity','executed_contract_id','selected_buyer','closing_package'],closed:['canonical_identity','executed_contract_id'],closed_out:['canonical_identity','executed_contract_id','outcome']}; const stageAliases={offer_ready:['offer_ready','approved','offer_preparation'],contracted:['contracted','executed','contract_executed'],buyer_matching:['buyer_matching','buyer_match'],buyer_selected:['buyer_selected','selected'],transaction_pending:['transaction_pending','transaction'],closing_pending:['closing_pending','closing'],closed_out:['closed_out','reconciled','complete']}; const fieldPresent=(r,f)=>{const aliases={canonical_identity:['canonical_identity','normalized_identity_key','candidate_key','property_id','parcel_id'],provenance:['provenance','source_url','source_record_id','evidence_source_types'],evidence_status:['evidence_status','evidence_count','canonical_evidence'],qualification:['qualification','matched_criteria','qualified_candidate_records'],underwriting_status:['underwriting_status','underwriting.status','underwriting_result','underwriting'],acquisition_decision:['acquisition_decision','decision','offer_ready'],offer_id:['offer_id','offerId','offer.identifier'],executed_contract_id:['executed_contract_id','contract_id','contractId'],disposition_strategy:['disposition_strategy','exit_strategy','strategy'],selected_buyer:['selected_buyer','buyer_id','buyerId'],closing_package:['closing_package','closing_package_id'],outcome:['outcome','performance_outcome']}; return (aliases[f]??[f]).some(k=>{let v=r; for(const p of k.split('.'))v=v?.[p]; return v!==undefined&&v!==null&&norm(v)!=='';});}; const violations=[]; const compatibility=[]; const versions=new Map(); records.forEach((r,i)=>{const stage=lower(r.stage??r.pipeline_stage??r.status); const schema=norm(r.schema_version??r.contract_version??r.version)||'unspecified'; const workflow=norm(r.workflow??r.workflow_name); const upstream=norm(r.upstream_workflow??r.source_workflow); const downstream=norm(r.downstream_workflow??r.target_workflow); if(schema!=='unspecified'){if(!versions.has(workflow))versions.set(workflow,new Set());versions.get(workflow).add(schema);} if(!stage){violations.push({record_index:i,type:'missing_stage',severity:'blocking',message:'Pipeline stage is required to select the downstream contract.'});} const required=requiredByStage[stage]??[]; const missing=required.filter(f=>!fieldPresent(r,f)); if(missing.length)violations.push({record_index:i,type:'missing_required_fields',severity:'blocking',stage,missing_fields:missing,message:'Required downstream contract fields are missing for this lifecycle stage.'}); if(stage==='offer_ready'&&!fieldPresent(r,'underwriting_status'))compatibility.push({record_index:i,type:'offer_contract_warning',severity:'warning',message:'Offer-ready records should carry an explicit underwriting outcome before offer preparation.'}); if(stage==='buyer_matching'&&!fieldPresent(r,'disposition_strategy'))compatibility.push({record_index:i,type:'disposition_contract_warning',severity:'warning',message:'Buyer matching requires an explicit exit/disposition strategy.'}); if(stage==='closed_out'&&fieldPresent(r,'outcome')&&!['profit','loss','break_even','unknown',''].includes(lower(r.outcome)))violations.push({record_index:i,type:'unsupported_outcome',severity:'blocking',value:r.outcome,message:'Closeout outcome is not in the supported reporting contract.'}); if(upstream&&downstream&&upstream===downstream)violations.push({record_index:i,type:'self_dependency',severity:'blocking',workflow:upstream,message:'Upstream and downstream workflow cannot be the same contract boundary.'}); if(r.supported_statuses&&Array.isArray(r.statuses)){const supported=new Set(r.supported_statuses.map(lower)); const unsupported=r.statuses.map(lower).filter(s=>s&&!supported.has(s)); if(unsupported.length)violations.push({record_index:i,type:'unsupported_status_values',severity:'blocking',unsupported_statuses:[...new Set(unsupported)],message:'Supplied status values are not supported by the declared contract.'});} }); const versionDrift=[...versions.entries()].filter(([,set])=>set.size>1).map(([workflow,set])=>({workflow,versions:[...set]})); versionDrift.forEach(v=>violations.push({type:'schema_version_drift',severity:'blocking',workflow:v.workflow,versions:v.versions,message:'Multiple schema/contract versions were supplied for the same workflow boundary.'})); const missingContracts=records.filter(r=>!norm(r.workflow??r.workflow_name)||!norm(r.schema_version??r.contract_version??r.version)); const health=violations.some(v=>v.severity==='blocking')?'blocked':compatibility.length?'needs_review':'ready'; const next=health==='ready'?'Proceed with the declared workflow contracts and keep schema versions stable across boundaries.':health==='blocked'?'Resolve blocking contract violations before allowing automated handoff or replay.':'Review compatibility warnings and pin the intended contract version before production execution.'; return[{json:{ok:health==='ready',contract_health:health,record_count:records.length,blocking_violation_count:violations.filter(v=>v.severity==='blocking').length,warning_count:compatibility.length,missing_contract_metadata_count:missingContracts.length,violations,compatibility_warnings:compatibility,dependency_contracts:records.map((r,i)=>({record_index:i,workflow:r.workflow??r.workflow_name??null,upstream_workflow:r.upstream_workflow??r.source_workflow??null,downstream_workflow:r.downstream_workflow??r.target_workflow??null,stage:r.stage??r.pipeline_stage??r.status??null,schema_version:r.schema_version??r.contract_version??r.version??null,required_fields:requiredByStage[lower(r.stage??r.pipeline_stage??r.status)]??[]})),schema_versions:[...versions.entries()].map(([workflow,set])=>({workflow,versions:[...set]})),blocking_contracts:violations.filter(v=>v.severity==='blocking'),next_action:next,policy:{contract_validation_only:true,no_automatic_external_side_effects:true,no_automatic_outreach:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf049-contract",
+      "name": "Validate Workflow Contracts & Schema Compatibility",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf049-response",
+      "name": "Respond Contract Compatibility",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Workflow Contract Compatibility Webhook": { "main": [[{ "node": "Validate Workflow Contracts & Schema Compatibility", "type": "main", "index": 0 }]] },
+    "Validate Workflow Contracts & Schema Compatibility": { "main": [[{ "node": "Respond Contract Compatibility", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf049-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

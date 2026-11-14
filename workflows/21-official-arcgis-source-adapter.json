@@ -1,0 +1,371 @@
+{
+  "name": "WholeStack WF-021: Official ArcGIS Property Source Adapter",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-official-arcgis-source-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare GIS Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=$input.first().json.body||$input.first().json; const sources=Array.isArray(body.official_sources)?body.official_sources:[]; const machine=sources.filter(s=>s&&typeof s.url==='string'&&/(FeatureServer|MapServer)/i.test(s.url)); return [{json:{request_id:String(body.request_id||('gis-'+Date.now())),state:String(body.state||'').toUpperCase(),county:String(body.county||'').trim(),city:String(body.city||'').trim(),zip:String(body.zip||'').trim(),criteria:Array.isArray(body.criteria)?body.criteria:[],limit:Math.min(100,Math.max(1,Number(body.limit||25))),sources:machine.slice(0,10)}}];"
+      }
+    },
+    {
+      "id": "if",
+      "name": "IF ArcGIS Sources",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "leftValue": ""
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has",
+              "leftValue": "={{ $json.sources.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "no",
+      "name": "Respond No GIS Sources",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        220
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success:true,request_id:$json.request_id,records:[],message:'No machine-readable ArcGIS FeatureServer/MapServer sources were discovered.'}) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "split",
+      "name": "Split GIS Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        -80
+      ],
+      "parameters": {
+        "jsCode": "return $json.sources.map((source,index)=>({json:{...$json,source,source_index:index+1}}));"
+      }
+    },
+    {
+      "id": "metadata",
+      "name": "Read ArcGIS Layer Metadata",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        940,
+        -80
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ (() => { const u=String($json.source.url).replace(/\\\\/$/,''); if(/\\\\/(?:FeatureServer|MapServer)\\\\/\\\\d+$/i.test(u)) return u; if(/\\\\/(?:FeatureServer|MapServer)$/i.test(u)) return u+'/0'; return u; })() }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "f",
+              "value": "json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "build",
+      "name": "Build Safe ArcGIS Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const source=$('Split GIS Sources').item.json.source; const base=$('Split GIS Sources').item.json; const meta=$json||{}; const fields=Array.isArray(meta.fields)?meta.fields:[]; const lower=fields.map(f=>String(f.name||'').toLowerCase()); const find=(aliases)=>{for(const a of aliases){const i=lower.indexOf(String(a).toLowerCase());if(i>=0)return fields[i];}return null;}; const esc=v=>String(v).replace(/'/g,\"''\"); const clauses=[]; const applied=[]; const state=find(['SITUSSTATE','SITE_STATE','SSTATE','STATE','STATE_CODE','STATE_NAME','STNAME']); const county=find(['COUNTY','COUNTY_NAME','CNTYNAME','CNTY_NAME','SITUSCOUNTY']); const city=find(['SITUSCITY','SCITY','SITE_CITY','CITY','CITY_NAME','SITUS_CITY']); const zip=find(['SZIP','SITEZIP','SITE_ZIP','ZIP','ZIPCODE','ZIP_CODE']); const add=(f,v,label)=>{if(f&&v){clauses.push(f.name+\" = '\"+esc(v)+\"'\");applied.push(label+':'+f.name);}}; add(state,base.state,'state'); add(county,base.county,'county'); add(city,base.city,'city'); if(zip&&base.zip){const numeric=/int|double|float|decimal|number/i.test(String(zip.type||'')); clauses.push(numeric?(zip.name+\" = \"+(Number(base.zip)||0)):(zip.name+\" = '\"+esc(base.zip)+\"'\")); applied.push('zip:'+zip.name);} const delinquent=find(['DELINQUENT_TAX','DELINQ_TAX','DELINQUENT_AMOUNT','TAX_DELINQUENT','DELINQ_AMT']); if(delinquent&&base.criteria.includes('tax_delinquent')&&/int|double|float|decimal|number/i.test(String(delinquent.type||''))){clauses.push(delinquent.name+\" > 0\");applied.push('tax_delinquent:'+delinquent.name);} const objectId=String(meta.objectIdField||'OBJECTID'); const maxRaw=Number(meta.maxRecordCount||meta.standardMaxRecordCountNoGeometry||1000); const pageSize=Math.max(1,Math.min(base.limit,Number.isFinite(maxRaw)&&maxRaw>0?maxRaw:100)); const supportsPagination=meta.advancedQueryCapabilities?.supportsPagination!==false; const pageCount=supportsPagination?Math.min(10,Math.ceil(base.limit/pageSize)):1; return Array.from({length:pageCount},(_,i)=>({json:{...base,metadata:meta,source,layer_url:meta.url||source.url,where:clauses.length?clauses.join(' AND '):'1=1',query_filters_applied:applied,object_id_field:objectId,page_index:i,result_offset:i*pageSize,result_record_count:Math.min(pageSize,base.limit-i*pageSize),supports_pagination:supportsPagination,pagination_limit_reached:!supportsPagination&&base.limit>pageSize}}));"
+      }
+    },
+    {
+      "id": "query",
+      "name": "Query ArcGIS Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1420,
+        -80
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.layer_url.replace(/\\\\/$/,'') + '/query' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "where",
+              "value": "={{ $json.where }}"
+            },
+            {
+              "name": "outFields",
+              "value": "*"
+            },
+            {
+              "name": "returnGeometry",
+              "value": "false"
+            },
+            {
+              "name": "f",
+              "value": "json"
+            },
+            {
+              "name": "resultRecordCount",
+              "value": "={{ $json.result_record_count }}"
+            },
+            {
+              "name": "resultOffset",
+              "value": "={{ $json.result_offset }}"
+            },
+            {
+              "name": "orderByFields",
+              "value": "={{ $json.object_id_field + ' ASC' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "normalize",
+      "name": "Normalize GIS Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1660,
+        -80
+      ],
+      "parameters": {
+        "jsCode": "const base=$('Build Safe ArcGIS Queries').item.json;\nconst source=base.source;\nconst features=Array.isArray($json.features)?$json.features:[];\nconst pick=(a,keys)=>{for(const k of keys){if(a[k]!==undefined&&a[k]!==null&&String(a[k]).trim()!=='')return a[k];}return null;};\nconst records=features.map((f,i)=>{\n const a=f.attributes||f;\n return {\n  source_url:source.url,source_name:source.name||null,source_type:source.type||'arcgis',\n  source_record_id:String(pick(a,[base.object_id_field,'PARNO','parno','NPARNO','nparno','PARCEL_ID','parcel_id','PIN','pin','OBJECTID','objectid'])||('feature-'+base.result_offset+i)),\n  owner_name:pick(a,['OWNNAME','ownname','OWNER','owner','OWNER_NAME','owner_name']),\n  property_address:pick(a,['SITUSADDR','situsaddr','SITEADDR','siteaddr','SITEADD','siteadd','ADDRESS','address','SITE_ADDRESS','site_address']),\n  mailing_address:pick(a,['MAILADD','mailadd','MAILADDR','mailaddr','MAILING_ADDRESS','mailing_address']),\n  county:pick(a,['COUNTY','county','COUNTY_NAME','county_name','CNTYNAME','cntyname'])||base.county||null,\n  city:pick(a,['SITUSCITY','situscity','SCITY','scity','CITY','city','CITY_NAME','city_name'])||base.city||null,\n  state:pick(a,['SITUSSTATE','situsstate','SSTATE','sstate','STATE','state','STATE_CODE','state_code','STNAME','stname'])||base.state||null,\n  zip:pick(a,['SZIP','szip','ZIP','zip','ZIPCODE','zipcode','ZIP_CODE']),\n  parcel_id:pick(a,['PARNO','parno','NPARNO','nparno','PARCEL_ID','parcel_id','PIN','pin']),\n  assessed_value:pick(a,['PARVAL','parval','ASSESSED','assessed','ASSESSED_VALUE','assessed_value']),\n  land_value:pick(a,['LANDVAL','landval','LAND_VALUE','land_value']),\n  building_value:pick(a,['IMPROVVAL','improvval','BUILDING_VALUE','building_value','IMPROVEMENT_VALUE','improvement_value']),\n  acreage:pick(a,['ACREAGE','acreage','ACRES','acres','GISACRES','gisacres']),\n  property_type:pick(a,['PROP_TYPE','prop_type','PROPERTY_TYPE','property_type','LANDUSE','landuse','PARUSECODE','parusecode','PARUSECD2','parusecd2']),\n  structure_indicator:pick(a,['STRUCT','struct','STRUCTURE_INDICATOR','structure_indicator']),\n  structure_count:pick(a,['STRUCTNO','structno','STRUCTURE_COUNT','structure_count']),\n  year_built:pick(a,['YEAR_BUILT','year_built','STRUCTYEAR','structyear']),\n  building_sqft:pick(a,['BUILDING_SQFT','building_sqft','BLDG_SQFT','bldg_sqft']),\n  sale_date:pick(a,['SALEDATE','saledate','LAST_SALE_DATE','last_sale_date']),\n  sale_price:pick(a,['SALEPRICE','saleprice','LAST_SALE_PRICE','last_sale_price']),\n  legal_description:pick(a,['LEGDECFULL','legdecfull','LEGAL_DESCRIPTION','legal_description']),\n  raw_attributes:a\n };\n});\nreturn [{json:{success:true,request_id:base.request_id,source_url:source.url,records,record_count:records.length,page_index:base.page_index,result_offset:base.result_offset,query_filters_applied:base.query_filters_applied,limitations:base.pagination_limit_reached?['Layer does not advertise pagination support; only the first query page was collected.']:[]}}];"
+      }
+    },
+    {
+      "id": "signals",
+      "name": "Apply Criterion Evidence Signals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items=$input.all();\nconst text=v=>String(v??'').trim();\nconst norm=v=>text(v).toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();\nconst first=(o,keys)=>{for(const k of keys){if(o[k]!==undefined&&o[k]!==null&&text(o[k])!=='')return o[k];}return null;};\nconst truthy=v=>{const s=norm(v);return v!==null&&v!==undefined&&s!==''&&!['0','N','NO','FALSE','NONE','NULL'].includes(s);};\nconst num=v=>{const n=Number(String(v??'').replace(/[$,]/g,''));return Number.isFinite(n)?n:null;};\nconst addressKey=v=>norm(v).replace(/\\b(ROAD|RD|STREET|ST|AVENUE|AVE|DRIVE|DR|LANE|LN|COURT|CT|CIRCLE|CIR|HIGHWAY|HWY|BOULEVARD|BLVD|PARKWAY|PKWY)\\b/g,'').replace(/\\s+/g,'');\nconst output=[];\nfor(const item of items){\n  const r=item.json||{}; const a=r.raw_attributes||{}; const criteria=Array.isArray(r.criteria)?r.criteria:[];\n  const signals={}; const evidence=[]; const missing=[];\n  const structureCount=num(r.structure_count);\n  const structureIndicator=norm(r.structure_indicator);\n  const propertyType=norm(r.property_type);\n  const hasExplicitNoStructure=structureCount===0 || ['N','NO','NONE','0','VACANT'].includes(structureIndicator);\n  const hasVacantUse=/\\bVACANT\\b/.test(propertyType)||/\\bVACANT LAND\\b/.test(propertyType);\n  const site=addressKey(r.property_address); const mail=addressKey(r.mailing_address);\n  const debt=first(a,['OUTSTANDING_DEBT','OUTSTANDING_LOAN','MORTGAGE_BALANCE','DEBT_AMOUNT','LIEN_AMOUNT','DEBT']);\n  const value=num(first(a,['PARVAL','parval','ASSESSED_VALUE','assessed_value','MARKET_VALUE','market_value']));\n  const explicitDebt=num(debt);\n  for(const criterion of criteria){\n    if(criterion==='vacant'){\n      if(hasExplicitNoStructure||hasVacantUse) signals.vacant={status:'supported',confidence:hasVacantUse?'high':'medium',evidence:[hasVacantUse?'explicit vacant land/use description':'explicit no-structure indicator']};\n      else signals.vacant={status:'needs_evidence',confidence:0,evidence:[],missing_fields:['structure_indicator_or_count','explicit_property_use']};\n    }\n    else if(criterion==='vacant_land'){\n      if(/\\bVACANT LAND\\b/.test(propertyType)||(/\\bLAND\\b/.test(propertyType)&&hasExplicitNoStructure)) signals.vacant_land={status:'supported',confidence:0.9,evidence:['explicit land/vacant-land property use','explicit no-structure indicator'].filter(Boolean)};\n      else if(hasExplicitNoStructure&&num(r.acreage)!==null) signals.vacant_land={status:'candidate_signal',confidence:0.6,evidence:['explicit no-structure indicator','explicit acreage'],missing_fields:['explicit_land_use_or_zoning']};\n      else signals.vacant_land={status:'needs_evidence',confidence:0,evidence:[],missing_fields:['explicit_land_use_or_zoning','structure_indicator_or_count']};\n    }\n    else if(criterion==='absentee'){\n      if(site&&mail&&site!==mail) signals.absentee={status:'supported',confidence:0.9,evidence:['site address differs from mailing address']};\n      else signals.absentee={status:'needs_evidence',confidence:0,evidence:[],missing_fields:['site_address','mailing_address']};\n    }\n    else if(criterion==='high_equity'){\n      if(explicitDebt!==null&&value!==null&&value>explicitDebt) signals.high_equity={status:'supported',confidence:0.8,evidence:['explicit property value','explicit outstanding debt'],equity_proxy:value-explicitDebt};\n      else signals.high_equity={status:'needs_evidence',confidence:0,evidence:[],missing_fields:['outstanding_debt'],note:'Property value alone does not establish equity.'};\n    }\n    else if(criterion==='probate'){\n      const k=Object.keys(a).find(k=>/probate|estate|decedent|heir/i.test(k)&&truthy(a[k]));\n      signals.probate=k?{status:'supported',confidence:0.85,evidence:['explicit probate/estate field: '+k]}:{status:'needs_source',confidence:0,evidence:[],missing_source_types:['probate_record','court_record']};\n    }\n    else if(criterion==='pre_foreclosure'){\n      const k=Object.keys(a).find(k=>/foreclosure|lis.?pendens|default|auction/i.test(k)&&truthy(a[k]));\n      signals.pre_foreclosure=k?{status:'supported',confidence:0.85,evidence:['explicit foreclosure/default field: '+k]}:{status:'needs_source',confidence:0,evidence:[],missing_source_types:['foreclosure_record','court_record']};\n    }\n    else if(criterion==='fixer_upper'){\n      const k=Object.keys(a).find(k=>/condition|code.?enforcement|permit|violation|repair|unsafe/i.test(k)&&truthy(a[k]));\n      signals.fixer_upper=k?{status:'supported',confidence:0.8,evidence:['explicit condition/permit/code signal: '+k]}:{status:'needs_source',confidence:0,evidence:[],missing_source_types:['permit_record','code_enforcement'],missing_fields:['condition_signal']};\n    }\n    else if(criterion==='tax_delinquent'){\n      const k=Object.keys(a).find(k=>/delinq|past.?due|tax.?due|tax.?status/i.test(k)&&truthy(a[k]));\n      const amt=num(first(a,['DELINQUENT_TAX','DELINQ_TAX','DELINQUENT_AMOUNT','TAX_DELINQUENT','DELINQ_AMT']));\n      signals.tax_delinquent=(k||amt>0)?{status:'supported',confidence:0.9,evidence:[k?'explicit tax-delinquency field: '+k:'explicit delinquent tax amount'],delinquent_tax_amount:amt}:{status:'needs_source',confidence:0,evidence:[],missing_source_types:['tax_delinquency','tax_record']};\n    }\n    else if(criterion==='distressed'){\n      const keys=Object.keys(a).filter(k=>/delinq|foreclosure|lis.?pendens|code.?enforcement|violation|unsafe|permit|distress|default/i.test(k)&&truthy(a[k]));\n      signals.distressed=keys.length?{status:'supported',confidence:0.8,evidence:keys.slice(0,5).map(k=>'explicit distress field: '+k)}:{status:'needs_source',confidence:0,evidence:[],missing_source_types:['tax_delinquency','foreclosure_record','permit_record','code_enforcement']};\n    }\n    else signals[criterion]={status:'needs_evidence',confidence:0,evidence:[],missing_fields:['criterion_specific_source']};\n  }\n  for(const [criterion,s] of Object.entries(signals)){ if(Array.isArray(s.evidence)) for(const e of s.evidence) evidence.push({criterion,status:s.status,detail:e}); if(Array.isArray(s.missing_fields)) missing.push(...s.missing_fields.map(field=>({criterion,field}))); if(Array.isArray(s.missing_source_types)) missing.push(...s.missing_source_types.map(source_type=>({criterion,source_type}))); }\n  const supported=Object.values(signals).filter(s=>s.status==='supported').length;\n  output.push({json:{...r,criterion_signals:signals,criterion_evidence:evidence,criterion_missing_fields:missing,criterion_match_count:supported,criterion_signal_version:'v1'}});\n}\nreturn output;"
+      }
+    },
+    {
+      "id": "merge",
+      "name": "Merge And Dedupe GIS Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1900,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const all=$input.all(); const meta=all[0]?.json||{}; const raw=all.flatMap(i=>Array.isArray(i.json.records)?i.json.records:[]); const seen=new Set(); const records=[]; for(const r of raw){const key=[r.parcel_id,r.source_record_id,r.property_address,r.owner_name].map(v=>String(v||'').trim().toLowerCase()).join('|'); if(seen.has(key))continue; seen.add(key); records.push(r);} return [{json:{success:true,request_id:meta.request_id,records:records.slice(0,meta.limit||100),record_count:records.length,sources_checked:new Set(all.map(i=>i.json.source_url).filter(Boolean)).size,pages_checked:all.length,query_filters_applied:[...new Set(all.flatMap(i=>i.json.query_filters_applied||[]))],limitations:[...new Set(all.flatMap(i=>i.json.limitations||[]))]}}];"
+      }
+    },
+    {
+      "id": "response",
+      "name": "Respond GIS Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2140,
+        -80
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare GIS Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare GIS Sources": {
+      "main": [
+        [
+          {
+            "node": "IF ArcGIS Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF ArcGIS Sources": {
+      "main": [
+        [
+          {
+            "node": "Split GIS Sources",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No GIS Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split GIS Sources": {
+      "main": [
+        [
+          {
+            "node": "Read ArcGIS Layer Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read ArcGIS Layer Metadata": {
+      "main": [
+        [
+          {
+            "node": "Build Safe ArcGIS Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Safe ArcGIS Queries": {
+      "main": [
+        [
+          {
+            "node": "Query ArcGIS Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query ArcGIS Page": {
+      "main": [
+        [
+          {
+            "node": "Normalize GIS Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize GIS Records": {
+      "main": [
+        [
+          {
+            "node": "Apply Criterion Evidence Signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge And Dedupe GIS Results": {
+      "main": [
+        [
+          {
+            "node": "Respond GIS Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Criterion Evidence Signals": {
+      "main": [
+        [
+          {
+            "node": "Merge And Dedupe GIS Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

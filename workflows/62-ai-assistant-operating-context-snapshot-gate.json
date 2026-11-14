@@ -1,0 +1,84 @@
+{
+  "name": "WF-062 AI Assistant Operating Context Snapshot Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-062-ai-assistant-operating-context",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf062-webhook",
+      "name": "AI Assistant Operating Context Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "wf-062-ai-assistant-operating-context"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const arr=(v)=>Array.isArray(v)?v:[]; const records=arr(input.records); const pipeline=arr(input.pipeline_records); const queue=arr(input.operating_queue); const exceptions=arr(input.exceptions); const approvals=arr(input.approvals??input.approval_requests); const leads=arr(input.leads); const deals=arr(input.deals); const pickIdentity=r=>norm(r.candidate_key??r.normalized_identity_key??r.property_id??r.parcel_id??r.lead_id??r.deal_id); const stage=r=>lower(r.stage??r.pipeline_stage??r.status); const activeStages=new Set(['new','normalized','qualified','underwriting','offer_ready','offer_sent','seller_countered','contracted','buyer_matching','buyer_selected','transaction_pending','closing_pending','reopened']); const urgentStage=new Set(['offer_ready','seller_countered','buyer_selected','closing_pending','reopened']); const urgentQueue=queue.filter(r=>['critical','high'].includes(lower(r.priority??r.severity))); const stale=pipeline.filter(r=>{const d=r.updated_at??r.last_activity_at; if(!d)return false; const t=new Date(d); return Number.isFinite(t.getTime())&&(Date.now()-t.getTime())>48*3600000&&!['closed','closed_out','cancelled','failed'].includes(stage(r));}); const blockers=exceptions.filter(r=>['critical','high','blocking'].includes(lower(r.severity??r.priority??r.status))); const pendingApprovals=approvals.filter(r=>['requested','pending'].includes(lower(r.approval_state??r.status))); const hotDeals=deals.filter(r=>urgentStage.has(stage(r))||['high','critical'].includes(lower(r.priority??r.severity))).sort((a,b)=>Number(b.priority_score??b.score??0)-Number(a.priority_score??a.score??0)).slice(0,10); const followups=leads.filter(r=>{const s=lower(r.next_action??r.follow_up_status??r.status);return /follow.?up|call|contact|reply/.test(s)}).slice(0,25); const identityCoverage=records.length?Math.round(records.filter(r=>pickIdentity(r)).length/records.length*10000)/100:100; const actionQueue=[...urgentQueue.map(r=>({type:'queue',priority:lower(r.priority??r.severity),identity:pickIdentity(r),next_action:norm(r.next_action)})),...pendingApprovals.map(r=>({type:'approval',priority:'high',identity:pickIdentity(r),next_action:'Review human approval request.'})),...blockers.map(r=>({type:'exception',priority:lower(r.severity??'high'),identity:pickIdentity(r),next_action:norm(r.next_action)||'Resolve blocking exception.'})),...stale.slice(0,15).map(r=>({type:'stale_pipeline',priority:'medium',identity:pickIdentity(r),next_action:norm(r.next_action)||'Review stale active record.'}))]; actionQueue.sort((a,b)=>({critical:4,high:3,medium:2,low:1}[b.priority]??0)-({critical:4,high:3,medium:2,low:1}[a.priority]??0)); const health=blockers.some(r=>lower(r.severity)==='critical')?'critical':blockers.length||stale.length||pendingApprovals.length?'needs_attention':'healthy'; return[{json:{ok:true,assistant_context_version:'1',context_health:health,summary:{records:records.length,pipeline_records:pipeline.length,leads:leads.length,deals:deals.length,queue_items:queue.length,exceptions:exceptions.length,pending_approvals:pendingApprovals.length,identity_coverage_pct:identityCoverage,stale_active_records:stale.length},priority_focus:{hot_deals:hotDeals,follow_up_leads:followups,urgent_queue:urgentQueue.slice(0,15),blocking_exceptions:blockers.slice(0,15),pending_approvals:pendingApprovals.slice(0,15)},recommended_operating_queue:actionQueue.slice(0,30),decision_context:{highest_priority_action:actionQueue[0]??null,why_now:actionQueue[0]?'Prioritize the highest-severity approved operating item, then work urgent deal-stage and follow-up items.':'No urgent item was supplied; review the pipeline and queue normally.',data_gaps:records.filter(r=>!pickIdentity(r)).slice(0,10).map((r,i)=>({record_index:i,message:'Canonical identity missing.'}))},policy:{context_snapshot_only:true,no_external_side_effects:true,no_automatic_outreach:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true,no_fabricated_state:true}}}];"
+      },
+      "id": "wf062-context",
+      "name": "Build AI Assistant Operating Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf062-response",
+      "name": "Respond AI Assistant Operating Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        600,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "AI Assistant Operating Context Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build AI Assistant Operating Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Assistant Operating Context": {
+      "main": [
+        [
+          {
+            "node": "Respond AI Assistant Operating Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf062-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

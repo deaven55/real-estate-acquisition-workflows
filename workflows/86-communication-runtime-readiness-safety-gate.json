@@ -1,0 +1,81 @@
+{
+  "name": "WF-086 Communication Runtime Readiness & Safety Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-086-communication-runtime-readiness",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf086-webhook",
+      "name": "Runtime Readiness Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-086-communication-runtime-readiness"
+    },
+    {
+      "parameters": {
+        "jsCode": "const requestedChannel=String(($json.body??$json).channel||'').toLowerCase(); const channels=requestedChannel?[requestedChannel]:['email','sms']; const base=String($env.AGENTICMAIL_API_URL||'').trim(); const key=String($env.AGENTICMAIL_API_KEY||'').trim(); const emailPath=String($env.AGENTICMAIL_EMAIL_SEND_PATH||'/api/agenticmail/mail/send').trim(); const smsPath=String($env.AGENTICMAIL_SMS_SEND_PATH||'').trim(); const checks={runtime_api_url_configured:!!base,runtime_api_key_configured:!!key,email_send_path_configured:!!emailPath,sms_send_path_configured:!!smsPath}; const channelReady={email:checks.runtime_api_url_configured&&checks.runtime_api_key_configured&&checks.email_send_path_configured,sms:checks.runtime_api_url_configured&&checks.runtime_api_key_configured&&checks.sms_send_path_configured}; const unsupported=channels.filter(c=>!['email','sms'].includes(c)); const ready=unsupported.length===0&&channels.every(c=>channelReady[c]); return[{json:{adapter:'wf-086',status:ready?'ready':'blocked',requested_channels:channels,channel_ready:channelReady,checks,unsupported_channels:unsupported,configuration:{email_send_path:emailPath,sms_send_path_configured:!!smsPath,api_url_present:!!base,api_key_present:!!key},safety:{secrets_excluded_from_response:true,dnc_hard_suppression_required:true,autonomous_opt_in_required:true,provider_receipt_required:true},next_action:ready?'Run controlled test traffic before enabling production autonomous sends.':'Configure the missing runtime values before enabling autonomous communication.'}}];"
+      },
+      "id": "wf086-check",
+      "name": "Evaluate Runtime Configuration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf086-response",
+      "name": "Return Readiness Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        600,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Runtime Readiness Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Runtime Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Runtime Configuration": {
+      "main": [
+        [
+          {
+            "node": "Return Readiness Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-086-v1"
+}

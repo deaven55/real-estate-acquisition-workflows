@@ -1,0 +1,84 @@
+{
+  "name": "WF-065 AI Assistant Session Orchestration Gateway",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-065-ai-assistant-orchestration-gateway",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf065-webhook",
+      "name": "AI Assistant Orchestration Gateway Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "wf-065-ai-assistant-orchestration-gateway"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const norm=v=>String(v??'').trim(); const sessionId=norm(input.session_id??input.sessionId??('session-'+Date.now())); const requestId=norm(input.request_id??input.requestId??('req-'+Date.now())); const command=norm(input.command??input.message??input.prompt); const version=norm(input.version??'1'); const idem=norm(input.idempotency_key??('assistant-session:'+sessionId+':'+requestId+':'+version)); const prior=input.session_context??{}; const context=input.operating_context??{}; const approval=input.approval??input.authorization??{}; const toolResult=input.tool_result??input.result??null; const lifecycle=[{stage:'session_context',workflow:'wf-063-ai-assistant-session-context',status:prior&&Object.keys(prior).length?'available':'required'},{stage:'intent_interpretation',workflow:'wf-060-ai-virtual-assistant-command-center',status:command?'ready':'missing_command'},{stage:'operating_context',workflow:'wf-062-ai-assistant-operating-context',status:context&&Object.keys(context).length?'available':'required'},{stage:'dispatch_authorization',workflow:'wf-061-ai-assistant-tool-dispatch',status:'required_before_controlled_action'},{stage:'response_composition',workflow:'wf-064-ai-assistant-response-composer',status:'ready_after_result'}]; const risky=new Set(['send_offer','contact_seller','contact_buyer','prepare_contract','schedule_closing']); const intent=norm(input.intent??toolResult?.interpreted_intent??''); const approvalState=norm(approval.approval_state??approval.status??''); const approvalRequired=risky.has(intent); const dispatchEligible=!approvalRequired||approvalState.toLowerCase()==='approved'; const blockers=[]; if(!command)blockers.push('command_required'); if(approvalRequired&&!dispatchEligible)blockers.push('human_approval_required'); if(input.context_required===true&&!context)blockers.push('operating_context_required'); const status=blockers.length?'blocked':'ready'; return[{json:{ok:status==='ready',assistant:'AI Virtual Wholesaling Assistant',orchestration_version:'1',status,session_id:sessionId,request_id:requestId,idempotency_key:idem,command,intent:intent||null,lifecycle,authorization:{approval_required:approvalRequired,approval_state:approvalState||'not_required',dispatch_eligible:dispatchEligible},handoff:{context_workflow:'wf-062-ai-assistant-operating-context',session_workflow:'wf-063-ai-assistant-session-context',interpretation_workflow:'wf-060-ai-virtual-assistant-command-center',dispatch_workflow:'wf-061-ai-assistant-tool-dispatch',response_workflow:'wf-064-ai-assistant-response-composer'},tool_result_present:Boolean(toolResult),next_action:blockers.length?'Resolve orchestration blockers before dispatch.':'Pass this envelope through the defined assistant lifecycle; use WF-061 for controlled dispatch and WF-064 for final response.',audit:{session_id:sessionId,request_id:requestId,idempotency_key:idem,command_recorded:Boolean(command),lifecycle_recorded:true},policy:{orchestration_only:true,no_external_side_effects:true,read_only_by_default:true,approved_side_effect_only:true,no_automatic_contract_execution:true,no_automatic_closing_execution:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf065-orchestrate",
+      "name": "Normalize Assistant Orchestration Lifecycle",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf065-response",
+      "name": "Respond AI Assistant Orchestration Gateway",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        600,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "AI Assistant Orchestration Gateway Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Assistant Orchestration Lifecycle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Assistant Orchestration Lifecycle": {
+      "main": [
+        [
+          {
+            "node": "Respond AI Assistant Orchestration Gateway",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf065-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

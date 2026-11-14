@@ -1,0 +1,84 @@
+{
+  "name": "WF-073 Property Risk & Feasibility Analysis Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-073-property-risk-feasibility",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf073-webhook",
+      "name": "Property Risk Feasibility Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-073-property-risk-feasibility",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const id=s(input.property_id??input.parcel_id??input.lead_id??input.deal_id); const asset=s(input.asset_type??input.property_type??'residential').toLowerCase(); const checks={access:input.access,road_frontage:input.road_frontage,utilities:input.utilities,septic:input.septic,well:input.well,zoning:input.zoning,flood_risk:input.flood_risk,wetlands:input.wetlands,topography:input.topography,parcel_size:input.parcel_size,buildability:input.buildability}; const missing=[]; if(!id)missing.push('canonical_identity'); const material=['access','utilities','zoning','flood_risk','topography','buildability']; const unknown=material.filter(k=>checks[k]===undefined||checks[k]===null||s(checks[k])===''); const risk=[]; const caution=[]; for(const k of ['flood_risk','wetlands','topography','zoning','access','utilities','septic','well']){const v=s(checks[k]).toLowerCase(); if(['high','severe','restricted','unavailable','unknown','failed'].includes(v))risk.push(k); else if(['medium','moderate','limited','conditional','pending'].includes(v))caution.push(k);} const land=asset.includes('land')||asset.includes('vacant'); const status=missing.length||unknown.length?'needs_data':risk.length?'high_risk_review':caution.length?'feasibility_review':'no_material_risk_flag_from_provided_inputs'; return[{json:{ok:missing.length===0,adapter:'wf-073',canonical_identity:id||null,asset_type:asset,land_specific:land,feasibility_inputs:checks,assessment:{status,material_unknowns:unknown,material_risks:risk,material_cautions:caution},decision:{impact_on_underwriting:risk.length?'increase_required_discount_or_reduce_mao':caution.length?'verify_before_final_offer':'continue_with_standard_underwriting',do_not_claim:['zoning approval','buildability approval','flood determination','utility availability','title clearance']},missing_requirements:[...missing,...unknown.map(k=>k+'_verification')],next_action:missing.length||unknown.length?'Obtain authoritative property-specific evidence before relying on feasibility assumptions.':'Carry verified feasibility findings into MAO and exit-strategy analysis.',provenance:{raw_inputs_preserved:true,no_inference:true},policy:{risk_flags_are_not_determinations:true,authoritative_verification_required:true,70_percent_rule_secondary:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf073-analysis",
+      "name": "Assess Property Risk & Feasibility",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf073-response",
+      "name": "Respond Property Risk Feasibility",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Property Risk Feasibility Webhook": {
+      "main": [
+        [
+          {
+            "node": "Assess Property Risk & Feasibility",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assess Property Risk & Feasibility": {
+      "main": [
+        [
+          {
+            "node": "Respond Property Risk Feasibility",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf073-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

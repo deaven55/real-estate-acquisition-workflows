@@ -1,0 +1,84 @@
+{
+  "name": "WF-080 Offer Negotiation Intelligence Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-080-offer-negotiation-intelligence",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf080-webhook",
+      "name": "Offer Negotiation Intelligence Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-080-offer-negotiation-intelligence",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const num=v=>{const n=Number(v);return Number.isFinite(n)?n:null}; const ask=num(input.seller_ask??input.counteroffer??input.ask_price); const mao=num(input.economic_mao??input.mao); const target=num(input.minimum_desired_profit??input.target_profit); const repairs=num(input.repairs); const closing=num(input.closing_costs); const holding=num(input.holding_costs); const assignment=num(input.assignment_fee??input.expected_assignment_fee); const currentOffer=num(input.current_offer??input.offer_price); const gaps=[]; if(ask===null)gaps.push('seller_ask'); if(mao===null)gaps.push('economic_mao'); const walkAway=mao!==null?mao:null; const spreadToMao=ask!==null&&mao!==null?mao-ask:null; const offerGap=ask!==null&&currentOffer!==null?ask-currentOffer:null; let recommendation='needs_data'; if(ask!==null&&mao!==null){if(ask<=mao)recommendation='seller_ask_within_economic_mao'; else if(ask<=mao*1.05)recommendation='negotiate_toward_mao'; else recommendation='seller_ask_above_economic_mao';} const range=mao!==null?{target:Math.max(0,mao-(target??0)),ceiling:mao}:null; return[{json:{ok:gaps.length===0,adapter:'wf-080',negotiation:{seller_ask:ask,economic_mao:mao,current_offer:currentOffer,target_profit:target,repair_costs:repairs,closing_costs:closing,holding_costs:holding,assignment_fee:assignment,spread_to_mao:spreadToMao,offer_gap:offerGap},decision:{recommendation,negotiation_range:range,walk_away_threshold:walkAway,principle:'negotiate from verified deal economics and required profit, not an arbitrary percentage rule'},missing_requirements:gaps,next_action:gaps.length?'Complete verified economic inputs before setting a negotiation ceiling.':recommendation==='seller_ask_within_economic_mao'?'Review terms and obtain human approval before responding.':recommendation==='negotiate_toward_mao'?'Counter toward the economic MAO and reassess terms before approval.':'Do not exceed the economic MAO without new verified economics or materially improved terms.',policy:{70_percent_rule_secondary:true,deal_viability_primary:true,human_approval_required_for_contact:true,no_automatic_negotiation:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true},provenance:{inputs_preserved:true,derived_thresholds_not_market_facts:true}}}];"
+      },
+      "id": "wf080-analysis",
+      "name": "Calculate Negotiation Range & Walk-Away",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf080-response",
+      "name": "Respond Offer Negotiation Intelligence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Offer Negotiation Intelligence Webhook": {
+      "main": [
+        [
+          {
+            "node": "Calculate Negotiation Range & Walk-Away",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Negotiation Range & Walk-Away": {
+      "main": [
+        [
+          {
+            "node": "Respond Offer Negotiation Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf080-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

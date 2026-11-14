@@ -1,0 +1,105 @@
+{
+  "name": "WF-090 Communication Audit & CRM Activity Persistence",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-090-communication-audit-persistence",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf090-webhook",
+      "name": "Communication Audit Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const channel=s(input.channel??input.communication?.channel).toLowerCase(); const direction=s(input.direction??'outbound').toLowerCase(); const eventType=s(input.event_type??input.status??'communication_attempt').toLowerCase(); const requestId=s(input.request_id??input.execution?.request_id); const idem=s(input.idempotency_key??input.execution?.idempotency_key); const provider=s(input.provider??input.communication?.provider); const recipient=s(input.recipient??input.communication?.recipient); const sender=s(input.sender??input.communication?.account); const leadId=s(input.lead_id??input.crm_lead_id); const propertyId=s(input.property_id??input.crm_property_id); const dealId=s(input.deal_id??input.crm_deal_id); const threadId=s(input.thread_id??input.conversation_id); const dnc=input.dnc===true||input.do_not_contact===true||input.recipient_suppressed===true; const receipt=input.provider_receipt??input.dispatch_result?.provider_receipt??input.retry_provider_receipt??null; const status=s(input.status??input.dispatch_result?.status??'recorded').toLowerCase(); const gaps=[]; if(!requestId)gaps.push('request_id'); if(!idem)gaps.push('idempotency_key'); if(!['sms','email'].includes(channel))gaps.push('supported_channel_sms_or_email'); if(!['inbound','outbound'].includes(direction))gaps.push('direction'); if(!eventType)gaps.push('event_type'); const auditId='communication-audit:'+channel+':'+(requestId||'missing')+':'+eventType+':v1'; return[{json:{ok:gaps.length===0,adapter:'wf-090',audit:{audit_id:auditId,direction,channel,event_type:eventType,status,request_id:requestId,idempotency_key:idem,provider,recipient,sender,thread_id:threadId,lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,dnc_suppressed:dnc,provider_receipt:receipt,recorded_at:new Date().toISOString()},crm:{activity_type:'business_communication',subject:'AI communication '+eventType,body:'Communication audit event recorded by WF-090. Channel='+channel+' Direction='+direction+' Status='+status+' Request='+requestId+' Thread='+threadId,lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,external_id:auditId,external_source:'wholesaling-os-communication'},persistence:{target:'InsulaCRM',endpoint:'/api/v1/activities',method:'POST',idempotency_key:auditId,credentials_from_env:true,raw_provider_secret_in_payload:false},missing_requirements:gaps,next_action:gaps.length===0?'Persist the normalized communication audit as an InsulaCRM activity and retain the provider receipt.':'Do not write an incomplete audit event; resolve the missing required fields first.'}}}];"
+      },
+      "id": "wf090-normalize",
+      "name": "Normalize Communication Audit Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [{"leftValue": "={{$json.ok}}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf090-valid",
+      "name": "Audit Event Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {"parameter": [{"name": "Content-Type", "value": "application/json"},{"name":"X-API-Key","value":"={{$env.INSULA_CRM_API_KEY}}"}]},
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersUi": {"parameter":[]},
+        "jsonBody": "={{JSON.stringify($json.crm)}}",
+        "options": {"response": {"response": {"neverError": true}}}
+      },
+      "id": "wf090-crm",
+      "name": "Persist InsulaCRM Communication Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const audit=$('Normalize Communication Audit Event').first().json; const status=Number($response.statusCode||0); const crmReceipt=$json; const persisted=status>=200&&status<300; return[{json:{...audit,crm_persistence:{status:persisted?'persisted':'failed',http_status:status,receipt:crmReceipt},next_action:persisted?'Communication audit persisted to InsulaCRM; retain this audit ID for reconciliation and case reconstruction.':'InsulaCRM persistence failed. Do not discard the provider receipt; route this event to persistence reconciliation using the same audit ID.'}}}];"
+      },
+      "id": "wf090-result",
+      "name": "Normalize CRM Persistence Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {"responseCode": "={{$json.crm_persistence?.status==='persisted'?200:502}}"}
+      },
+      "id": "wf090-response",
+      "name": "Respond CRM Persistence Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1240, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {"responseCode": 400}
+      },
+      "id": "wf090-invalid",
+      "name": "Respond Invalid Audit Event",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [760, 480]
+    }
+  ],
+  "connections": {
+    "Communication Audit Webhook": {"main": [[{"node":"Normalize Communication Audit Event","type":"main","index":0}]]},
+    "Normalize Communication Audit Event": {"main": [[{"node":"Audit Event Valid?","type":"main","index":0}]]},
+    "Audit Event Valid?": {"main": [[{"node":"Persist InsulaCRM Communication Activity","type":"main","index":0}],[{"node":"Respond Invalid Audit Event","type":"main","index":0}]]},
+    "Persist InsulaCRM Communication Activity": {"main": [[{"node":"Normalize CRM Persistence Receipt","type":"main","index":0}]]},
+    "Normalize CRM Persistence Receipt": {"main": [[{"node":"Respond CRM Persistence Result","type":"main","index":0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder":"v1"},
+  "versionId":"wf-090-v1"
+}

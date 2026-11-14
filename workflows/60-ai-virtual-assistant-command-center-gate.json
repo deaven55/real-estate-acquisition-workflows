@@ -1,0 +1,84 @@
+{
+  "name": "WF-060 AI Virtual Wholesaling Assistant Command Center Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-060-ai-virtual-assistant-command-center",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf060-webhook",
+      "name": "AI Virtual Assistant Command Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "wf-060-ai-virtual-assistant-command-center"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const command=norm(input.command??input.message??input.prompt); const explicitIntent=lower(input.intent); const leadId=norm(input.lead_id??input.leadId); const propertyId=norm(input.property_id??input.propertyId); const dealId=norm(input.deal_id??input.dealId); const supported=['portfolio_snapshot','lead_lookup','lead_followup_queue','deal_lookup','deal_underwrite','buyer_match','pipeline_status','production_health','approval_status','crm_activity','send_offer','contact_seller','contact_buyer','prepare_contract','schedule_closing']; const readOnly=new Set(['portfolio_snapshot','lead_lookup','lead_followup_queue','deal_lookup','deal_underwrite','buyer_match','pipeline_status','production_health','approval_status']); const actionRisk=new Set(['send_offer','contact_seller','contact_buyer','prepare_contract','schedule_closing']); const routeMap={portfolio_snapshot:'wf-045-portfolio-performance',lead_lookup:'insula-crm-lead-lookup',lead_followup_queue:'wf-059-operating-queue',deal_lookup:'wf-051-unified-operational-control-plane',deal_underwrite:'wf-034-acquisition-decision-gate',buyer_match:'wf-038-buyer-matching',pipeline_status:'wf-046-acquisition-pipeline-orchestration',production_health:'wf-047-production-readiness',approval_status:'wf-052-human-approval-authorization',crm_activity:'insula-crm-activities',send_offer:'wf-036-offer-lifecycle',contact_seller:'wf-036-offer-lifecycle',contact_buyer:'wf-039-buyer-disposition-response',prepare_contract:'wf-041-transaction-tracking',schedule_closing:'wf-042-closing-coordination'}; const text=lower(command); let intent=explicitIntent; if(!supported.includes(intent)){ if(/\\b(hottest|best|top|portfolio|pipeline|deals?)\\b/.test(text)&&/\\b(deal|property|lead|portfolio)\\b/.test(text)) intent='portfolio_snapshot'; else if(/\\b(follow.?up|call|contact)\\b/.test(text)&&/\\b(seller|lead|today|due)\\b/.test(text)) intent='lead_followup_queue'; else if(/\\b(underwrite|analy[sz]e|mao|arv|repairs|offer)\\b/.test(text)) intent='deal_underwrite'; else if(/\\b(buyer|buyers|buy box|match)\\b/.test(text)) intent='buyer_match'; else if(/\\b(health|production|exception|sla|broken)\\b/.test(text)) intent='production_health'; else if(/\\b(approval|approve|authorized)\\b/.test(text)) intent='approval_status'; else if(/\\b(crm|lead)\\b/.test(text)&&/\\b(find|show|lookup|search|get)\\b/.test(text)) intent='lead_lookup'; else if(/\\b(send|text|message|contact)\\b/.test(text)&&/\\bseller\\b/.test(text)) intent='contact_seller'; else if(/\\b(send|text|message|contact)\\b/.test(text)&&/\\bbuyer\\b/.test(text)) intent='contact_buyer'; else if(/\\boffer\\b/.test(text)) intent='send_offer'; else if(/\\b(contract|assignment|novation|double close)\\b/.test(text)) intent='prepare_contract'; else if(/\\b(close|closing)\\b/.test(text)) intent='schedule_closing'; else intent='portfolio_snapshot'; } const needsApproval=actionRisk.has(intent); const identifiers={lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null}; const missingContext=[]; if(['lead_lookup','lead_followup_queue'].includes(intent)&&!leadId&&!propertyId&&!dealId&&!/\\b(all|today|queue|follow)\\b/.test(text)) missingContext.push('lead_id, property_id, deal_id, or an explicit queue/search scope'); if(intent==='deal_underwrite'&&!leadId&&!propertyId&&!dealId) missingContext.push('lead_id, property_id, deal_id, or a property identity in the command'); const executionMode=needsApproval?'approval_required':missingContext.length?'needs_context':readOnly.has(intent)?'read_only':'controlled_action'; const confidence=explicitIntent?1:(supported.includes(intent)?0.9:(intent==='portfolio_snapshot'?0.55:0.75)); const requestId=norm(input.request_id??input.requestId??('ai-'+Date.now())); const idempotencyKey=norm(input.idempotency_key??['ai-assistant',intent,leadId||propertyId||dealId||'scope',norm(input.version??'1')].join(':')); const response={ok:missingContext.length===0,assistant:'AI Virtual Wholesaling Assistant',command,interpreted_intent:intent,intent_confidence:confidence,execution_mode:executionMode,approval_required:needsApproval,request_id:requestId,idempotency_key:idempotencyKey,route:{workflow:routeMap[intent]||null,dispatch_workflow:'wf-061-ai-assistant-tool-dispatch',dispatch_ready:missingContext.length===0&&!needsApproval,dispatch_contract:'workflow_name + canonical identity + request_id + idempotency_key'},identifiers,missing_context:missingContext,next_action:needsApproval?'Create/locate a human approval record in WF-052 before any external seller/buyer/legal/closing side effect.':missingContext.length?'Collect the missing identity or scope before dispatch.':readOnly.has(intent)?'Dispatch the read-only request and return the normalized operating result.':'Dispatch only through the controlled workflow and persist the execution receipt.',policy:{natural_language_command_layer:true,read_only_by_default:true,no_automatic_external_side_effects_without_human_approval:true,no_automatic_contract_execution:true,no_automatic_closing_execution:true,no_legal_validation:true,no_funding_verification_claim:true,deterministic_routing:true,audit_request_and_result:true}}; return[{json:response}];"
+      },
+      "id": "wf060-command",
+      "name": "Interpret Assistant Command & Route Safely",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf060-response",
+      "name": "Respond AI Virtual Assistant Command",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        600,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "AI Virtual Assistant Command Webhook": {
+      "main": [
+        [
+          {
+            "node": "Interpret Assistant Command & Route Safely",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpret Assistant Command & Route Safely": {
+      "main": [
+        [
+          {
+            "node": "Respond AI Virtual Assistant Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf060-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

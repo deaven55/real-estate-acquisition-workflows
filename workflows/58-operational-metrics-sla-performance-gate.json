@@ -1,0 +1,42 @@
+{
+  "name": "WF-058 Operational Metrics & SLA Performance Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-058-operational-metrics-sla", "responseMode": "responseNode", "options": {} },
+      "id": "wf058-webhook",
+      "name": "Operational Metrics Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-058-operational-metrics-sla"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const records=Array.isArray(input.records)?input.records:Array.isArray(input.pipeline_records)?input.pipeline_records:[]; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const num=v=>{const n=Number(v);return Number.isFinite(n)?n:null}; const defaultSla={new:24,normalized:24,qualified:48,underwriting:48,offer_ready:24,offer_sent:24,seller_countered:24,contracted:24,buyer_matching:24,buyer_selected:24,transaction_pending:48,closing_pending:72,closed:24,closed_out:48,reopened:24,failed:24,cancelled:24}; const sla={...defaultSla,...(input.sla_hours||{})}; const metrics={stage_counts:{},active_count:0,terminal_count:0,sla_breach_count:0,missing_timestamp_count:0,missing_next_action_count:0,identity_gap_count:0}; const breaches=[]; const quality=[]; records.forEach((r,i)=>{const stage=lower(r.stage??r.status??''); const updated=r.updated_at??r.last_updated_at??r.modified_at; const t=Date.parse(updated); const age=t&&!Number.isNaN(t)?(Date.now()-t)/3600000:null; const limit=num(sla[stage]); metrics.stage_counts[stage||'unknown']=(metrics.stage_counts[stage||'unknown']||0)+1; const terminal=['closed','closed_out','cancelled','failed'].includes(stage); if(terminal)metrics.terminal_count++;else metrics.active_count++; if(!updated||Number.isNaN(t)){metrics.missing_timestamp_count++;quality.push({record_index:i,type:'missing_updated_at',severity:'review'});} if(!norm(r.next_action)&&!terminal){metrics.missing_next_action_count++;quality.push({record_index:i,type:'missing_next_action',severity:'review'});} if(!norm(r.normalized_identity_key??r.candidate_key??r.parcel_id??r.property_id??r.address)){metrics.identity_gap_count++;quality.push({record_index:i,type:'missing_canonical_identity',severity:'blocking'});} if(limit!==null&&age!==null&&!terminal&&age>limit){metrics.sla_breach_count++;breaches.push({record_index:i,stage,age_hours:Math.round(age*100)/100,sla_hours:limit,overdue_hours:Math.round((age-limit)*100)/100,priority:age>limit*2?'critical':'high',recommended_action:norm(r.next_action)||'Escalate and assign next action.'});}}); const blocking=quality.filter(x=>x.severity==='blocking').length; const health=blocking?'blocked':breaches.length||quality.length?'needs_review':records.length?'ready':'needs_review'; const topStages=Object.entries(metrics.stage_counts).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([stage,count])=>({stage,count})); return[{json:{ok:health==='ready',operational_metrics_health:health,record_count:records.length,metrics,sla_hours:sla,sla_breaches:breaches,quality_issues:quality,bottleneck_stages:topStages,performance_summary:{active_records:metrics.active_count,terminal_records:metrics.terminal_count,sla_breaches:metrics.sla_breach_count,identity_gaps:metrics.identity_gap_count,missing_next_actions:metrics.missing_next_action_count},next_action:health==='ready'?'Use the SLA metrics for operating review and queue prioritization.':health==='blocked'?'Repair blocking identity/data-quality issues before relying on the operational metrics.':'Prioritize SLA breaches and missing operational context, then re-measure the pipeline.',policy:{metrics_only:true,no_external_side_effects:true,no_automatic_escalation:true,no_automatic_retry:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf058-metrics",
+      "name": "Calculate Operational Metrics & SLA Performance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf058-response",
+      "name": "Respond Operational Metrics",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Operational Metrics Webhook": { "main": [[{ "node": "Calculate Operational Metrics & SLA Performance", "type": "main", "index": 0 }]] },
+    "Calculate Operational Metrics & SLA Performance": { "main": [[{ "node": "Respond Operational Metrics", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf058-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

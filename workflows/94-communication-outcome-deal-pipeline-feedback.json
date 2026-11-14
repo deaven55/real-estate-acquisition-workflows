@@ -1,0 +1,222 @@
+{
+  "name": "WF-094 Communication Outcome to Deal Pipeline Feedback",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-094-communication-outcome-pipeline-feedback",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf094-webhook",
+      "name": "Communication Outcome Feedback Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const c=input.case??input; const outcome=input.outcome??input.communication_outcome??{}; const event=s(outcome.event_type??outcome.status??c.latest_event?.event_type??'').toLowerCase(); const direction=s(outcome.direction??c.latest_event?.direction??'').toLowerCase(); const status=s(outcome.status??c.latest_event?.status??'').toLowerCase(); const leadId=s(c.lead_id??input.lead_id); const propertyId=s(c.property_id??input.property_id); const dealId=s(c.deal_id??input.deal_id); const threadId=s(c.thread_id??input.thread_id); const dnc=c.dnc_suppressed===true||input.dnc===true; const requestId=s(outcome.request_id??c.latest_event?.request_id??input.request_id); const auditId=s(outcome.audit_id??c.latest_event?.audit_id); const signals=[]; if(dnc)signals.push({type:'dnc',severity:'critical',action:'suppress_outbound'}); if(direction==='inbound'||event.includes('reply'))signals.push({type:'seller_response',severity:'high',action:'update_follow_up_state'}); if(['delivered','sent'].includes(status))signals.push({type:'outbound_success',severity:'normal',action:'record_contact_attempt'}); if(['failed','error','timeout','transport_error'].includes(status))signals.push({type:'delivery_failure',severity:'high',action:'reconcile_delivery'}); if(event.includes('stop'))signals.push({type:'opt_out',severity:'critical',action:'suppress_outbound'}); const primary=signals.find(x=>x.severity==='critical')??signals.find(x=>x.severity==='high')??signals[0]??{type:'unclassified',severity:'normal',action:'record_event_only'}; const gaps=[]; if(!leadId&&!dealId)gaps.push('lead_id_or_deal_id'); if(!threadId)gaps.push('thread_id'); if(!requestId&&!auditId)gaps.push('request_id_or_audit_id'); const followUpRouting=primary.type==='seller_response'?{workflow:'wf-095-seller-response-follow-up-queue',dispatch_mode:'internal_follow_up_queue'}:primary.type==='delivery_failure'?{workflow:'wf-089-communication-delivery-reconciliation-safe-retry-gate',dispatch_mode:'delivery_reconciliation'}:null; const activity={activity_type:'business_communication_outcome',subject:'Communication outcome '+(event||status||'recorded'),body:'Communication outcome fed back from the communication case layer. Primary action='+primary.action+' Thread='+threadId+' Request='+requestId+' Audit='+auditId,lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,external_id:auditId||('communication-feedback:'+threadId+':'+(requestId||event||status)),external_source:'wholesaling-os-communication'}; return[{json:{ok:gaps.length===0,feedback:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,thread_id:threadId||null,request_id:requestId||null,audit_id:auditId||null,event_type:event||null,direction:direction||null,status:status||null,dnc_suppressed:dnc,signals,primary_signal:primary,deterministic:true},crm:{activity,persistence:{target:'InsulaCRM',endpoint:'/api/v1/activities',method:'POST',credentials_from_env:true,idempotency_key:activity.external_id}},follow_up:followUpRouting,pipeline:{action:primary.action,communication_state:dnc?'suppressed':primary.type==='seller_response'?'seller_replied':primary.type==='delivery_failure'?'delivery_attention':primary.type==='outbound_success'?'contacted':'recorded',follow_up_required:primary.type==='seller_response'||primary.type==='delivery_failure',autonomous_outbound_allowed:!dnc&&primary.type!=='delivery_failure'},missing_requirements:gaps,next_action:gaps.length?'Resolve the missing case identity before changing seller/deal state.':dnc?'Keep the seller/deal communication state suppressed and retain the DNC audit trail.':primary.action==='update_follow_up_state'?'Update seller follow-up intelligence with the inbound response before generating any outbound reply.':primary.action==='reconcile_delivery'?'Route the failed delivery to WF-089; do not create a second communication attempt from this feedback event.':'Persist the communication outcome and update the linked acquisition pipeline state.'}}}];"
+      },
+      "id": "wf094-normalize",
+      "name": "Normalize Communication Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf094-valid",
+      "name": "Feedback Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersUi": {
+          "parameter": []
+        },
+        "jsonBody": "={{JSON.stringify($json.crm.activity)}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf094-crm",
+      "name": "Persist Communication Outcome Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base=$('Normalize Communication Outcome').first().json; const status=Number($response.statusCode||0); const persisted=status>=200&&status<300; return[{json:{...base,crm_persistence:{status:persisted?'persisted':'failed',http_status:status,receipt:$json},next_action:persisted?base.next_action:'CRM outcome persistence failed; retain the deterministic feedback identity for reconciliation and do not lose the communication outcome.'}}}];"
+      },
+      "id": "wf094-result",
+      "name": "Normalize Feedback CRM Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": "={{$json.crm_persistence?.status==='persisted'?200:502}}"
+        }
+      },
+      "id": "wf094-response",
+      "name": "Respond Feedback Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf094-invalid",
+      "name": "Respond Invalid Feedback",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Communication Outcome Feedback Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Communication Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Communication Outcome": {
+      "main": [
+        [
+          {
+            "node": "Feedback Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feedback Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Persist Communication Outcome Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Communication Outcome Activity": {
+      "main": [
+        [
+          {
+            "node": "Normalize Feedback CRM Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Feedback CRM Receipt": {
+      "main": [
+        [
+          {
+            "node": "Respond Feedback Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-094-v1"
+}

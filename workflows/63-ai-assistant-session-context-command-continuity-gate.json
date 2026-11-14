@@ -1,0 +1,84 @@
+{
+  "name": "WF-063 AI Assistant Session Context & Command Continuity Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-063-ai-assistant-session-context",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf063-webhook",
+      "name": "AI Assistant Session Context Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "wf-063-ai-assistant-session-context"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const arr=v=>Array.isArray(v)?v:[]; const sessionId=norm(input.session_id??input.sessionId??('session-'+norm(input.request_id??input.requestId??Date.now()))); const requestId=norm(input.request_id??input.requestId??('req-'+Date.now())); const prior=Array.isArray(input.history)?input.history.slice(-20):[]; const context=input.operating_context&&typeof input.operating_context==='object'?input.operating_context:{}; const last=prior.length?prior[prior.length-1]:null; const remembered={lead_id:norm(input.lead_id??input.leadId??context.lead_id??last?.lead_id)||null,property_id:norm(input.property_id??input.propertyId??context.property_id??last?.property_id)||null,deal_id:norm(input.deal_id??input.dealId??context.deal_id??last?.deal_id)||null,buyer_id:norm(input.buyer_id??input.buyerId??context.buyer_id??last?.buyer_id)||null,session_goal:norm(input.session_goal??context.session_goal??last?.session_goal)||null}; const command=norm(input.command??input.message??input.prompt); const lowerCommand=lower(command); const referencesPrior=/\\\\b(this|that|it|same deal|same property|same seller|that lead|continue|again|follow up)\\\\b/.test(lowerCommand); const unresolved=arr(context.recommended_operating_queue).slice(0,10); const activeFocus=remembered.deal_id||remembered.property_id||remembered.lead_id?remembered:{...remembered}; const continuity={session_id:sessionId,request_id:requestId,prior_turn_count:prior.length,reference_to_prior_context:referencesPrior,active_focus:activeFocus,unresolved_actions:unresolved,next_turn_context:{carry_forward_identity:true,carry_forward_approval_state:true,carry_forward_operating_context:true,require_explicit_identity_change:true}}; const response={ok:true,assistant:\"AI Virtual Wholesaling Assistant\",session_context_version:\"1\",continuity,command,interpretation:{has_command:Boolean(command),requires_context_resolution:referencesPrior&&!activeFocus.lead_id&&!activeFocus.property_id&&!activeFocus.deal_id,context_resolution:referencesPrior&&activeFocus.lead_id||activeFocus.property_id||activeFocus.deal_id?\"Use the active session identity for the referenced record.\":referencesPrior?\"Referenced prior record is not present in session context; resolve identity before taking action.\":\"Use explicit identifiers from this command when supplied.\"},execution_boundary:{read_only_by_default:true,side_effects_require_human_approval:true,dispatch_workflow:\"wf-061-ai-assistant-tool-dispatch\",context_workflow:\"wf-062-ai-assistant-operating-context\",audit_required:true},audit:{request_id:requestId,session_id:sessionId,prior_turn_count:prior.length,command_recorded:Boolean(command)},next_action:referencesPrior&&!activeFocus.lead_id&&!activeFocus.property_id&&!activeFocus.deal_id?\"Resolve the referenced lead/property/deal before dispatch.\":\"Pass the normalized session context to WF-060, then WF-061 for routing/authorization.\"}; return[{json:response}];"
+      },
+      "id": "wf063-session",
+      "name": "Normalize AI Assistant Session Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf063-response",
+      "name": "Respond AI Assistant Session Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        600,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "AI Assistant Session Context Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize AI Assistant Session Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize AI Assistant Session Context": {
+      "main": [
+        [
+          {
+            "node": "Respond AI Assistant Session Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf063-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

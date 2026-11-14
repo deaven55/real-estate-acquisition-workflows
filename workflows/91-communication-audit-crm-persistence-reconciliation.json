@@ -1,0 +1,313 @@
+{
+  "name": "WF-091 Communication Audit CRM Persistence Reconciliation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-091-communication-audit-reconciliation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf091-webhook",
+      "name": "Communication CRM Reconciliation Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const audit=input.audit??input; const auditId=s(audit.audit_id); const idem=s(audit.idempotency_key??auditId); const channel=s(audit.channel).toLowerCase(); const requestId=s(audit.request_id); const recipient=s(audit.recipient); const leadId=s(audit.lead_id); const propertyId=s(audit.property_id); const dealId=s(audit.deal_id); const retryRaw=Number(input.crm_retry_count??input.retry_count??0); const retryCount=Number.isFinite(retryRaw)&&retryRaw>=0?Math.floor(retryRaw):0; const maxRaw=Number($env.COMMUNICATION_CRM_MAX_RETRIES??2); const maxRetries=Number.isFinite(maxRaw)&&maxRaw>=0?Math.floor(maxRaw):2; const dnc=input.dnc===true||audit.dnc_suppressed===true||input.do_not_contact===true; const gaps=[]; if(!auditId)gaps.push('audit_id'); if(!idem)gaps.push('idempotency_key'); if(!requestId)gaps.push('request_id'); if(!['sms','email'].includes(channel))gaps.push('supported_channel_sms_or_email'); if(!recipient)gaps.push('recipient'); const canRetry=gaps.length===0&&!dnc&&retryCount<maxRetries; return[{json:{ok:gaps.length===0,reconciliation:{audit_id:auditId,idempotency_key:idem,request_id:requestId,channel,recipient,lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,dnc_suppressed:dnc,retry_count:retryCount,max_retries:maxRetries,can_retry:canRetry},crm:{activity_type:'business_communication',subject:'AI communication reconciliation',body:'Reconciliation retry for communication audit '+auditId+' using the original audit identity and idempotency key.',lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,external_id:auditId,external_source:'wholesaling-os-communication'},persistence:{target:'InsulaCRM',endpoint:'/api/v1/activities',method:'POST',idempotency_key:auditId,credentials_from_env:true,provider_resend:false},missing_requirements:gaps,next_action:gaps.length?'Resolve missing reconciliation fields.':dnc?'Do not retry CRM persistence because DNC suppression is active.':canRetry?'Retry the InsulaCRM activity write with the same external identity; do not resend the provider communication.':'Stop automatic CRM retries and route the persistence exception for manual reconciliation.'}}}];"
+      },
+      "id": "wf091-normalize",
+      "name": "Normalize CRM Reconciliation Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf091-valid",
+      "name": "Reconciliation Request Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.reconciliation.can_retry}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf091-retryable",
+      "name": "CRM Retry Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersUi": {
+          "parameter": []
+        },
+        "jsonBody": "={{JSON.stringify($json.crm)}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf091-crm",
+      "name": "Retry InsulaCRM Activity Persistence",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base=$('Normalize CRM Reconciliation Request').first().json; const status=Number($response.statusCode||0); const receipt=$json; const persisted=status>=200&&status<300; const nextRetry=base.reconciliation.retry_count+1; return[{json:{...base,crm_persistence:{status:persisted?'persisted':'failed',http_status:status,retry_count:nextRetry,receipt},next_action:persisted?'CRM communication audit reconciliation succeeded; no provider resend occurred.':nextRetry<base.reconciliation.max_retries?'CRM persistence remains failed; retain the same audit ID and retry count for the next reconciliation pass.':'CRM persistence retry limit reached; route the audit to manual reconciliation without resending the communication.'}}}];"
+      },
+      "id": "wf091-result",
+      "name": "Normalize Reconciliation Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": "={{$json.crm_persistence?.status==='persisted'?200:502}}"
+        }
+      },
+      "id": "wf091-response",
+      "name": "Respond Reconciliation Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1440,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base=$json; const reason=base.reconciliation?.dnc_suppressed?'dnc_suppressed':(base.reconciliation?.retry_count>=base.reconciliation?.max_retries?'retry_limit_reached':'reconciliation_not_allowed'); return[{json:{...base,crm_persistence:{status:'not_retried',reason},next_action:reason==='dnc_suppressed'?'No CRM retry and no provider resend.':reason==='retry_limit_reached'?'Route to manual CRM persistence reconciliation; do not resend the communication.':'Do not retry until the reconciliation request is complete and eligible.'}}}];"
+      },
+      "id": "wf091-no-retry",
+      "name": "Route Non-Retryable Reconciliation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": "={{$json.reconciliation?.dnc_suppressed?204:409}}"
+        }
+      },
+      "id": "wf091-noretry-response",
+      "name": "Respond Non-Retryable Reconciliation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1200,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf091-invalid",
+      "name": "Respond Invalid Reconciliation Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        720,
+        650
+      ]
+    }
+  ],
+  "connections": {
+    "Communication CRM Reconciliation Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize CRM Reconciliation Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize CRM Reconciliation Request": {
+      "main": [
+        [
+          {
+            "node": "Reconciliation Request Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconciliation Request Valid?": {
+      "main": [
+        [
+          {
+            "node": "CRM Retry Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Reconciliation Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM Retry Allowed?": {
+      "main": [
+        [
+          {
+            "node": "Retry InsulaCRM Activity Persistence",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route Non-Retryable Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry InsulaCRM Activity Persistence": {
+      "main": [
+        [
+          {
+            "node": "Normalize Reconciliation Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Reconciliation Receipt": {
+      "main": [
+        [
+          {
+            "node": "Respond Reconciliation Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Non-Retryable Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "Respond Non-Retryable Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-091-v1"
+}

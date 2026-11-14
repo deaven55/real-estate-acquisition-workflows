@@ -1,0 +1,84 @@
+{
+  "name": "WF-074 Buyer Demand & Exit Strategy Analysis Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-074-buyer-demand-exit-strategy",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf074-webhook",
+      "name": "Buyer Demand Exit Strategy Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-074-buyer-demand-exit-strategy",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const id=s(input.property_id??input.parcel_id??input.deal_id??input.lead_id); const asset=s(input.asset_type??input.property_type??'residential').toLowerCase(); const buyers=Array.isArray(input.buyers)?input.buyers:[]; const buyerSignals={buyer_count:buyers.length,qualified_buyer_count:buyers.filter(b=>b&&((b.qualified===true)||s(b.status).toLowerCase()==='qualified')).length,matching_buyers:buyers.filter(b=>b&&b.match_score!==undefined).map(b=>({buyer_id:b.buyer_id??b.id??null,match_score:b.match_score,proof_of_funds:b.proof_of_funds??null,criteria:b.criteria??null}))}; const demand=s(input.buyer_demand??input.market_demand).toLowerCase(); const exit=s(input.exit_strategy).toLowerCase(); const spread=Number(input.assignment_spread??input.expected_assignment_fee??NaN); const risks=[]; const gaps=[]; if(!id)gaps.push('canonical_identity'); if(!buyers.length&&!demand)gaps.push('buyer_demand_evidence'); if(!exit)gaps.push('exit_strategy'); if(Number.isFinite(spread)&&spread<0)risks.push('negative_expected_spread'); if(['weak','low','limited'].includes(demand))risks.push('weak_buyer_demand'); const status=risks.includes('negative_expected_spread')?'not_viable':gaps.length?'needs_data':risks.length?'high_exit_risk':'exit_review'; const next=status==='not_viable'?'Rework acquisition price or exit assumptions before proceeding.':gaps.length?'Obtain buyer-demand, buyer-fit, and exit evidence before finalizing disposition strategy.':'Validate buyer fit, pricing, proof-of-funds/ability-to-close, and expected spread before selecting an exit strategy.'; return[{json:{ok:!risks.includes('negative_expected_spread'),adapter:'wf-074',canonical_identity:id||null,asset_type:asset,analysis:{status,buyer_demand:demand||null,buyer_signals:buyerSignals,expected_assignment_spread:Number.isFinite(spread)?spread:null,exit_strategy:exit||null,risk_flags:risks,missing_requirements:gaps},decision:{primary_question:'Can this deal be realistically exited at a price that preserves the required margin?',recommended_action:next,70_percent_rule_secondary:true,deal_viability_primary:true},provenance:{raw_inputs_preserved:true,no_buyer_demand_inference:true},policy:{buyer_demand_is_evidence_based:true,no_guaranteed_buyer_claim:true,no_funding_verification_claim:true,no_legal_validation:true,no_title_clearance_claim:true,no_automatic_outreach:true}}}];"
+      },
+      "id": "wf074-analysis",
+      "name": "Analyze Buyer Demand & Exit Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf074-response",
+      "name": "Respond Buyer Demand Exit Strategy",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Buyer Demand Exit Strategy Webhook": {
+      "main": [
+        [
+          {
+            "node": "Analyze Buyer Demand & Exit Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Buyer Demand & Exit Strategy": {
+      "main": [
+        [
+          {
+            "node": "Respond Buyer Demand Exit Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf074-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

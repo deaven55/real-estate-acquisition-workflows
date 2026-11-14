@@ -1,0 +1,84 @@
+{
+  "name": "WF-084 AI Conversation Reply Decision & Autonomous Response Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-084-ai-conversation-reply-decision",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf084-webhook",
+      "name": "AI Conversation Reply Decision Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-084-ai-conversation-reply-decision",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const channel=s(input.channel).toLowerCase(); const inbound=s(input.inbound_message??input.message); const context=input.crm_context??{}; const intelligence=input.conversation_intelligence??{}; const dnc=input.do_not_contact===true||input.dnc===true; const autoEnabled=input.autonomous_communication_enabled===true||input.auto_send_enabled===true; const riskSignals=Array.isArray(intelligence.risk_signals)?intelligence.risk_signals:[]; const explicitStop=['stop','unsubscribe','do not text','do not contact','remove me']; const low=inbound.toLowerCase(); const stopSignal=explicitStop.some(x=>low.includes(x)); let mode='needs_review'; let nextAction='Review conversation and determine an appropriate response.'; if(dnc||stopSignal){mode='suppress';nextAction='Do not send a reply; enforce DNC/suppression and record the request.';} else if(riskSignals.length){mode='human_escalation';nextAction='Escalate to human review before replying because the conversation contains risk signals.';} else if(!inbound){mode='needs_context';nextAction='Missing inbound message.';} else if(!autoEnabled){mode='human_approval';nextAction='Prepare a response for approval before external communication.';} else if(!['sms','email'].includes(channel)){mode='needs_context';nextAction='Unsupported outbound channel.';} else {mode='autonomous_candidate';nextAction='Generate a context-grounded response, validate DNC and thread identity, then route through WF-082 for autonomous dispatch and require provider receipt.';} return[{json:{ok:mode!=='needs_context'||!!inbound,adapter:'wf-084',decision:{response_mode:mode,autonomous_candidate:mode==='autonomous_candidate',dnc_suppressed:dnc||stopSignal,risk_signals:riskSignals},conversation:{channel,inbound_message_preserved:!!inbound,thread_id:s(input.thread_id??input.conversation_id),crm_context_present:Object.keys(context).length>0,intelligence_present:Object.keys(intelligence).length>0},response_contract:{generation_allowed:!['suppress','human_escalation','needs_context'].includes(mode),must_use_conversation_context:true,must_not_invent_property_or_deal_facts:true,signature_identity:s(input.business_email??'dravendealsnc@gmail.com')},dispatch:{workflow:mode==='autonomous_candidate'?'wf-082-autonomous-communication-dispatch':mode==='human_approval'?'wf-061-ai-assistant-tool-dispatch':null,receipt_required:true,idempotency_key:'ai-reply:'+s(input.thread_id??input.conversation_id??input.request_id)+':v1'},next_action:nextAction,policy:{autonomous_email_and_sms_allowed_only_when_explicitly_enabled:true,dnc_hard_suppression:true,risk_escalation_required:true,thread_continuity_required:true,provider_receipt_required:true,no_legal_advice:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf084-decision",
+      "name": "Decide AI Conversation Response Mode",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf084-response",
+      "name": "Respond AI Conversation Reply Decision",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "AI Conversation Reply Decision Webhook": {
+      "main": [
+        [
+          {
+            "node": "Decide AI Conversation Response Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide AI Conversation Response Mode": {
+      "main": [
+        [
+          {
+            "node": "Respond AI Conversation Reply Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf084-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

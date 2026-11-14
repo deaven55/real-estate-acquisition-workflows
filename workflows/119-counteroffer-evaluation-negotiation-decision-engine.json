@@ -1,0 +1,195 @@
+{
+  "name": "WF-119 Counteroffer Evaluation & Negotiation Decision Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-119-counteroffer-evaluation-negotiation-decision-engine",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf119-webhook",
+      "name": "Counteroffer Evaluation Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??'').trim();\nconst n=v=>Number(v);\nconst identity=input.identity??{};\nconst pkg=input.seller_offer_package??input.offer_package??{};\nconst counter=n(input.counteroffer_amount??input.counter_offer??input.seller_counter);\nconst mao=n(pkg.mao_ceiling??input.mao_ceiling??input.mao);\nconst target=n(pkg.target_offer??input.target_offer);\nconst minimum=n(pkg.minimum_acceptable??input.minimum_acceptable);\nconst opening=n(pkg.opening_offer??input.opening_offer);\nconst currentOffer=n(input.current_offer??input.last_offer??target);\nconst leadId=s(identity.lead_id??input.lead_id);\nconst propertyId=s(identity.property_id??input.property_id);\nconst dealId=s(identity.deal_id??input.deal_id);\nconst requestId=s(input.request_id??pkg.request_id);\nconst sellerIntent=s(input.seller_intent??input.response_intent??'counter').toLowerCase();\nconst underwritingApproved=['approved','ready','proceed','approved_with_conditions'].includes(s(input.underwriting_status).toLowerCase())||input.underwriting_approved===true;\nconst packageReady=s(pkg.status??input.package_status).toLowerCase()!=='blocked';\nconst missing=[];\nif(!leadId)missing.push('lead_id');\nif(!propertyId&&!dealId)missing.push('property_or_deal_id');\nif(!Number.isFinite(counter)||counter<=0)missing.push('counteroffer_amount');\nif(!Number.isFinite(mao)||mao<=0)missing.push('mao_ceiling');\nif(!Number.isFinite(target)||target<=0)missing.push('target_offer');\nif(!Number.isFinite(minimum)||minimum<0)missing.push('minimum_acceptable');\nif(!underwritingApproved)missing.push('approved_underwriting');\nif(!packageReady)missing.push('offer_package_ready');\nconst aboveMao=Number.isFinite(counter)&&Number.isFinite(mao)&&counter>mao;\nconst withinTarget=Number.isFinite(counter)&&Number.isFinite(target)&&counter<=target;\nconst withinPreferred=Number.isFinite(counter)&&Number.isFinite(minimum)&&counter>=minimum&&counter<=target;\nconst belowWalkAway=Number.isFinite(counter)&&Number.isFinite(minimum)&&counter<minimum;\nlet decision='human_review',reason='Insufficient evidence or approval state.';\nif(missing.length)decision='blocked',reason='Required negotiation evidence is missing.';\nelse if(aboveMao)decision='walk_away',reason='Seller counteroffer exceeds the hard MAO ceiling.';\nelse if(sellerIntent==='accept')decision='accept',reason='Seller indicates acceptance of the current offer.';\nelse if(sellerIntent==='reject')decision='nurture',reason='Seller rejected the offer without an executable counter.';\nelse if(withinPreferred)decision='accept_or_finalize',reason='Counteroffer is inside the preferred negotiation band.';\nelse if(withinTarget)decision='accept_or_finalize',reason='Counteroffer is at or below target economics.';\nelse if(belowWalkAway)decision='counter_or_walk',reason='Counteroffer is below the minimum acceptable economics.';\nelse decision='counter',reason='Counteroffer is above target but remains within MAO.';\nconst counterRoom=Number.isFinite(mao)&&Number.isFinite(counter)?Math.max(0,mao-counter):0;\nconst recommendedResponse=decision==='accept'||decision==='accept_or_finalize'?'accept':decision==='counter'?'counter_with_ceiling':decision==='counter_or_walk'?'counter_at_minimum_or_walk':decision==='walk_away'?'decline_and_exit':decision==='nurture'?'close_loop_and_reengage_later':'human_review';\nconst nextState=decision==='accept'||decision==='accept_or_finalize'?'accepted':decision==='walk_away'?'rejected':decision==='nurture'?'stalled':decision==='blocked'?'human_review':'counter_evaluated';\nconst decisionId='counter-decision:'+s(dealId||propertyId||leadId||'unknown')+':'+s(requestId||'unknown')+':'+String(counter)+':v1';\nconst activity={\n  activity_type:'counteroffer_decision',\n  subject:'AI counteroffer decision '+decision,\n  body:[\n    'Counteroffer evaluated by Wholesaling OS.',\n    'Seller counter: '+String(counter),\n    'Current offer: '+String(currentOffer),\n    'Target offer: '+String(target),\n    'Minimum acceptable: '+String(minimum),\n    'MAO ceiling: '+String(mao),\n    'Decision: '+decision,\n    'Reason: '+reason,\n    'Next state: '+nextState\n  ].join('\\\\n'),\n  lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,\n  external_id:decisionId,external_source:'wholesaling-os-counteroffer',\n  metadata:{decision_id:decisionId,request_id:requestId||null,counteroffer_amount:counter,current_offer:currentOffer,target_offer:target,minimum_acceptable:minimum,mao_ceiling:mao,decision,reason,next_state:nextState,above_mao:aboveMao,counter_room:counterRoom,recommended_response:recommendedResponse}\n};\nreturn [{json:{\n  ok:decision!=='blocked',\n  status:decision==='blocked'?'blocked':'evaluated',\n  decision_id:decisionId,\n  request_id:requestId||null,\n  identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null},\n  counteroffer:{amount:counter,above_mao:aboveMao,within_mao:!aboveMao,within_target:withinTarget,within_preferred_band:withinPreferred,below_walk_away:belowWalkAway},\n  economics:{current_offer:currentOffer,target_offer:target,minimum_acceptable:minimum,mao_ceiling:mao,remaining_mao_room:counterRoom},\n  decision:{action:decision,reason,recommended_response,next_state:nextState},\n  guardrails:{never_accept_above_mao:true,never_counter_above_mao:true,underwriting_must_remain_approved:true,recheck_economics_on_every_counter:true},\n  crm_activity:activity,\n  missing_requirements:[...new Set(missing)],\n  next_workflow:decision==='accept'||decision==='accept_or_finalize'?'wf-036-offer-lifecycle':decision==='counter'||decision==='counter_or_walk'?'wf-080-offer-negotiation-intelligence':decision==='blocked'?'human_review':'wf-099-seller-follow-up-timing'\n}}];"
+      },
+      "id": "wf119-evaluate",
+      "name": "Evaluate Counteroffer Economics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "blocked",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf119-blocked-if",
+      "name": "Counteroffer Blocked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{JSON.stringify($json.crm_activity)}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf119-crm",
+      "name": "Persist Counteroffer Decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf119-response",
+      "name": "Respond Counteroffer Decision",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf119-blocked-response",
+      "name": "Respond Counteroffer Blocked",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Counteroffer Evaluation Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Counteroffer Economics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Counteroffer Economics": {
+      "main": [
+        [
+          {
+            "node": "Counteroffer Blocked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Counteroffer Blocked?": {
+      "main": [
+        [
+          {
+            "node": "Respond Counteroffer Blocked",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Counteroffer Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Counteroffer Decision": {
+      "main": [
+        [
+          {
+            "node": "Respond Counteroffer Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf119-v1"
+}

@@ -1,0 +1,148 @@
+{
+  "name": "WF-120 — Negotiation Response Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-120-negotiation-response-generator",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf120-webhook",
+      "name": "WF-120 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b=$json.body??$json,d=b.decision??b,e=d.economics??{},a=String(d.decision??d.action??'').toLowerCase(),rid=String(b.request_id??d.request_id??'wf120-'+Date.now()),lead=b.lead_id??d.lead_id??null,deal=b.deal_id??d.deal_id??null,prop=b.property_id??d.property_id??null,ch=String(b.channel??d.channel??'sms').toLowerCase(),dnc=Boolean(b.dnc??d.dnc),opt=Boolean(b.autonomous_opt_in??d.autonomous_opt_in),approval=Boolean(b.human_approval??d.human_approval); const n=x=>Number.isFinite(Number(x))&&Number(x)>=0?Math.round(Number(x)):null; const mao=n(e.mao_ceiling??d.mao_ceiling),min=n(e.minimum_acceptable??d.minimum_acceptable),target=n(e.target_offer??d.target_offer),seller=n(e.seller_counter??b.seller_counter),rec=n(e.recommended_counter??d.recommended_counter),current=n(e.current_offer??d.current_offer); let action='human_review',status='review_required',state='human_review',msg=null;if(dnc){action='suppress';status='suppressed';state='suppressed'}else if(a==='accept'||a==='accept_or_finalize'){action='accept';status='ready';state='accepted';msg='Thanks for working with us. We’re good with the terms we discussed and are ready to move forward with the next steps.'}else if(a==='counter'||a==='counter_or_walk'){const amt=rec??(seller!=null&&mao!=null?Math.min(seller,mao):target);if(amt==null||mao==null||amt>mao||(a==='counter'&&min!=null&&amt<min)){action='human_review';status='review_required'}else{action='counter';status='ready';state='counter_sent';msg='I understand where you’re coming from. Based on what we can make work, we can move to $'+amt.toLocaleString('en-US')+'. If that works for you, we can keep things moving and get the next steps handled.'}}else if(a==='walk_away'){action='decline';status='ready';state='paused';msg='I understand. We may not be able to make the numbers work at the price you’re looking for right now. If things change, I’d be happy to revisit it.'}else if(a==='nurture'){action='nurture';status='ready';state='nurture';msg='No problem. I understand you may want some time. I’ll leave the door open, and we can reconnect if you decide you’d like to revisit the conversation.'}else if(a!=='blocked'){action='clarify';status='review_required';state='clarification_needed';msg='I want to make sure I understand what you need before we make a decision. Can you clarify the terms you’d like us to consider?'} const response_id='negotiation-response:'+(deal??prop??lead??rid)+':'+rid+':v1',send=status==='ready'&&action!=='suppress'&&action!=='clarify'&&opt&&approval&&!dnc; return [{json:{workflow:'WF-120',workflow_version:'1.0',request_id:rid,response_id,status,response_action:action,next_state:state,channel:ch,recipient:b.recipient??d.recipient??null,subject:b.subject??d.subject??null,seller_message:msg,internal_rationale:String(d.rationale??''),recommended_counter:rec,current_offer:current,target_offer:target,minimum_acceptable:min,mao_ceiling:mao,seller_counter:seller,concessions:d.concessions??b.concessions??[],fallback_position:d.fallback_position??null,guardrails:{never_exceed_mao:true,no_invented_facts:true,no_unauthorized_promises:true,dnc_suppression:true,underwriting_must_remain_approved:true,human_approval_required_for_send:true},autonomous_opt_in:opt,human_approval:approval,send_eligible:send,route:send?'wf-082-autonomous-communication-dispatch':(status==='review_required'?'human_review':'wf-117-offer-approval-negotiation-gate'),crm_activity:{activity_type:'negotiation_response',subject:'WF-120 negotiation response — '+action,lead_id:lead,property_id:prop,deal_id:deal,external_id:response_id,external_source:'wholesaling-os-negotiation',metadata:{response_id,status,response_action:action,next_state:state,channel,send_eligible:send}}}}]"
+      },
+      "id": "wf120-build",
+      "name": "Build Negotiation Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;if(r.dnc||r.response_action==='suppress')return[{json:{...r,suppressed:true,audit_status:'suppressed'}}];if(!r.response_id||!r.status||!r.response_action)return[{json:{...r,status:'blocked',response_action:'human_review',route:'human_review',audit_status:'invalid_response_contract'}}];if(r.response_action==='counter'&&(r.recommended_counter==null||(r.mao_ceiling!=null&&r.recommended_counter>r.mao_ceiling)))return[{json:{...r,status:'blocked',response_action:'human_review',route:'human_review',audit_status:'mao_guardrail_failed'}}];if(r.status==='ready'&&r.send_eligible&&(!r.recipient||!r.channel))return[{json:{...r,status:'blocked',response_action:'human_review',route:'human_review',audit_status:'missing_delivery_context'}}];return[{json:{...r,audit_status:'validated'}}];"
+      },
+      "id": "wf120-validate",
+      "name": "Validate Response Guardrails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({ activity_type: $json.crm_activity.activity_type, subject: $json.crm_activity.subject, body: JSON.stringify({ response_id: $json.response_id, status: $json.status, response_action: $json.response_action, seller_message: $json.seller_message, next_state: $json.next_state, send_eligible: $json.send_eligible, guardrails: $json.guardrails }), lead_id: $json.crm_activity.lead_id, property_id: $json.crm_activity.property_id, deal_id: $json.crm_activity.deal_id, external_id: $json.crm_activity.external_id, external_source: $json.crm_activity.external_source, metadata: $json.crm_activity.metadata }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf120-crm",
+      "name": "Persist Negotiation Response Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;return[{json:{...r,crm_persistence_attempted:true,crm_persistence_status:$json.statusCode>=200&&$json.statusCode<300?'persisted':'failed',delivery:{route:r.route,send_eligible:r.send_eligible,autonomous_dispatch:r.send_eligible?{workflow:'WF-082',request_id:r.request_id,response_id:r.response_id}:null}}}];"
+      },
+      "id": "wf120-return",
+      "name": "Return Response Package",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-120 Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Negotiation Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Negotiation Response": {
+      "main": [
+        [
+          {
+            "node": "Validate Response Guardrails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Response Guardrails": {
+      "main": [
+        [
+          {
+            "node": "Persist Negotiation Response Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Negotiation Response Audit": {
+      "main": [
+        [
+          {
+            "node": "Return Response Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf120-v1"
+}

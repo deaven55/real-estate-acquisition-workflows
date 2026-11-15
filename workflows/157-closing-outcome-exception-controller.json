@@ -1,0 +1,171 @@
+{
+  "name": "WF-157 Closing Milestone Completion → Closing Outcome & Exception Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-157-closing-outcome-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "157-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-157-closing-outcome-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const execution=input.execution??{}; const contract=input.contract??input.agreement??{}; const milestones=input.milestones??{}; const outcome=String(input.closing_outcome??input.outcome??'').toLowerCase(); const evidence=input.closing_evidence??input.outcome_evidence??{}; const executed=execution.executed===true||contract.execution_state==='executed'; const identity=Boolean(deal.property_id??input.property_id)&&Boolean(deal.lead_id??input.lead_id??input.seller_id); const price=Number(contract.agreed_price??input.agreed_price??0); const validOutcome=['closed','funded','recorded','failed','terminated','cancelled'].includes(outcome); const required=['title','attorney','funding']; const missing=required.filter(k=>milestones[k]?.required!==false&&!milestones[k]?.ready); const blockers=Array.isArray(input.blockers)?input.blockers:[]; const evidencePresent=Object.keys(evidence).length>0; let status='outcome_review_required',route='human_review'; if(!executed||!identity||!price) {status='readiness_blocked';} else if(!validOutcome){status='closing_outcome_required';} else if(['closed','funded','recorded'].includes(outcome)&&(!evidencePresent||missing.length||blockers.length)){status='close_evidence_incomplete';} else if(['closed','funded','recorded'].includes(outcome)){status='closing_completed';route='WF-138 post-close completion → assignment profit & performance controller';} else if(['failed','terminated','cancelled'].includes(outcome)){status='closing_exception';route='human_review';} return [{json:{workflow_id:'WF-157',workflow_name:'Closing Milestone Completion → Closing Outcome & Exception Controller',status,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,execution:{executed},contract:{agreement_type:String(contract.agreement_type??input.agreement_type??'').toLowerCase(),agreed_price:price,execution_state:executed?'executed':'not_executed'},closing_outcome:outcome,closing_evidence:evidence,milestones,missing_milestones:missing,blockers,routing:{next_route:route,next_workflow:route.startsWith('WF-138')?'WF-138':null},guardrails:{explicit_outcome_required:true,close_status_requires_evidence:true,required_milestones_must_be_complete:true,failed_or_terminated_requires_exception_review:true,no_profit_closeout_without_verified_close:true},crm_activity:{event_type:'closing_outcome_controller',outcome:status,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-157:closing-outcome:'+(input.event_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "157-controller",
+      "name": "Evaluate Closing Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "closing_completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "157-complete",
+      "name": "Closing Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,execution:$json.execution,contract:$json.contract,closing_outcome:$json.closing_outcome,closing_evidence:$json.closing_evidence,milestones:$json.milestones,missing_milestones:$json.missing_milestones,blockers:$json.blockers,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "157-crm",
+      "name": "Persist Closing Outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Evaluate Closing Outcome').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,next_route:original.routing.next_route,next_workflow:original.routing.next_workflow}}}];"
+      },
+      "id": "157-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Closing Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Closing Outcome": {
+      "main": [
+        [
+          {
+            "node": "Closing Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closing Completed?": {
+      "main": [
+        [
+          {
+            "node": "Persist Closing Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Closing Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Closing Outcome": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-157-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

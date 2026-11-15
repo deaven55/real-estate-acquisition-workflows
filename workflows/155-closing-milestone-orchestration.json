@@ -1,0 +1,171 @@
+{
+  "name": "WF-155 Closing Coordination → Title/Attorney/Funding Milestone Orchestration",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-155-closing-milestone-orchestration",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "155-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-155-closing-milestone-orchestration"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const execution=input.execution??{}; const contract=input.contract??input.agreement??{}; const readiness=input.readiness??{}; const executed=execution.executed===true||contract.execution_state==='executed'; const identity=Boolean(deal.property_id??input.property_id)&&Boolean(deal.lead_id??input.lead_id??input.seller_id); const price=Number(contract.agreed_price??input.agreed_price??0); const type=String(contract.agreement_type??input.agreement_type??'').toLowerCase(); const validType=['assignment','novation','double_close'].includes(type); const title=input.title??{}; const attorney=input.attorney??{}; const funding=input.funding??{}; const buyer=input.buyer??input.assignee??{}; const milestones=input.milestones??{}; const required=['title','attorney','funding']; if(['assignment','novation'].includes(type)) required.push('buyer'); const missing=[]; if(!executed) missing.push('executed_agreement'); if(!identity) missing.push('identity'); if(!price) missing.push('agreed_price'); if(!validType) missing.push('agreement_type'); if(title.required!==false&&!title.ready) missing.push('title'); if(attorney.required!==false&&!attorney.ready) missing.push('attorney'); if(funding.required!==false&&!funding.ready) missing.push('funding'); if(['assignment','novation'].includes(type)&&buyer.required!==false&&!buyer.ready) missing.push('buyer'); const blockers=Array.isArray(readiness.blockers)?readiness.blockers:(Array.isArray(input.blockers)?input.blockers:[]); const criticalDates=readiness.critical_dates??input.critical_dates??{}; let status='milestones_blocked'; let route='human_review'; if(!missing.length&&!blockers.length){status='milestones_orchestration_ready';route='WF-126 closing coordination & critical date controller';} else if(missing.includes('title')) route='title_milestone'; else if(missing.includes('attorney')) route='attorney_milestone'; else if(missing.includes('funding')) route='funding_milestone'; else if(missing.includes('buyer')) route='buyer_milestone'; const milestoneState={title:{ready:Boolean(title.ready),status:title.status??null},attorney:{ready:Boolean(attorney.ready),status:attorney.status??null},funding:{ready:Boolean(funding.ready),status:funding.status??null},buyer:{required:['assignment','novation'].includes(type),ready:Boolean(buyer.ready),status:buyer.status??null},critical_dates:criticalDates,existing:milestones}; return [{json:{workflow_id:'WF-155',workflow_name:'Closing Coordination → Title/Attorney/Funding Milestone Orchestration',status,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,execution:{executed},contract:{agreement_type:type,agreed_price:price,execution_state:executed?'executed':'not_executed'},milestones:milestoneState,readiness:{missing_requirements:missing,blockers,critical_dates:criticalDates},routing:{next_route:route,next_workflow:route==='WF-126 closing coordination & critical date controller'?'WF-126':null},guardrails:{executed_agreement_required:true,identity_required:true,price_preserved:true,each_required_milestone_must_be_ready:true,critical_date_tracking_required:true,blockers_block_progression:true,no_claim_of_closed_status:true,human_review_for_exceptions:true},crm_activity:{event_type:'closing_milestone_orchestration',outcome:status,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-155:milestones:'+(deal.id??deal.deal_id??input.deal_id??execution.execution_evidence_id??'unknown')}}}];"
+      },
+      "id": "155-package",
+      "name": "Build Closing Milestone State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "milestones_orchestration_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "155-ready",
+      "name": "Milestones Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,execution:$json.execution,contract:$json.contract,milestones:$json.milestones,readiness:$json.readiness,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "155-crm",
+      "name": "Persist Milestone Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Build Closing Milestone State').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,next_route:original.routing.next_route,next_workflow:original.routing.next_workflow}}}];"
+      },
+      "id": "155-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Closing Milestone State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Closing Milestone State": {
+      "main": [
+        [
+          {
+            "node": "Milestones Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Milestones Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Milestone Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Milestone Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Milestone Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-155-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

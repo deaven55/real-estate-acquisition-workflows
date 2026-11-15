@@ -1,0 +1,171 @@
+{
+  "name": "WF-151 Contract Package Assembly → Signature Readiness & Execution Tracking",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-151-contract-package-signature-readiness",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "151-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-151-contract-package-signature-readiness"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const contract=input.contract??{}; const seller=input.seller??{}; const buyer=input.buyer??{}; const type=String(contract.agreement_type??input.agreement_type??'').toLowerCase(); const validType=['assignment','novation','double_close'].includes(type); const required=Array.isArray(contract.required_package_components)?contract.required_package_components:[]; const supplied=input.supplied_documents??contract.supplied_documents??{}; const missing=required.filter(k=>!(supplied[k]===true||input[k]!==undefined)); const sellerIdentity=Boolean(seller.name??input.seller_name); const propertyIdentity=Boolean(deal.property_id??input.property_id); const price=Number(contract.agreed_price??input.agreed_price??0); const parties=Boolean(sellerIdentity&&(buyer.name??input.buyer_name)||sellerIdentity); let status='signature_blocked'; let route='human_review'; if(!validType) status='agreement_type_required'; else if(!sellerIdentity||!propertyIdentity) status='identity_required'; else if(!price) status='agreed_price_required'; else if(missing.length) status='documents_missing'; else {status='signature_ready';route='WF-124 contract execution & signature outcome controller';} return [{json:{workflow_id:'WF-151',workflow_name:'Contract Package Assembly → Signature Readiness & Execution Tracking',status,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,seller,buyer,contract:{agreement_type:type,agreed_price:price,required_package_components:required,missing_components:missing,execution_state:'not_executed',signature_state:status==='signature_ready'?'ready':'blocked'},routing:{next_workflow:route},guardrails:{never_mark_executed_without_signed_evidence:true,missing_documents_block_signature_readiness:true,human_legal_review_required:true,no_price_change_without_reunderwriting:true},crm_activity:{event_type:'contract_package_signature_readiness',outcome:status,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-151:signature-ready:'+(input.contract_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "151-assemble",
+      "name": "Assemble Contract Package",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "signature_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "151-ready",
+      "name": "Signature Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,seller:$json.seller,buyer:$json.buyer,contract:$json.contract,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "151-crm",
+      "name": "Persist Signature Readiness",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Assemble Contract Package').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,next_workflow:original.routing.next_workflow,signature_state:original.contract.signature_state}}}];"
+      },
+      "id": "151-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Assemble Contract Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Contract Package": {
+      "main": [
+        [
+          {
+            "node": "Signature Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Signature Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Signature Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Signature Readiness": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-151-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

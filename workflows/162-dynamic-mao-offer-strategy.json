@@ -1,0 +1,171 @@
+{
+  "name": "WF-162 Dynamic MAO Calibration → Property-Level Offer Strategy & Acquisition Decision",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-162-dynamic-mao-offer-strategy",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "162-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-162-dynamic-mao-offer-strategy"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const underwriting=input.underwriting??{}; const calibration=input.calibration??{}; const arv=Number(underwriting.arv??input.arv??0); const repairs=Number(underwriting.repairs??input.repair_costs??0); const closing=Number(underwriting.closing_costs??input.closing_costs??0); const contingency=Number(underwriting.contingency??input.contingency??0); const assignmentFee=Number(underwriting.assignment_fee??input.assignment_fee??0); const baseMao=Number(underwriting.base_mao??input.base_mao??0); const adjustment=Number(calibration.dynamic_mao_adjustment??input.dynamic_mao_adjustment??0); const effectiveBase=baseMao>0?baseMao:(arv-repairs-closing-contingency-assignmentFee); const adjustedMao=effectiveBase*(1+Math.max(-0.1,Math.min(0.03,adjustment))); const suggestedOffer=Number(input.suggested_offer??underwriting.suggested_offer??adjustedMao); const evidenceReady=arv>0&&repairs>=0&&closing>=0; const identity=Boolean(deal.property_id??input.property_id)&&Boolean(deal.lead_id??input.lead_id??input.seller_id); let status='offer_strategy_blocked',route='human_review'; if(!identity) status='identity_required'; else if(!evidenceReady) status='underwriting_evidence_required'; else if(suggestedOffer>adjustedMao) status='offer_above_effective_mao'; else {status='offer_strategy_ready';route='WF-143 property-level offer strategy → seller offer package';} return [{json:{workflow_id:'WF-162',workflow_name:'Dynamic MAO Calibration → Property-Level Offer Strategy & Acquisition Decision',status,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,underwriting:{arv,repairs,closing_costs:closing,contingency,assignment_fee,base_mao:effectiveBase},calibration:{requested_adjustment:adjustment,bounded_adjustment:Math.max(-0.1,Math.min(0.03,adjustment))},economics:{effective_mao:adjustedMao,suggested_offer:suggestedOffer,offer_headroom:adjustedMao-suggestedOffer},decision:{acquisition_ready:status==='offer_strategy_ready',human_approval_required:true},routing:{next_route:route,next_workflow:route.startsWith('WF-143')?'WF-143':null},guardrails:{ma0_downside_cap:-0.1,mao_upside_cap:0.03,no_offer_above_effective_mao:true,arv_required:true,assignment_fee_preserved:true,human_approval_required:true,no_70_percent_rule_override_without_economics:true},crm_activity:{event_type:'dynamic_mao_offer_strategy',outcome:status,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-162:offer-strategy:'+(input.event_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "162-strategy",
+      "name": "Build Dynamic MAO & Offer Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "offer_strategy_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "162-ready",
+      "name": "Offer Strategy Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,underwriting:$json.underwriting,calibration:$json.calibration,economics:$json.economics,decision:$json.decision,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "162-crm",
+      "name": "Persist Offer Strategy Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Build Dynamic MAO & Offer Strategy').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,next_route:original.routing.next_route,next_workflow:original.routing.next_workflow}}}];"
+      },
+      "id": "162-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Dynamic MAO & Offer Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Dynamic MAO & Offer Strategy": {
+      "main": [
+        [
+          {
+            "node": "Offer Strategy Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offer Strategy Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Offer Strategy Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Offer Strategy Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Offer Strategy Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-162-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

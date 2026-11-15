@@ -1,0 +1,171 @@
+{
+  "name": "WF-171 Closing Readiness → Title/Attorney/Funding/Broker Coordination Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-171-closing-readiness-coordination",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "171-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-171-closing-readiness-coordination"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??{}; const tx=input.transaction??{}; const identity=Boolean(deal.property_id??input.property_id)&&Boolean(deal.lead_id??input.lead_id); const executed=String(input.execution_state??deal.execution_state??'').toLowerCase()==='executed'; const title=input.title??{}; const attorney=input.attorney??{}; const funding=input.funding??{}; const broker=input.broker??{}; const required=[['title',Boolean(title.ready??title.confirmed??title.status==='ready')],['attorney',Boolean(attorney.ready??attorney.confirmed??attorney.status==='ready')],['funding',Boolean(funding.ready??funding.confirmed??funding.status==='ready')],['broker',Boolean(broker.ready??broker.confirmed??broker.status==='ready')]]; const missing=required.filter(([,v])=>!v).map(([k])=>k); const blockers=Array.isArray(tx.blockers)?tx.blockers:[]; const closingDate=tx.closing_date??input.closing_date??null; let status='closing_coordination_blocked',next='human_review',reason=''; if(!identity)reason='seller_property_identity_required'; else if(!executed)reason='executed_agreement_required'; else if(!closingDate)reason='closing_date_required'; else if(blockers.length)reason='transaction_blockers_present'; else if(missing.length)reason='closing_party_readiness_missing:'+missing.join(','); else {status='closing_coordination_ready';next='WF-126 closing coordination & critical date controller';reason='title_attorney_funding_broker_readiness_validated';} return [{json:{workflow_id:'WF-171',status,reason,deal_id:deal.id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,readiness:{title:title,attorney:attorney,funding:funding,broker:broker,missing_parties:missing},transaction:{closing_date:closingDate,blockers,coordination_state:status==='closing_coordination_ready'?'ready':'blocked'},routing:{next_route:next},safety:{executed_agreement_required:true,identity_required:true,closing_date_required:true,blockers_prevent_coordination:true,external_party_confirmation_required:true,human_review_for_exceptions:true},crm_activity:{event_type:'closing_readiness_coordination',outcome:status,deal_id:deal.id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null},idempotency_key:'wf-171:closing-coordination:'+(input.event_id??deal.id??input.deal_id??'unknown')}}}];"
+      },
+      "id": "171-controller",
+      "name": "Validate Closing Party Readiness",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "closing_coordination_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "171-ready",
+      "name": "Closing Coordination Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,readiness:$json.readiness,transaction:$json.transaction,routing:$json.routing,safety:$json.safety,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "171-crm",
+      "name": "Persist Closing Coordination Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Validate Closing Party Readiness').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,reason:original.reason,next_route:original.routing.next_route}}}];"
+      },
+      "id": "171-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Closing Party Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Closing Party Readiness": {
+      "main": [
+        [
+          {
+            "node": "Closing Coordination Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closing Coordination Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Closing Coordination Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Closing Coordination Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Closing Coordination Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-171-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

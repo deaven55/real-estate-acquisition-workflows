@@ -1,0 +1,186 @@
+{
+  "name": "WF-176 — Transaction Readiness Reconciliation → Closing Package Finalization Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-176-transaction-readiness-closing-package-finalization-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf176-webhook",
+      "name": "WF-176 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-176-transaction-readiness-closing-package-finalization-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json ?? {};\nconst deal = input.deal ?? input.transaction ?? input;\nconst readiness = input.transaction_readiness ?? deal.transaction_readiness ?? {};\nconst pkg = input.closing_package ?? {};\nconst requiredDocs = Array.isArray(pkg.required_documents)\n  ? pkg.required_documents\n  : (Array.isArray(readiness.required_documents) ? readiness.required_documents : []);\nconst suppliedDocs = Array.isArray(pkg.supplied_documents)\n  ? pkg.supplied_documents\n  : (Array.isArray(readiness.supplied_documents) ? readiness.supplied_documents : []);\n\nconst suppliedById = new Map(suppliedDocs.map(d => [String(d?.id ?? d?.name ?? ''), d]));\nconst missingDocs = requiredDocs.filter(d => {\n  const key = String(d?.id ?? d?.name ?? '');\n  const supplied = suppliedById.get(key);\n  const status = String(supplied?.status ?? d?.status ?? '').toLowerCase();\n  return !supplied || !['complete','completed','received','verified','approved'].includes(status);\n});\n\nconst identityComplete = Boolean(deal.deal_id ?? deal.transaction_id) &&\n  Boolean(deal.property_id) &&\n  Boolean(deal.lead_id ?? deal.seller_id);\nconst executed = String(deal.execution_state ?? deal.agreement?.execution_state ?? '').toLowerCase() === 'executed';\nconst signedEvidence = Boolean(deal.signed_evidence ?? deal.agreement?.signed_evidence);\nconst agreementType = String(deal.agreement_type ?? deal.agreement?.type ?? '').toLowerCase();\nconst validAgreementType = ['assignment','novation','double_close'].includes(agreementType);\nconst agreedPrice = Number(deal.agreed_price ?? deal.purchase_price ?? deal.contract_price);\nconst effectiveMao = Number(deal.effective_mao ?? deal.mao ?? deal.underwriting?.effective_mao);\nconst priceWithinMao = Number.isFinite(agreedPrice) && Number.isFinite(effectiveMao) ? agreedPrice <= effectiveMao : false;\nconst closingDate = pkg.closing_date ?? readiness.closing_date ?? deal.closing_date ?? deal.critical_dates?.closing_date ?? null;\nconst closingDateValid = Boolean(closingDate && !Number.isNaN(new Date(closingDate).getTime()));\nconst blockers = [\n  ...(Array.isArray(deal.blockers) ? deal.blockers : []),\n  ...(Array.isArray(readiness.blockers) ? readiness.blockers : []),\n  ...(Array.isArray(pkg.blockers) ? pkg.blockers : [])\n].filter(Boolean);\n\nconst partyReady = (x) => Boolean(x?.ready ?? x?.confirmed ?? String(x?.status ?? '').toLowerCase() === 'ready');\nconst partiesReady = {\n  title: partyReady(pkg.title ?? readiness.title ?? deal.title),\n  attorney: partyReady(pkg.attorney ?? readiness.attorney ?? deal.attorney),\n  funding: partyReady(pkg.funding ?? readiness.funding ?? deal.funding),\n  buyer: partyReady(pkg.buyer ?? readiness.buyer ?? deal.buyer)\n};\n\nlet status = 'package_incomplete';\nlet severity = 'high';\nif (!identityComplete || !executed || !signedEvidence || !validAgreementType || !priceWithinMao) {\n  status = 'blocked';\n  severity = 'urgent';\n} else if (missingDocs.length || blockers.length || !Object.values(partiesReady).every(Boolean) || !closingDateValid) {\n  status = 'package_incomplete';\n  severity = 'high';\n} else {\n  status = 'package_ready';\n  severity = 'normal';\n}\n\nconst routing = status === 'package_ready'\n  ? {next_workflow:'WF-126',reason:'Closing package is complete and ready for final closing coordination.'}\n  : status === 'package_incomplete'\n    ? {next_workflow:'WF-155',reason:'Closing package gaps remain and require milestone coordination.'}\n    : {next_workflow:'WF-126',reason:'Transaction is blocked and requires closing coordination/human escalation.'};\n\nreturn [{\n  json:{\n    ...input,\n    workflow_id:'WF-176',\n    workflow_name:'Transaction Readiness Reconciliation → Closing Package Finalization Controller',\n    decision:{status,severity},\n    identity_complete:identityComplete,\n    execution_state:deal.execution_state ?? deal.agreement?.execution_state ?? null,\n    signed_evidence_present:signedEvidence,\n    agreement_type:agreementType || null,\n    valid_agreement_type:validAgreementType,\n    agreed_price:Number.isFinite(agreedPrice) ? agreedPrice : null,\n    effective_mao:Number.isFinite(effectiveMao) ? effectiveMao : null,\n    price_within_mao:priceWithinMao,\n    required_document_count:requiredDocs.length,\n    supplied_document_count:suppliedDocs.length,\n    missing_document_count:missingDocs.length,\n    missing_documents:missingDocs.map(d=>({id:d?.id ?? null,name:d?.name ?? null,status:d?.status ?? null})),\n    parties_ready:partiesReady,\n    closing_date:closingDate,\n    closing_date_valid:closingDateValid,\n    blockers,\n    closing_package_status:status,\n    routing\n  }\n}];"
+      },
+      "id": "wf176-controller",
+      "name": "WF-176 Package Finalization Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchers": []
+          },
+          "conditions": [
+            {
+              "id": "wf176-gate",
+              "leftValue": "={{ $json.decision.status }}",
+              "rightValue": "blocked",
+              "operator": {
+                "type": "string",
+                "operation": "notEqual"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf176-gate",
+      "name": "WF-176 Package Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{ $json.deal?.lead_id || $json.lead_id || $json.seller_id }}"
+            },
+            {
+              "name": "activity_type",
+              "value": "closing_package_finalization"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.decision.status }}"
+            },
+            {
+              "name": "notes",
+              "value": "={{ JSON.stringify({workflow_id:$json.workflow_id, severity:$json.decision.severity, closing_package_status:$json.closing_package_status, missing_documents:$json.missing_documents, parties_ready:$json.parties_ready, closing_date:$json.closing_date, blockers:$json.blockers, routing:$json.routing}) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf176-crm",
+      "name": "Persist CRM Closing Package Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = $json ?? {};\nreturn [{\n  json:{\n    ...out,\n    workflow_id:'WF-176',\n    result:'closing_package_finalization_evaluated',\n    next_workflow:out.routing?.next_workflow ?? 'WF-126'\n  }\n}];"
+      },
+      "id": "wf176-response",
+      "name": "WF-176 Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-176 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-176 Package Finalization Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-176 Package Finalization Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-176 Package Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-176 Package Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist CRM Closing Package Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist CRM Closing Package Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist CRM Closing Package Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-176 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-176-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

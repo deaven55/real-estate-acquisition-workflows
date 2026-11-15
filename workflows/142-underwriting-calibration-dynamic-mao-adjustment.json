@@ -1,0 +1,171 @@
+{
+  "name": "WF-142 Underwriting Calibration → Dynamic MAO & Deal Strategy Adjustment",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-142-underwriting-calibration-dynamic-mao-adjustment",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "142-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-142-underwriting-calibration-dynamic-mao-adjustment"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const calibration=input.calibration??{}; const base=Number(input.base_mao??input.mao??0); const avgVariance=Number(calibration.average_profit_variance??0); const lossRate=Number(calibration.loss_rate??0); const avgDays=Number(calibration.average_days_to_close??0); const sample=Number(calibration.sample_size??0); const confidence=sample>=20?'high':sample>=10?'medium':'low'; let adjustment=0; if(confidence!=='low'){ if(avgVariance<0) adjustment-=Math.min(Math.abs(avgVariance)*0.25,base*0.05); else if(avgVariance>0) adjustment+=Math.min(avgVariance*0.15,base*0.03); if(lossRate>0.25) adjustment-=base*0.03; if(avgDays>60) adjustment-=base*0.02; } const adjusted=Math.max(0,base+adjustment); const guardrail={adjustment_amount:adjustment,adjustment_pct:base?adjustment/base:null,confidence,minimum_sample:10,max_downward_adjustment_pct:0.10,max_upward_adjustment_pct:0.03}; const strategy=adjusted<base?'more_conservative':adjusted>base?'modestly_more_aggressive':'unchanged'; const status=sample>=10?'adjustment_ready':'insufficient_sample'; const route=status==='adjustment_ready'?'WF-069 deal viability/MAO strategy gate':'WF-141 underwriting calibration feedback'; return [{json:{workflow_id:'WF-142',workflow_name:'Underwriting Calibration → Dynamic MAO & Deal Strategy Adjustment',status,route,base_mao:base,adjusted_mao:adjusted,adjustment:guardrail,strategy,inputs:{average_profit_variance:avgVariance,loss_rate:lossRate,average_days_to_close:avgDays,sample_size:sample},safety:{no_change_without_minimum_sample:sample<10,adjustment_bounded:true},next_workflow:route,crm_activity:{event_type:'dynamic_mao_strategy_adjustment',outcome:status,route,base_mao:base,adjusted_mao:adjusted},idempotency_key:'wf-142:mao-adjustment:'+(input.portfolio_id??input.event_id??'default')}}}];"
+      },
+      "id": "142-adjust",
+      "name": "Calculate Dynamic MAO Adjustment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "adjustment_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "142-ready",
+      "name": "Adjustment Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,route:$json.route,workflow_id:$json.workflow_id,base_mao:$json.base_mao,adjusted_mao:$json.adjusted_mao,adjustment:$json.adjustment,strategy:$json.strategy,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "142-crm",
+      "name": "Persist MAO Adjustment Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Calculate Dynamic MAO Adjustment').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,route:original.route,base_mao:original.base_mao,adjusted_mao:original.adjusted_mao,adjustment:original.adjustment,strategy:original.strategy,next_workflow:original.next_workflow}}}];"
+      },
+      "id": "142-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Calculate Dynamic MAO Adjustment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Dynamic MAO Adjustment": {
+      "main": [
+        [
+          {
+            "node": "Adjustment Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adjustment Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist MAO Adjustment Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist MAO Adjustment Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist MAO Adjustment Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-142-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

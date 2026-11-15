@@ -1,0 +1,37 @@
+{
+  "name": "WF-136 Closing Coordination → Critical Date & Milestone Monitor",
+  "nodes": [
+    {
+      "parameters": {"httpMethod":"POST","path":"wf-136-closing-coordination-critical-date-milestone-monitor","responseMode":"lastNode","options":{}},
+      "id":"136-webhook","name":"Webhook","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[-900,0],
+      "webhookId":"wf-136-closing-coordination-critical-date-milestone-monitor"
+    },
+    {
+      "parameters": {"jsCode":"const input=$json.body ?? $json;\nconst deal=input.deal ?? input;\nconst closing=input.closing ?? {};\nconst dates=input.critical_dates ?? {};\nconst milestones=Array.isArray(input.milestones)?input.milestones:[];\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst now=Date.now();\nconst parseDate=v=>{const t=Date.parse(v||'');return Number.isFinite(t)?t:null};\nconst closingTs=parseDate(dates.closing_date||closing.closing_date);\nconst assignmentTs=parseDate(dates.assignment_deadline||closing.assignment_deadline);\nconst terminationTs=parseDate(dates.termination_date);\nconst openBlockers=blockers.filter(b=>b&&b.resolved!==true&&b.status!=='resolved');\nconst milestoneState=milestones.map(m=>{const due=parseDate(m.due_date);return {...m,overdue:Boolean(due!==null&&due<now&&m.completed!==true),due_in_hours:due===null?null:Math.round((due-now)/3600000)}});\nconst overdueMilestones=milestoneState.filter(m=>m.overdue);\nconst nextMilestone=milestoneState.filter(m=>m.completed!==true&&m.due_in_hours!==null).sort((a,b)=>a.due_in_hours-b.due_in_hours)[0]||null;\nconst urgentDates=[['closing_date',closingTs],['assignment_deadline',assignmentTs],['termination_date',terminationTs]].filter(([,t])=>t!==null).map(([name,t])=>({name,due_in_hours:Math.round((t-now)/3600000)})).sort((a,b)=>a.due_in_hours-b.due_in_hours);\nconst nextCriticalDate=urgentDates[0]||null;\nconst criticalDateOverdue=Boolean(nextCriticalDate&&nextCriticalDate.due_in_hours<0);\nconst status=criticalDateOverdue||overdueMilestones.length||openBlockers.length?'attention_required':'on_track';\nconst route=criticalDateOverdue?'critical_date_escalation':overdueMilestones.length?'milestone_escalation':openBlockers.length?'blocker_resolution':'closing_coordination';\nreturn [{json:{workflow_id:'WF-136',workflow_name:'Closing Coordination → Critical Date & Milestone Monitor',status,route,deal_id:deal.id??deal.deal_id??null,lead_id:deal.lead_id??null,property_id:deal.property_id??null,buyer_id:deal.buyer_id??null,critical_dates:{closing_date:dates.closing_date??closing.closing_date??null,assignment_deadline:dates.assignment_deadline??closing.assignment_deadline??null,termination_date:dates.termination_date??null},next_critical_date:nextCriticalDate,milestones:milestoneState,overdue_milestones:overdueMilestones,open_blockers:openBlockers,monitoring:{checked_at:new Date().toISOString(),next_milestone:nextMilestone,critical_date_overdue:criticalDateOverdue},next_workflow:route==='critical_date_escalation'||route==='milestone_escalation'||route==='blocker_resolution'?'human_review':'WF-126 closing coordination & critical date controller',crm_activity:{event_type:'closing_critical_date_milestone_monitor',outcome:status,route,deal_id:deal.id??deal.deal_id??null},idempotency_key:'wf-136:closing-monitor:'+(deal.id??deal.deal_id??input.event_id??'unknown')}}}];"},
+      "id":"136-monitor","name":"Monitor Dates & Milestones","type":"n8n-nodes-base.code","typeVersion":2,"position":[-680,0]
+    },
+    {
+      "parameters": {"conditions":{"options":{"caseSensitive":false,"matchType":"all","typeValidation":"strict"},"conditions":[{"leftValue":"={{$json.status}}","rightValue":"attention_required","operator":{"type":"string","operation":"equals"}}],"combinator":"and"}},
+      "id":"136-attention","name":"Attention Required?","type":"n8n-nodes-base.if","typeVersion":2,"position":[-440,0]
+    },
+    {
+      "parameters": {"method":"POST","url":"={{($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities'}}","sendHeaders":true,"headerParameters":{"parameters":[{"name":"X-API-Key","value":"={{$env.INSULA_CRM_API_KEY || ''}}"},{"name":"Content-Type","value":"application/json"}]},"sendBody":true,"contentType":"json","body":"={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,route:$json.route,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,buyer_id:$json.buyer_id,workflow_id:$json.workflow_id,idempotency_key:$json.idempotency_key})}}","options":{}},
+      "id":"136-crm","name":"Persist CRM Activity","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[-200,0]
+    },
+    {
+      "parameters": {"jsCode":"const original=$('Monitor Dates & Milestones').first().json;\nreturn [{json:{...original,crm_persistence:'attempted',response:{status:original.status,route:original.route,next_critical_date:original.next_critical_date,overdue_milestones:original.overdue_milestones,open_blockers:original.open_blockers,next_workflow:original.next_workflow}}}];"},
+      "id":"136-response","name":"Controller Response","type":"n8n-nodes-base.code","typeVersion":2,"position":[40,0]
+    }
+  ],
+  "connections": {
+    "Webhook":{"main":[[{"node":"Monitor Dates & Milestones","type":"main","index":0}]]},
+    "Monitor Dates & Milestones":{"main":[[{"node":"Attention Required?","type":"main","index":0}]]},
+    "Attention Required?":{"main":[[{"node":"Persist CRM Activity","type":"main","index":0}],[{"node":"Persist CRM Activity","type":"main","index":0}]]},
+    "Persist CRM Activity":{"main":[[{"node":"Controller Response","type":"main","index":0}]]}
+  },
+  "active": false,
+  "settings":{"executionOrder":"v1"},
+  "versionId":"wf-136-v1",
+  "meta":{"templateCredsSetupCompleted":true},
+  "tags":[]
+}

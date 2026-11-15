@@ -1,0 +1,171 @@
+{
+  "name": "WF-140 CRM Closeout → Portfolio Performance & Deal Intelligence",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-140-crm-closeout-portfolio-performance-intelligence",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "140-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-140-crm-closeout-portfolio-performance-intelligence"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const economics=input.economics??input.profit_verification??deal.economics??{}; const net=Number(economics.actual_net_profit??economics.net_profit??0); const fee=Number(economics.assignment_fee??0); const cost=Number(economics.closing_costs??0)+Number(economics.marketing_costs??0)+Number(economics.other_costs??0); const roi=cost>0?net/cost:null; const days=Number(input.days_to_close??deal.days_to_close??0); const strategy=deal.exit_strategy??input.exit_strategy??'unknown'; const market=input.market??deal.market??{}; const performance={net_profit:net,assignment_fee:fee,total_costs:cost,profit_margin:fee>0?net/fee:null,roi,days_to_close:days,exit_strategy:strategy}; const intelligence={profit_band:net>=25000?'high':net>=10000?'medium':'low',execution_speed:days>0?(days<=21?'fast':days<=45?'normal':'slow'):'unknown',market:market,lessons:net>0?['Positive realized profit','Capture actual costs and timeline for future underwriting']:['Review acquisition, underwriting, negotiation, and exit assumptions']}; const status=net>0?'performance_recorded':'performance_exception'; const route=status==='performance_recorded'?'portfolio_intelligence_update':'human_review'; return [{json:{workflow_id:'WF-140',workflow_name:'CRM Closeout → Portfolio Performance & Deal Intelligence',status,route,deal_id:deal.id??deal.deal_id??null,lead_id:deal.lead_id??null,property_id:deal.property_id??null,performance,intelligence,next_workflow:route,crm_activity:{event_type:'crm_closeout_portfolio_performance',outcome:status,route,deal_id:deal.id??deal.deal_id??null},idempotency_key:'wf-140:portfolio-intelligence:'+(deal.id??deal.deal_id??input.event_id??'unknown')}}}];"
+      },
+      "id": "140-intelligence",
+      "name": "Build Performance Intelligence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "performance_recorded",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "140-ready",
+      "name": "Performance Recorded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,route:$json.route,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,workflow_id:$json.workflow_id,performance:$json.performance,intelligence:$json.intelligence,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "140-crm",
+      "name": "Persist Portfolio Intelligence Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Build Performance Intelligence').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,route:original.route,performance:original.performance,intelligence:original.intelligence,next_workflow:original.next_workflow}}}];"
+      },
+      "id": "140-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Performance Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Performance Intelligence": {
+      "main": [
+        [
+          {
+            "node": "Performance Recorded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Performance Recorded?": {
+      "main": [
+        [
+          {
+            "node": "Persist Portfolio Intelligence Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Portfolio Intelligence Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Portfolio Intelligence Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-140-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

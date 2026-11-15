@@ -1,0 +1,171 @@
+{
+  "name": "WF-165 Seller Offer Delivery Receipt → Response/Timeout Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-165-seller-offer-delivery-receipt",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "165-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-165-seller-offer-delivery-receipt"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const receipt=input.delivery_receipt??input.receipt??{}; const deal=input.deal??{}; const delivery=String(receipt.status??input.delivery_status??input.status??'').toLowerCase(); const event=String(receipt.event_type??input.event_type??'').toLowerCase(); const channel=String(input.channel??receipt.channel??'').toLowerCase(); const dealId=deal.id??input.deal_id??null; const leadId=deal.lead_id??input.lead_id??null; const terminal=['delivered','sent','accepted','queued']; const failed=['failed','undeliverable','bounced','rejected','expired']; const timedOut=['timeout','no_response','response_timeout']; let outcome='unknown',next='human_review',state='delivery_unconfirmed'; if(terminal.includes(delivery)||event.includes('delivered')){outcome='delivered';next='WF-146 seller response intake';state='awaiting_seller_response';} else if(failed.includes(delivery)||failed.some(x=>event.includes(x))){outcome='delivery_failed';next='WF-089 safe delivery reconciliation';state='dispatch_failed';} else if(timedOut.includes(delivery)||timedOut.some(x=>event.includes(x))){outcome='response_timeout';next='WF-099 seller follow-up timing/cadence engine';state='awaiting_follow_up';} return [{json:{workflow_id:'WF-165',outcome,state,deal_id:dealId,lead_id:leadId,property_id:deal.property_id??input.property_id??null,delivery:{status:delivery,event_type:event,channel,message_id:receipt.message_id??input.message_id??null,provider_reference:receipt.provider_reference??input.provider_reference??null},routing:{next_route:next},safety:{unknown_receipt_requires_human_review:true,no_duplicate_dispatch:true,delivery_failure_requires_reconciliation:true,timeout_does_not_equal_seller_decline:true},crm_activity:{event_type:'seller_offer_delivery_receipt',outcome,deal_id:dealId,lead_id:leadId,channel},idempotency_key:'wf-165:receipt:'+(input.event_id??receipt.message_id??dealId??'unknown')}}}];"
+      },
+      "id": "165-controller",
+      "name": "Classify Delivery Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.outcome}}",
+              "rightValue": "unknown",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "165-known",
+      "name": "Known Receipt Outcome?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,delivery:$json.delivery,state:$json.state,routing:$json.routing,safety:$json.safety,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "165-crm",
+      "name": "Persist Delivery Receipt Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Classify Delivery Receipt').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{outcome:original.outcome,state:original.state,next_route:original.routing.next_route}}}];"
+      },
+      "id": "165-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Classify Delivery Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Delivery Receipt": {
+      "main": [
+        [
+          {
+            "node": "Known Receipt Outcome?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Known Receipt Outcome?": {
+      "main": [
+        [
+          {
+            "node": "Persist Delivery Receipt Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Delivery Receipt Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Delivery Receipt Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-165-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

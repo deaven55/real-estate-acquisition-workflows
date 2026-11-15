@@ -1,0 +1,186 @@
+{
+  "name": "WF-174 — Closing Exception Resolution → Milestone Recovery Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-174-closing-exception-resolution-milestone-recovery-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf174-webhook",
+      "name": "WF-174 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-174-closing-exception-resolution-milestone-recovery-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json ?? {};\nconst deal = input.deal ?? input.transaction ?? input;\nconst exception = input.exception ?? input.milestone_exception ?? {};\nconst resolution = input.resolution ?? input.recovery ?? {};\nconst exceptionStatus = String(exception.status ?? input.status ?? '').toLowerCase();\nconst resolutionStatus = String(resolution.status ?? '').toLowerCase();\nconst evidencePresent = Boolean(resolution.evidence ?? resolution.evidence_url ?? resolution.confirmation);\nconst blockerResolved = Boolean(resolution.blocker_resolved ?? resolution.resolved);\nconst nextDueDate = resolution.next_due_date ? new Date(resolution.next_due_date) : null;\nconst nextDueValid = Boolean(nextDueDate && !Number.isNaN(nextDueDate.getTime()));\n\nconst identityComplete = Boolean(deal.deal_id ?? deal.transaction_id) &&\n  Boolean(deal.property_id) &&\n  Boolean(deal.lead_id ?? deal.seller_id);\nconst executed = String(deal.execution_state ?? deal.agreement?.execution_state ?? '').toLowerCase() === 'executed';\nconst signedEvidence = Boolean(deal.signed_evidence ?? deal.agreement?.signed_evidence);\n\nlet disposition = 'recovery_pending';\nlet severity = 'high';\n\nif (!identityComplete || !executed || !signedEvidence) {\n  disposition = 'human_review';\n  severity = 'urgent';\n} else if (['resolved','completed','cleared','closed'].includes(resolutionStatus) && (blockerResolved || evidencePresent || nextDueValid)) {\n  disposition = 'recovered';\n  severity = 'normal';\n} else if (['failed','rejected','cancelled','terminated'].includes(resolutionStatus)) {\n  disposition = 'escalate';\n  severity = 'urgent';\n} else if (resolutionStatus === 'in_progress' || resolutionStatus === 'pending') {\n  disposition = 'recovery_pending';\n  severity = 'high';\n} else if (exceptionStatus === 'resolved' && (evidencePresent || blockerResolved)) {\n  disposition = 'recovered';\n  severity = 'normal';\n}\n\nconst routing = disposition === 'recovered'\n  ? {next_workflow:'WF-136',reason:'Exception resolved; resume critical-date and milestone monitoring.'}\n  : disposition === 'recovery_pending'\n    ? {next_workflow:'WF-155',reason:'Recovery remains open; continue closing milestone orchestration.'}\n    : {next_workflow:'WF-126',reason:'Exception cannot be safely resolved automatically and requires closing coordination/human escalation.'};\n\nreturn [{\n  json:{\n    ...input,\n    workflow_id:'WF-174',\n    workflow_name:'Closing Exception Resolution → Milestone Recovery Controller',\n    identity_complete:identityComplete,\n    execution_state:deal.execution_state ?? deal.agreement?.execution_state ?? null,\n    signed_evidence_present:signedEvidence,\n    exception:{\n      type:exception.type ?? null,\n      status:exceptionStatus,\n      milestone_id:exception.milestone_id ?? null,\n      blocker:exception.blocker ?? null\n    },\n    resolution:{\n      status:resolutionStatus || null,\n      evidence_present:evidencePresent,\n      blocker_resolved:blockerResolved,\n      next_due_date:resolution.next_due_date ?? null,\n      next_due_date_valid:nextDueValid\n    },\n    decision:{disposition,severity},\n    routing\n  }\n}];"
+      },
+      "id": "wf174-controller",
+      "name": "WF-174 Recovery Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchers": []
+          },
+          "conditions": [
+            {
+              "id": "wf174-gate",
+              "leftValue": "={{ $json.decision.disposition }}",
+              "rightValue": "human_review",
+              "operator": {
+                "type": "string",
+                "operation": "notEqual"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf174-gate",
+      "name": "WF-174 Recovery Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{ $json.deal?.lead_id || $json.lead_id || $json.seller_id }}"
+            },
+            {
+              "name": "activity_type",
+              "value": "closing_exception_recovery"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.decision.disposition }}"
+            },
+            {
+              "name": "notes",
+              "value": "={{ JSON.stringify({workflow_id:$json.workflow_id, severity:$json.decision.severity, exception:$json.exception, resolution:$json.resolution, routing:$json.routing}) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf174-crm",
+      "name": "Persist CRM Recovery Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = $json ?? {};\nreturn [{\n  json:{\n    ...out,\n    workflow_id:'WF-174',\n    result:'closing_exception_recovery_evaluated',\n    next_workflow:out.routing?.next_workflow ?? 'WF-126'\n  }\n}];"
+      },
+      "id": "wf174-response",
+      "name": "WF-174 Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-174 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-174 Recovery Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-174 Recovery Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-174 Recovery Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-174 Recovery Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist CRM Recovery Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist CRM Recovery Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist CRM Recovery Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-174 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-174-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

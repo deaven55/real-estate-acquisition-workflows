@@ -1,0 +1,186 @@
+{
+  "name": "WF-173 — Closing Milestone Update → Exception & Escalation Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-173-closing-milestone-update-exception-escalation-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf173-webhook",
+      "name": "WF-173 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-173-closing-milestone-update-exception-escalation-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json ?? {};\nconst deal = input.deal ?? input.transaction ?? input;\nconst update = input.milestone_update ?? input.milestone ?? {};\nconst status = String(update.status ?? '').toLowerCase();\nconst dueDate = update.due_date ? new Date(update.due_date) : null;\nconst now = new Date();\nconst overdue = Boolean(dueDate && !Number.isNaN(dueDate.getTime()) &&\n  dueDate.getTime() < now.getTime() &&\n  !['completed','complete','closed','cancelled','waived'].includes(status));\n\nconst exceptionTypes = [];\nif (overdue) exceptionTypes.push('overdue_milestone');\nif (['failed','blocked','rejected','cancelled','terminated'].includes(status)) exceptionTypes.push('milestone_failure');\nif (update.blocker) exceptionTypes.push('blocker');\nif (update.missing_evidence) exceptionTypes.push('missing_evidence');\nif (update.critical_date_at_risk) exceptionTypes.push('critical_date_at_risk');\n\nconst blockers = Array.isArray(deal.blockers) ? deal.blockers.filter(Boolean) : [];\nconst identityComplete = Boolean(deal.deal_id ?? deal.transaction_id) &&\n  Boolean(deal.property_id) &&\n  Boolean(deal.lead_id ?? deal.seller_id);\nconst executionState = String(deal.execution_state ?? deal.agreement?.execution_state ?? '').toLowerCase();\nconst signedEvidence = Boolean(deal.signed_evidence ?? deal.agreement?.signed_evidence);\n\nlet severity = 'normal';\nlet disposition = 'record_only';\nif (!identityComplete || executionState !== 'executed' || !signedEvidence) {\n  severity = 'urgent';\n  disposition = 'human_review';\n} else if (exceptionTypes.includes('milestone_failure') || exceptionTypes.includes('critical_date_at_risk')) {\n  severity = 'urgent';\n  disposition = 'escalate';\n} else if (exceptionTypes.length || blockers.length) {\n  severity = 'high';\n  disposition = 'attention_required';\n}\n\nconst routing = disposition === 'human_review' || disposition === 'escalate'\n  ? {next_workflow:'WF-126',reason:'Closing exception requires escalation/coordination.'}\n  : exceptionTypes.length || blockers.length\n    ? {next_workflow:'WF-155',reason:'Milestone exception requires closing orchestration and follow-up.'}\n    : {next_workflow:'WF-136',reason:'Milestone update is recorded; continue critical-date monitoring.'};\n\nreturn [{\n  json:{\n    ...input,\n    workflow_id:'WF-173',\n    workflow_name:'Closing Milestone Update → Exception & Escalation Controller',\n    milestone_update:{\n      id:update.id ?? null,\n      name:update.name ?? null,\n      status:update.status ?? null,\n      due_date:update.due_date ?? null,\n      overdue,\n      exception_types:exceptionTypes\n    },\n    identity_complete:identityComplete,\n    execution_state:executionState,\n    signed_evidence_present:signedEvidence,\n    blockers,\n    decision:{severity,disposition},\n    routing\n  }\n}];"
+      },
+      "id": "wf173-controller",
+      "name": "WF-173 Exception Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchers": []
+          },
+          "conditions": [
+            {
+              "id": "wf173-gate",
+              "leftValue": "={{ $json.decision.disposition }}",
+              "rightValue": "record_only",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf173-gate",
+      "name": "WF-173 Exception Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{ $json.deal?.lead_id || $json.lead_id || $json.seller_id }}"
+            },
+            {
+              "name": "activity_type",
+              "value": "closing_milestone_exception"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.decision.disposition }}"
+            },
+            {
+              "name": "notes",
+              "value": "={{ JSON.stringify({workflow_id:$json.workflow_id, milestone_update:$json.milestone_update, severity:$json.decision.severity, blockers:$json.blockers, identity_complete:$json.identity_complete, execution_state:$json.execution_state, signed_evidence_present:$json.signed_evidence_present, routing:$json.routing}) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf173-crm",
+      "name": "Persist CRM Milestone Exception",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = $json ?? {};\nreturn [{\n  json:{\n    ...out,\n    workflow_id:'WF-173',\n    result:'closing_milestone_exception_evaluated',\n    next_workflow:out.routing?.next_workflow ?? 'WF-136'\n  }\n}];"
+      },
+      "id": "wf173-response",
+      "name": "WF-173 Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-173 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-173 Exception Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-173 Exception Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-173 Exception Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-173 Exception Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist CRM Milestone Exception",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist CRM Milestone Exception",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist CRM Milestone Exception": {
+      "main": [
+        [
+          {
+            "node": "WF-173 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-173-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

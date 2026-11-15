@@ -1,0 +1,132 @@
+{
+  "name": "WF-124 — Contract Execution & Signature Outcome Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-124-contract-execution-signature-outcome",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf124-webhook",
+      "name": "WF-124 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b=$json.body??$json,r=b.signature_outcome??b;const requestId=String(r.request_id??b.request_id??'wf124-'+Date.now()),packageId=String(r.contract_package_id??b.contract_package_id??''),leadId=r.lead_id??b.lead_id??null,propertyId=r.property_id??b.property_id??null,dealId=r.deal_id??b.deal_id??null,outcome=String(r.outcome??r.signature_status??b.outcome??b.signature_status??'').toLowerCase(),signedEvidence=r.signed_evidence??b.signed_evidence??r.execution_evidence??b.execution_evidence??null,dnc=Boolean(r.dnc??b.dnc),agreementType=String(r.agreement_type??b.agreement_type??'').toLowerCase();const missing=[];if(!packageId)missing.push('contract_package_id');if(!leadId)missing.push('lead_id');if(!propertyId)missing.push('property_id');if(!dealId)missing.push('deal_id');if(!outcome)missing.push('signature_outcome');const signedSignals=/signed|executed|fully executed|complete/i.test(typeof signedEvidence==='string'?signedEvidence:JSON.stringify(signedEvidence??''));let status='human_review',nextState='human_review',route='human_review',reason='Signature outcome requires review';if(dnc){status='suppressed';nextState='suppressed';route='none';reason='DNC/STOP suppression';}else if(missing.length){status='blocked';nextState='missing_signature_inputs';route='human_review';reason='Required signature outcome inputs are missing';}else if(['signed','executed','fully_executed','fully-executed','complete'].includes(outcome)&&signedEvidence&&signedSignals){status='executed';nextState='contract_executed';route='wf-037-contract-disposition-readiness';reason='Signed/executed evidence received; advance to contract and disposition readiness';}else if(['signed','executed','fully_executed','fully-executed','complete'].includes(outcome)){status='human_review';nextState='execution_evidence_unverified';route='human_review';reason='Signature outcome claims execution but signed evidence is insufficient';}else if(['declined','rejected','refused'].includes(outcome)){status='declined';nextState='contract_declined';route='wf-099-seller-follow-up-timing';reason='Contract was declined or refused';}else if(['expired','cancelled','canceled','void'].includes(outcome)){status='voided';nextState='contract_closed';route='wf-099-seller-follow-up-timing';reason='Contract package expired, cancelled, or voided';}else if(['failed','error','signing_failed'].includes(outcome)){status='signature_failure';nextState='signature_attention';route='human_review';reason='Signature process failed and requires intervention';}else if(['pending','sent','awaiting_signature','awaiting-signature'].includes(outcome)){status='awaiting_signature';nextState='awaiting_signature';route='wf-099-seller-follow-up-timing';reason='Signature package remains outstanding';}const auditId='contract-execution:'+packageId+':'+requestId+':v1';return[{json:{workflow:'WF-124',workflow_version:'1.0',request_id:requestId,contract_package_id:packageId,contract_execution_audit_id:auditId,status,next_state:nextState,route,reason,lead_id:leadId,property_id:propertyId,deal_id:dealId,agreement_type:agreementType,signature_outcome:outcome,execution_state:status==='executed'?'executed':status==='awaiting_signature'?'awaiting_signature':'not_executed',signed_evidence:signedEvidence,missing_items:missing,guardrails:{no_execution_without_signed_evidence:true,no_invented_signature_or_legal_facts:true,dnc_suppression:true,executed_contract_routes_to_transaction_readiness:true,failed_signature_requires_review:true},crm_activity:{activity_type:'contract_execution_outcome',subject:'WF-124 contract execution — '+status,lead_id:leadId,property_id:propertyId,deal_id:dealId,external_id:auditId,external_source:'wholesaling-os-contract',metadata:{contract_package_id:packageId,status,next_state:nextState,route,signature_outcome:outcome,execution_state:status==='executed'?'executed':status==='awaiting_signature'?'awaiting_signature':'not_executed',reason}}}}];"
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;let valid=true,reason='validated';if(!r.contract_execution_audit_id||!r.status||!r.next_state||!r.route)valid=false,reason='invalid_execution_contract';if(r.status==='executed'&&r.execution_state!=='executed')valid=false,reason='executed_state_mismatch';if(r.status==='executed'&&r.route!=='wf-037-contract-disposition-readiness')valid=false,reason='executed_route_mismatch';if(r.status==='executed'&&!r.signed_evidence)valid=false,reason='signed_evidence_missing';if(r.dnc&&r.route!=='none')valid=false,reason='dnc_route_mismatch';return[{json:{...r,validation_status:valid?'validated':'blocked',validation_reason:reason,status:valid?r.status:'blocked',next_state:valid?r.next_state:'human_review',route:valid?r.route:'human_review'}}];"
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({ activity_type:$json.crm_activity.activity_type,subject:$json.crm_activity.subject,body:JSON.stringify({contract_execution_audit_id:$json.contract_execution_audit_id,contract_package_id:$json.contract_package_id,status:$json.status,next_state:$json.next_state,route:$json.route,signature_outcome:$json.signature_outcome,execution_state:$json.execution_state,signed_evidence:$json.signed_evidence,missing_items:$json.missing_items,reason:$json.reason,guardrails:$json.guardrails}),lead_id:$json.crm_activity.lead_id,property_id:$json.crm_activity.property_id,deal_id:$json.crm_activity.deal_id,external_id:$json.crm_activity.external_id,external_source:$json.crm_activity.external_source,metadata:$json.crm_activity.metadata}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf124-crm",
+      "name": "Persist Contract Execution Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;return[{json:{...r,crm_persistence_attempted:true,crm_persistence_status:$json.statusCode>=200&&$json.statusCode<300?'persisted':'failed',next_action:{route:r.route,next_state:r.next_state,request_id:r.request_id,contract_execution_audit_id:r.contract_execution_audit_id}}}];"
+      },
+      "id": "wf124-return",
+      "name": "Return Contract Execution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-124 Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Signature Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Signature Outcome": {
+      "main": [
+        [
+          {
+            "node": "Validate Execution Guardrails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Execution Guardrails": {
+      "main": [
+        [
+          {
+            "node": "Persist Contract Execution Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Contract Execution Audit": {
+      "main": [
+        [
+          {
+            "node": "Return Contract Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf124-v1"
+}

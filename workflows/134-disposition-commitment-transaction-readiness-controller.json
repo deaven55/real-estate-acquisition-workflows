@@ -1,0 +1,37 @@
+{
+  "name": "WF-134 Disposition Commitment → Transaction Readiness Controller",
+  "nodes": [
+    {
+      "parameters": {"httpMethod":"POST","path":"wf-134-disposition-commitment-transaction-readiness-controller","responseMode":"lastNode","options":{}},
+      "id":"134-webhook","name":"Webhook","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[-900,0],
+      "webhookId":"wf-134-disposition-commitment-transaction-readiness-controller"
+    },
+    {
+      "parameters": {"jsCode":"const input=$json.body ?? $json;\nconst deal=input.deal ?? input;\nconst buyer=input.buyer ?? {};\nconst seller=input.seller ?? {};\nconst property=input.property ?? {};\nconst agreement=input.agreement ?? {};\nconst funding=input.funding ?? {};\nconst documents=input.documents ?? {};\nconst dates=input.critical_dates ?? {};\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst requiredDocs=Array.isArray(documents.required)?documents.required:[];\nconst suppliedDocs=Array.isArray(documents.supplied)?documents.supplied:[];\nconst missingDocs=requiredDocs.filter(d=>!suppliedDocs.includes(d));\nconst agreementType=String(agreement.type||deal.agreement_type||'').toLowerCase();\nconst validAgreement=['assignment','novation','double_close'].includes(agreementType);\nconst executed=agreement.execution_state==='executed'||deal.execution_state==='executed';\nconst buyerCommitted=buyer.commitment_status==='committed'||input.commitment_status==='committed';\nconst fundingReady=funding.ready===true||funding.status==='verified'||(agreementType!=='double_close'&&funding.required!==true);\nconst criticalDatePresent=Boolean(dates.closing_date||dates.assignment_deadline||dates.termination_date);\nconst openBlockers=blockers.filter(b=>b&&b.resolved!==true&&b.status!=='resolved');\nconst identityReady=Boolean((buyer.id||buyer.buyer_id)&&(deal.id||deal.deal_id)&&(property.id||property.property_id));\nconst ready=Boolean(validAgreement&&executed&&buyerCommitted&&fundingReady&&identityReady&&missingDocs.length===0&&openBlockers.length===0&&criticalDatePresent);\nlet route='human_review';\nif(ready) route='transaction_readiness';\nelse if(!executed) route='contract_execution';\nelse if(!buyerCommitted) route='buyer_commitment';\nelse if(!fundingReady) route='funding_readiness';\nelse if(missingDocs.length||openBlockers.length||!criticalDatePresent) route='readiness_blocked';\nreturn [{json:{workflow_id:'WF-134',workflow_name:'Disposition Commitment → Transaction Readiness Controller',status:ready?'ready':'blocked',route,transaction_ready:ready,deal_id:deal.id??deal.deal_id??null,lead_id:deal.lead_id??seller.lead_id??null,property_id:property.id??property.property_id??null,buyer_id:buyer.id??buyer.buyer_id??null,agreement_type:agreementType||null,agreement_execution_state:agreement.execution_state??deal.execution_state??null,buyer_commitment_status:buyer.commitment_status??input.commitment_status??null,funding_status:funding.status??null,funding_ready:fundingReady,missing_documents:missingDocs,open_blockers:openBlockers,critical_dates:dates,identity_ready:identityReady,next_workflow:ready?'WF-125/126 transaction readiness & closing coordination':route==='contract_execution'?'WF-124 contract execution & signature outcome controller':route==='buyer_commitment'?'WF-132 buyer outreach & commitment sequence':route==='funding_readiness'?'WF-127 buyer/assignee & funding readiness controller':'human_review',crm_activity:{event_type:'disposition_commitment_transaction_readiness',outcome:ready?'ready':'blocked',route,deal_id:deal.id??deal.deal_id??null},idempotency_key:'wf-134:disposition-commitment-readiness:'+(deal.id??deal.deal_id??input.event_id??'unknown')}}}];"},
+      "id":"134-normalize","name":"Normalize & Evaluate Readiness","type":"n8n-nodes-base.code","typeVersion":2,"position":[-680,0]
+    },
+    {
+      "parameters": {"conditions":{"options":{"caseSensitive":false,"matchType":"all","typeValidation":"strict"},"conditions":[{"leftValue":"={{$json.transaction_ready}}","rightValue":true,"operator":{"type":"boolean","operation":"true"}}],"combinator":"and"}},
+      "id":"134-ready-switch","name":"Ready?","type":"n8n-nodes-base.if","typeVersion":2,"position":[-440,0]
+    },
+    {
+      "parameters": {"method":"POST","url":"={{($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities'}}","sendHeaders":true,"headerParameters":{"parameters":[{"name":"X-API-Key","value":"={{$env.INSULA_CRM_API_KEY || ''}}"},{"name":"Content-Type","value":"application/json"}]},"sendBody":true,"contentType":"json","body":"={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,route:$json.route,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,buyer_id:$json.buyer_id,workflow_id:$json.workflow_id,idempotency_key:$json.idempotency_key})}}","options":{}},
+      "id":"134-crm","name":"Persist CRM Activity","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[-200,0]
+    },
+    {
+      "parameters": {"jsCode":"const original=$('Normalize & Evaluate Readiness').first().json;\nreturn [{json:{...original,crm_persistence:'attempted',response:{status:original.status,route:original.route,transaction_ready:original.transaction_ready,next_workflow:original.next_workflow,missing_documents:original.missing_documents,open_blockers:original.open_blockers,critical_dates:original.critical_dates}}}];"},
+      "id":"134-response","name":"Controller Response","type":"n8n-nodes-base.code","typeVersion":2,"position":[40,0]
+    }
+  ],
+  "connections": {
+    "Webhook":{"main":[[{"node":"Normalize & Evaluate Readiness","type":"main","index":0}]]},
+    "Normalize & Evaluate Readiness":{"main":[[{"node":"Ready?","type":"main","index":0}]]},
+    "Ready?":{"main":[[{"node":"Persist CRM Activity","type":"main","index":0}],[{"node":"Persist CRM Activity","type":"main","index":0}]]},
+    "Persist CRM Activity":{"main":[[{"node":"Controller Response","type":"main","index":0}]]}
+  },
+  "active": false,
+  "settings":{"executionOrder":"v1"},
+  "versionId":"wf-134-v1",
+  "meta":{"templateCredsSetupCompleted":true},
+  "tags":[]
+}

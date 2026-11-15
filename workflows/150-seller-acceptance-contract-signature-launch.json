@@ -1,0 +1,171 @@
+{
+  "name": "WF-150 Seller Acceptance → Contract Package & Signature Launch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-150-seller-acceptance-contract-signature-launch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "150-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-150-seller-acceptance-contract-signature-launch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const seller=input.seller??{}; const offer=input.offer??{}; const acceptance=input.acceptance??{}; const accepted=acceptance.accepted===true||input.seller_accepted===true; const identityOk=Boolean((seller.name??input.seller_name)&&(seller.phone??input.seller_phone||seller.email??input.seller_email)); const price=Number(acceptance.agreed_price??offer.final_offer??offer.current_offer??0); const mao=Number(offer.maximum_offer??input.effective_mao??0); const agreementType=String(input.agreement_type??'assignment').toLowerCase(); const validType=['assignment','novation','double_close'].includes(agreementType); let status='contract_blocked'; let route='human_review'; if(!accepted) status='acceptance_required'; else if(!identityOk) status='identity_required'; else if(!price) status='agreed_price_required'; else if(mao>0&&price>mao) status='above_mao'; else if(!validType) status='agreement_type_required'; else {status='contract_package_ready';route='WF-123 contract package/signature readiness';} const required=['purchase_agreement','seller_identity','property_identity','agreed_price','agreement_type','signature_parties']; return [{json:{workflow_id:'WF-150',workflow_name:'Seller Acceptance → Contract Package & Signature Launch Controller',status,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,seller,acceptance:{accepted,agreed_price:price,accepted_at:acceptance.accepted_at??input.accepted_at??null},offer:{maximum_offer:mao,final_offer:price},contract:{agreement_type:agreementType,required_package_components:required,execution_state:'not_executed'},routing:{next_workflow:route},guardrails:{acceptance_must_be_explicit:true,agreed_price_must_not_exceed_mao:true,no_claim_of_execution_before_signed_evidence:true,human_legal_review_required_before_execution:true},crm_activity:{event_type:'seller_acceptance_contract_package_launch',outcome:status,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-150:contract-package:'+(input.acceptance_id??input.message_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "150-controller",
+      "name": "Validate Seller Acceptance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "contract_package_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "150-ready",
+      "name": "Contract Package Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,seller:$json.seller,acceptance:$json.acceptance,offer:$json.offer,contract:$json.contract,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "150-crm",
+      "name": "Persist Contract Launch State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Validate Seller Acceptance').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,next_workflow:original.routing.next_workflow,contract:original.contract}}}];"
+      },
+      "id": "150-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Seller Acceptance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Seller Acceptance": {
+      "main": [
+        [
+          {
+            "node": "Contract Package Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contract Package Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Contract Launch State",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Contract Launch State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Contract Launch State": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-150-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

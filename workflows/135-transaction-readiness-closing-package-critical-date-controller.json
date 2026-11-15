@@ -1,0 +1,37 @@
+{
+  "name": "WF-135 Transaction Readiness → Closing Package & Critical-Date Controller",
+  "nodes": [
+    {
+      "parameters": {"httpMethod":"POST","path":"wf-135-transaction-readiness-closing-package-critical-date-controller","responseMode":"lastNode","options":{}},
+      "id":"135-webhook","name":"Webhook","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[-900,0],
+      "webhookId":"wf-135-transaction-readiness-closing-package-critical-date-controller"
+    },
+    {
+      "parameters": {"jsCode":"const input=$json.body ?? $json;\nconst deal=input.deal ?? input;\nconst agreement=input.agreement ?? {};\nconst buyer=input.buyer ?? {};\nconst property=input.property ?? {};\nconst closing=input.closing ?? {};\nconst dates=input.critical_dates ?? {};\nconst docs=input.documents ?? {};\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst requiredDocs=Array.isArray(docs.required)?docs.required:[];\nconst suppliedDocs=Array.isArray(docs.supplied)?docs.supplied:[];\nconst missingDocs=requiredDocs.filter(d=>!suppliedDocs.includes(d));\nconst openBlockers=blockers.filter(b=>b&&b.resolved!==true&&b.status!=='resolved');\nconst agreementType=String(agreement.type||deal.agreement_type||'').toLowerCase();\nconst validAgreement=['assignment','novation','double_close'].includes(agreementType);\nconst executed=agreement.execution_state==='executed'||deal.execution_state==='executed';\nconst transactionReady=input.transaction_ready===true||input.status==='ready';\nconst identityReady=Boolean((deal.id||deal.deal_id)&&(property.id||property.property_id)&&(buyer.id||buyer.buyer_id));\nconst closingDate=dates.closing_date||closing.closing_date||null;\nconst assignmentDeadline=dates.assignment_deadline||closing.assignment_deadline||null;\nconst criticalDate=closingDate||assignmentDeadline||dates.termination_date||null;\nconst dateState=criticalDate?'present':'missing';\nconst closingRequirements=Array.isArray(closing.requirements)?closing.requirements:[];\nconst missingClosingRequirements=closingRequirements.filter(r=>r&&r.required===true&&r.completed!==true);\nconst titleReady=closing.title_status==='clear'||closing.title_status==='approved'||closing.title_ready===true;\nconst attorneyReady=closing.attorney_ready===true||closing.attorney_status==='ready';\nconst buyerFundingReady=closing.buyer_funding_ready===true||closing.funding_status==='verified';\nconst packageReady=executed&&validAgreement&&transactionReady&&identityReady&&missingDocs.length===0&&missingClosingRequirements.length===0&&openBlockers.length===0&&criticalDate!==null;\nconst closingReady=packageReady&&titleReady&&attorneyReady&&buyerFundingReady;\nlet route='human_review';\nif(closingReady) route='closing_coordination';\nelse if(!packageReady) route='closing_package_blocked';\nelse if(!titleReady) route='title_readiness';\nelse if(!attorneyReady) route='attorney_readiness';\nelse if(!buyerFundingReady) route='buyer_funding_readiness';\nreturn [{json:{workflow_id:'WF-135',workflow_name:'Transaction Readiness → Closing Package & Critical-Date Controller',status:closingReady?'ready':packageReady?'package_ready':'blocked',route,transaction_ready:transactionReady,closing_ready:closingReady,deal_id:deal.id??deal.deal_id??null,lead_id:deal.lead_id??null,property_id:property.id??property.property_id??null,buyer_id:buyer.id??buyer.buyer_id??null,agreement_type:agreementType||null,agreement_execution_state:agreement.execution_state??deal.execution_state??null,critical_dates:{closing_date:closingDate,assignment_deadline:assignmentDeadline,termination_date:dates.termination_date??null,date_state:dateState},missing_documents:missingDocs,missing_closing_requirements:missingClosingRequirements,open_blockers:openBlockers,title_ready:titleReady,attorney_ready:attorneyReady,buyer_funding_ready:buyerFundingReady,closing_package:{required_documents:requiredDocs,supplied_documents:suppliedDocs,missing_documents:missingDocs,requirements:closingRequirements},next_workflow:closingReady?'WF-126 closing coordination & critical date controller':route==='title_readiness'?'title/attorney coordination':route==='attorney_readiness'?'attorney readiness':'human_review',crm_activity:{event_type:'transaction_readiness_closing_package',outcome:closingReady?'closing_ready':packageReady?'package_ready':'blocked',route,deal_id:deal.id??deal.deal_id??null},idempotency_key:'wf-135:transaction-readiness-closing-package:'+(deal.id??deal.deal_id??input.event_id??'unknown')}}}];"},
+      "id":"135-evaluate","name":"Evaluate Closing Package Readiness","type":"n8n-nodes-base.code","typeVersion":2,"position":[-680,0]
+    },
+    {
+      "parameters": {"conditions":{"options":{"caseSensitive":false,"matchType":"all","typeValidation":"strict"},"conditions":[{"leftValue":"={{$json.closing_ready}}","rightValue":true,"operator":{"type":"boolean","operation":"true"}}],"combinator":"and"}},
+      "id":"135-ready","name":"Closing Ready?","type":"n8n-nodes-base.if","typeVersion":2,"position":[-440,0]
+    },
+    {
+      "parameters": {"method":"POST","url":"={{($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities'}}","sendHeaders":true,"headerParameters":{"parameters":[{"name":"X-API-Key","value":"={{$env.INSULA_CRM_API_KEY || ''}}"},{"name":"Content-Type","value":"application/json"}]},"sendBody":true,"contentType":"json","body":"={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,route:$json.route,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,buyer_id:$json.buyer_id,workflow_id:$json.workflow_id,idempotency_key:$json.idempotency_key})}}","options":{}},
+      "id":"135-crm","name":"Persist CRM Activity","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[-200,0]
+    },
+    {
+      "parameters": {"jsCode":"const original=$('Evaluate Closing Package Readiness').first().json;\nreturn [{json:{...original,crm_persistence:'attempted',response:{status:original.status,route:original.route,transaction_ready:original.transaction_ready,closing_ready:original.closing_ready,critical_dates:original.critical_dates,missing_documents:original.missing_documents,missing_closing_requirements:original.missing_closing_requirements,open_blockers:original.open_blockers,next_workflow:original.next_workflow}}}];"},
+      "id":"135-response","name":"Controller Response","type":"n8n-nodes-base.code","typeVersion":2,"position":[40,0]
+    }
+  ],
+  "connections": {
+    "Webhook":{"main":[[{"node":"Evaluate Closing Package Readiness","type":"main","index":0}]]},
+    "Evaluate Closing Package Readiness":{"main":[[{"node":"Closing Ready?","type":"main","index":0}]]},
+    "Closing Ready?":{"main":[[{"node":"Persist CRM Activity","type":"main","index":0}],[{"node":"Persist CRM Activity","type":"main","index":0}]]},
+    "Persist CRM Activity":{"main":[[{"node":"Controller Response","type":"main","index":0}]]}
+  },
+  "active": false,
+  "settings":{"executionOrder":"v1"},
+  "versionId":"wf-135-v1",
+  "meta":{"templateCredsSetupCompleted":true},
+  "tags":[]
+}

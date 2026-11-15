@@ -1,0 +1,171 @@
+{
+  "name": "WF-144 Property-Level Offer Strategy → Seller Offer Package & Negotiation Launch",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-144-seller-offer-package-negotiation-launch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "144-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-144-seller-offer-package-negotiation-launch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const seller=input.seller??{}; const deal=input.deal??input; const strategy=input.offer_strategy??{}; const econ=input.economics??{}; const approval=input.approval??{}; const max=Number(strategy.maximum_offer??econ.effective_mao??0); const initial=Number(strategy.initial_offer??0); const ask=Number(econ.asking_price??deal.asking_price??0); const sellerName=seller.name??[seller.first_name,seller.last_name].filter(Boolean).join(' ')??'Seller'; const approved=approval.approved===true||input.human_approval===true; const autonomous=input.autonomous_communication_authorized===true; const message=initial>0?'Hi '+sellerName+', I reviewed the property and would like to discuss an offer around $'+Math.round(initial).toLocaleString()+'. I’m happy to talk through the details and work toward a number that makes sense for both sides.':''; const status=!max?'offer_strategy_missing':(!approved&&!autonomous?'approval_required':initial<=max?'package_ready':'offer_invalid'); const route=status==='package_ready'?'WF-120 negotiation response generator':status==='approval_required'?'human_review':'WF-143 property-level offer strategy'; return [{json:{workflow_id:'WF-144',workflow_name:'Property-Level Offer Strategy → Seller Offer Package & Negotiation Launch',status,route,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,seller,offer:{initial_offer:initial,maximum_offer:max,asking_price:ask,negotiation_ceiling:max,offer_type:'subject_to_final_agreement'},seller_message:message,authorization:{human_approval:approved,autonomous_communication_authorized:autonomous,send_allowed:status==='package_ready'},guardrails:{never_exceed_maximum_offer:true,no_invented_facts:true,no_binding_commitment_without_approved_agreement:true},next_workflow:route,crm_activity:{event_type:'seller_offer_package_negotiation_launch',outcome:status,route,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-144:offer-package:'+(deal.id??deal.deal_id??input.deal_id??'unknown')}}}];"
+      },
+      "id": "144-package",
+      "name": "Build Seller Offer Package",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "package_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "144-ready",
+      "name": "Package Ready to Launch?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,route:$json.route,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,offer:$json.offer,authorization:$json.authorization,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "144-crm",
+      "name": "Persist Offer Package Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Build Seller Offer Package').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,route:original.route,offer:original.offer,authorization:original.authorization,next_workflow:original.next_workflow}}}];"
+      },
+      "id": "144-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Seller Offer Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Seller Offer Package": {
+      "main": [
+        [
+          {
+            "node": "Package Ready to Launch?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Package Ready to Launch?": {
+      "main": [
+        [
+          {
+            "node": "Persist Offer Package Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Offer Package Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Offer Package Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-144-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

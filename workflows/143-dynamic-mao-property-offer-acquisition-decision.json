@@ -1,0 +1,171 @@
+{
+  "name": "WF-143 Dynamic MAO → Property-Level Offer Strategy & Acquisition Decision",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-143-dynamic-mao-property-offer-acquisition-decision",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "143-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-143-dynamic-mao-property-offer-acquisition-decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const p=input.property??{}; const evidence=input.evidence??{}; const base=Number(input.adjusted_mao??input.mao??0); const ask=Number(input.asking_price??p.asking_price??0); const repairs=Number(evidence.repairs??input.repairs??0); const arv=Number(evidence.arv??input.arv??0); const assignmentFee=Number(input.target_assignment_fee??input.assignment_fee??0); const closingCosts=Number(input.closing_costs??0); const contingency=Number(input.contingency??Math.max(repairs*0.1,0)); const totalProject=ask+repairs+closingCosts+contingency; const maxEconomicPrice=Math.max(0,arv-repairs-closingCosts-contingency-assignmentFee); const effectiveMao=base>0?Math.min(base,maxEconomicPrice):maxEconomicPrice; const spread=arv>0?arv-totalProject-assignmentFee:0; const margin=arv>0?spread/arv:null; let decision='needs_evidence'; if(base>0&&ask<=effectiveMao) decision='pursue_offer'; else if(base>0&&ask<=effectiveMao*1.05) decision='negotiate'; else if(base>0&&ask>effectiveMao) decision='pass_or_reprice'; if(!arv||arv<=0) decision='needs_evidence'; const status=decision==='pursue_offer'?'offer_strategy_ready':decision==='negotiate'?'negotiation_range_ready':decision==='pass_or_reprice'?'acquisition_reject_or_reprice':'evidence_required'; const route=status==='offer_strategy_ready'||status==='negotiation_range_ready'?'WF-116 offer strategy & seller offer preparation':status==='acquisition_reject_or_reprice'?'WF-069 deal viability/MAO strategy gate':'WF-108 underwriting evidence orchestrator'; return [{json:{workflow_id:'WF-143',workflow_name:'Dynamic MAO → Property-Level Offer Strategy & Acquisition Decision',status,route,deal_id:input.deal_id??p.deal_id??null,lead_id:input.lead_id??null,property_id:p.id??input.property_id??null,property_type:p.property_type??input.property_type??'unknown',economics:{asking_price:ask,arv,repairs,closing_costs:closingCosts,contingency,assignment_fee:assignmentFee,total_project_cost:totalProject,max_economic_price:maxEconomicPrice,dynamic_mao:base,effective_mao:effectiveMao,estimated_spread:spread,estimated_margin:margin},decision,offer_strategy:{initial_offer:decision==='pursue_offer'?Math.min(ask,effectiveMao):decision==='negotiate'?Math.min(ask,effectiveMao*0.95):null,maximum_offer:effectiveMao,negotiation_ceiling:effectiveMao,requires_human_approval:true},guardrails:{no_offer_without_arv:Boolean(arv<=0),no_offer_above_effective_mao:true,assignment_fee_preserved:true},next_workflow:route,crm_activity:{event_type:'property_level_dynamic_mao_acquisition_decision',outcome:status,route,deal_id:input.deal_id??p.deal_id??null},idempotency_key:'wf-143:property-offer-decision:'+(input.deal_id??p.deal_id??input.property_id??'unknown')}}}];"
+      },
+      "id": "143-decision",
+      "name": "Build Offer Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "offer_strategy_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "143-ready",
+      "name": "Offer Strategy Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,route:$json.route,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,economics:$json.economics,decision:$json.decision,offer_strategy:$json.offer_strategy,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "143-crm",
+      "name": "Persist Acquisition Decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Build Offer Strategy').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,route:original.route,decision:original.decision,economics:original.economics,offer_strategy:original.offer_strategy,next_workflow:original.next_workflow}}}];"
+      },
+      "id": "143-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Offer Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Offer Strategy": {
+      "main": [
+        [
+          {
+            "node": "Offer Strategy Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offer Strategy Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Acquisition Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Acquisition Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Acquisition Decision": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-143-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

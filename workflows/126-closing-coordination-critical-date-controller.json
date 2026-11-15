@@ -1,0 +1,148 @@
+{
+  "name": "WF-126 — Closing Coordination & Critical Date Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-126-closing-coordination-critical-date-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf126-webhook",
+      "name": "WF-126 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b=$json.body || $json;\nconst requestId=String(b.request_id || ('wf126-'+Date.now()));\nconst dealId=b.deal_id || null, leadId=b.lead_id || null, propertyId=b.property_id || null, readinessId=b.transaction_readiness_id || null;\nconst agreementType=String(b.agreement_type || '').toLowerCase();\nconst closingDate=b.closing_date || b.target_closing_date || null;\nconst statusInput=String(b.closing_status || b.status || '').toLowerCase();\nconst titleStatus=String(b.title_status || '').toLowerCase(), attorneyStatus=String(b.attorney_status || '').toLowerCase(), fundingStatus=String(b.funding_status || '').toLowerCase(), buyerStatus=String(b.buyer_status || b.assignee_status || '').toLowerCase();\nconst dnc=Boolean(b.dnc), missing=[];\nif(!dealId) missing.push('deal_id'); if(!leadId) missing.push('lead_id'); if(!propertyId) missing.push('property_id'); if(!readinessId) missing.push('transaction_readiness_id'); if(!agreementType) missing.push('agreement_type');\nconst blockers=[],bad=['failed','issue','blocked','rejected'];\nif(bad.includes(titleStatus)) blockers.push('title'); if(bad.includes(attorneyStatus)) blockers.push('closing_attorney'); if(bad.includes(fundingStatus)) blockers.push('funding'); if(bad.includes(buyerStatus)) blockers.push('buyer_or_assignee');\nif(Array.isArray(b.closing_conditions)) for(const c of b.closing_conditions) if(c && String(c.status || '').toLowerCase() !== 'complete') blockers.push(String(c.name || 'closing_condition'));\nlet status='blocked',nextState='closing_review',route='human_review',reason='Closing coordination requires review';\nif(dnc){status='suppressed';nextState='closing_coordination';route='none';reason='DNC suppresses communication only; closing state is retained';}\nelse if(missing.length){status='blocked';nextState='missing_closing_inputs';reason='Required closing coordination identity is missing';}\nelse if(blockers.length){status='blocked';nextState='closing_blocked';reason='One or more closing conditions are unresolved';}\nelse if(statusInput==='closed'||statusInput==='funded'||statusInput==='recorded'){status='closed';nextState='post_close';route='wf-043-post-close-assignment-completion';reason='Closing outcome indicates transaction is complete';}\nelse if(statusInput==='ready'||(titleStatus==='clear'&&attorneyStatus==='ready'&&fundingStatus==='ready'&&buyerStatus==='ready')){status='closing_ready';nextState='closing_scheduled';reason='Core closing readiness conditions are satisfied; confirm closing appointment and final documents';}\nelse{status='in_progress';nextState='closing_coordination';reason='Closing coordination remains in progress';}\nconst id='closing-coordination:'+dealId+':'+requestId+':v1',uniqueBlockers=[...new Set(blockers)];\nreturn [{json:{workflow:'WF-126',workflow_version:'1.0',request_id:requestId,closing_coordination_id:id,transaction_readiness_id:readinessId,lead_id:leadId,property_id:propertyId,deal_id:dealId,agreement_type:agreementType,status,next_state:nextState,route,reason,closing_date:closingDate,title_status:titleStatus,attorney_status:attorneyStatus,funding_status:fundingStatus,buyer_status:buyerStatus,blockers:uniqueBlockers,critical_dates:{closing_date:closingDate,days_until_closing:closingDate?Math.ceil((new Date(closingDate).getTime()-Date.now())/86400000):null},requirements:['title/ownership verification','closing attorney or title company confirmation','executed agreement copy'],guardrails:{executed_agreement_required:true,no_invented_title_or_legal_facts:true,unresolved_blockers_prevent_closing_ready:true,human_closing_confirmation_required:true,dnc_suppresses_communication_not_transaction_state:true},crm_activity:{activity_type:'closing_coordination',subject:'WF-126 closing coordination - '+status,lead_id:leadId,property_id:propertyId,deal_id:dealId,external_id:id,external_source:'wholesaling-os-closing',metadata:{status,next_state:nextState,route,reason,closing_date:closingDate,blockers:uniqueBlockers}}}}];"
+      },
+      "id": "wf126-eval",
+      "name": "Evaluate Closing Coordination",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;let valid=true,reason='validated';if(!r.closing_coordination_id||!r.deal_id||!r.transaction_readiness_id){valid=false;reason='missing_closing_identity';}if(r.status==='closed'&&r.next_state!=='post_close'){valid=false;reason='closed_state_mismatch';}if(r.status==='closing_ready'&&r.blockers&&r.blockers.length){valid=false;reason='unresolved_blockers';}if(r.dnc&&r.route!=='none'){valid=false;reason='dnc_route_mismatch';}return [{json:{...r,validation_status:valid?'validated':'blocked',validation_reason:reason,status:valid?r.status:'blocked',next_state:valid?r.next_state:'human_review',route:valid?r.route:'human_review'}}];"
+      },
+      "id": "wf126-validate",
+      "name": "Validate Closing Guardrails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({activity_type:$json.crm_activity.activity_type,subject:$json.crm_activity.subject,body:JSON.stringify({closing_coordination_id:$json.closing_coordination_id,status:$json.status,next_state:$json.next_state,route:$json.route,reason:$json.reason,closing_date:$json.closing_date,title_status:$json.title_status,attorney_status:$json.attorney_status,funding_status:$json.funding_status,buyer_status:$json.buyer_status,blockers:$json.blockers,critical_dates:$json.critical_dates,guardrails:$json.guardrails}),lead_id:$json.crm_activity.lead_id,property_id:$json.crm_activity.property_id,deal_id:$json.crm_activity.deal_id,external_id:$json.crm_activity.external_id,external_source:$json.crm_activity.external_source,metadata:$json.crm_activity.metadata}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf126-crm",
+      "name": "Persist Closing Coordination Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;return [{json:{...r,crm_persistence_attempted:true,crm_persistence_status:$json.statusCode>=200&&$json.statusCode<300?'persisted':'failed',next_action:{route:r.route,next_state:r.next_state,request_id:r.request_id,closing_coordination_id:r.closing_coordination_id}}}];"
+      },
+      "id": "wf126-return",
+      "name": "Return Closing Coordination",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-126 Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Closing Coordination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Closing Coordination": {
+      "main": [
+        [
+          {
+            "node": "Validate Closing Guardrails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Closing Guardrails": {
+      "main": [
+        [
+          {
+            "node": "Persist Closing Coordination Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Closing Coordination Audit": {
+      "main": [
+        [
+          {
+            "node": "Return Closing Coordination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf126-v1"
+}

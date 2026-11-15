@@ -1,0 +1,171 @@
+{
+  "name": "WF-159 Profit Verification → CRM Closeout & Portfolio Performance",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-159-profit-verification-closeout",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "159-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-159-profit-verification-closeout"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const economics=input.economics??{}; const closing=String(input.closing_outcome??'').toLowerCase(); const status=String(input.status??'profit_reconciled').toLowerCase(); const expected=Number(economics.calculated_net_profit??input.expected_net_profit??0); const realized=Number(economics.reported_realized_profit??input.realized_profit??0); const discrepancy=economics.discrepancy==null?realized-expected:Number(economics.discrepancy); const tolerance=Number(input.discrepancy_tolerance??100); const verified=Boolean(input.profit_evidence??input.verification_evidence??Object.keys(input.evidence??{}).length)||Boolean(economics.reported_realized_profit); const identity=Boolean(deal.property_id??input.property_id)&&Boolean(deal.lead_id??input.lead_id??input.seller_id); let result='closeout_blocked',route='human_review'; if(!['closed','funded','recorded'].includes(closing)) result='verified_closing_required'; else if(!identity) result='identity_required'; else if(!verified) result='profit_evidence_required'; else if(Math.abs(discrepancy)>tolerance) result='profit_discrepancy'; else if(status!=='profit_reconciled'&&Math.abs(discrepancy)>0) result='reconciliation_required'; else {result='closeout_ready';route='WF-140 CRM closeout → portfolio performance & deal intelligence';} return [{json:{workflow_id:'WF-159',workflow_name:'Profit Verification → CRM Closeout & Portfolio Performance',status:result,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,closing_outcome:closing,identity_verified:identity,profit_verification:{expected_net_profit:expected,realized_net_profit:realized,discrepancy,tolerance,verified},closeout:{ready:result==='closeout_ready',crm_closeout_required:true,portfolio_performance_update_required:result==='closeout_ready'},routing:{next_route:route,next_workflow:route.startsWith('WF-140')?'WF-140':null},guardrails:{verified_closing_required:true,profit_evidence_required:true,material_discrepancy_blocks_closeout:true,no_closeout_without_crm_persistence:true,no_invented_profit:true,human_review_for_exceptions:true},crm_activity:{event_type:'profit_verification_closeout',outcome:result,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-159:closeout:'+(input.event_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "159-verify",
+      "name": "Verify Profit & Closeout Eligibility",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "closeout_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "159-ready",
+      "name": "Closeout Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,closing_outcome:$json.closing_outcome,profit_verification:$json.profit_verification,closeout:$json.closeout,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "159-crm",
+      "name": "Persist CRM Closeout Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Verify Profit & Closeout Eligibility').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,next_route:original.routing.next_route,next_workflow:original.routing.next_workflow}}}];"
+      },
+      "id": "159-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Profit & Closeout Eligibility",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Profit & Closeout Eligibility": {
+      "main": [
+        [
+          {
+            "node": "Closeout Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closeout Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist CRM Closeout Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist CRM Closeout Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist CRM Closeout Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-159-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

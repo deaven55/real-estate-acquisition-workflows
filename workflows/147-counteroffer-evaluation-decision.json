@@ -1,0 +1,171 @@
+{
+  "name": "WF-147 Counteroffer Evaluation → Revised Offer / Walk-Away / Contract Decision",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-147-counteroffer-evaluation-decision",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "147-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-147-counteroffer-evaluation-decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const offer=input.offer??{}; const counter=input.counteroffer??{}; const amount=Number(counter.amount??input.counteroffer_amount??0); const mao=Number(offer.maximum_offer??offer.negotiation_ceiling??input.effective_mao??0); const current=Number(offer.current_offer??offer.initial_offer??0); const sellerIntent=String(input.seller_intent??'').toLowerCase(); const room=Math.max(0,mao-current); let decision='human_review'; if(!amount||!mao) decision='evidence_required'; else if(amount<=mao) decision=amount<=current?'accept_or_finalize':'counter_or_accept'; else if(amount<=mao*1.03) decision='counter_with_guardrail'; else decision='walk_away_or_nurture'; if(/urgent|must sell|foreclosure|deadline/.test(sellerIntent)&&amount<=mao) decision='accept_or_finalize'; return [{json:{workflow_id:'WF-147',workflow_name:'Counteroffer Evaluation → Revised Offer / Walk-Away / Contract Decision',status:'evaluated',decision,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,counteroffer:{amount,within_mao:amount>0&&mao>0?amount<=mao:null},offer:{current_offer:current,maximum_offer:mao,remaining_negotiation_room:room},seller_intent:sellerIntent,routing:{next_workflow:decision==='accept_or_finalize'?'WF-122 contract readiness':decision==='counter_or_accept'||decision==='counter_with_guardrail'?'WF-120 negotiation response generator':decision==='walk_away_or_nurture'?'WF-099 seller follow-up cadence':'human_review'},guardrails:{never_accept_above_mao:true,never_raise_mao_without_new_underwriting:true,no_binding_commitment_without_executed_agreement:true,human_review_for_ambiguous_or_missing_evidence:true},crm_activity:{event_type:'counteroffer_evaluated',outcome:decision,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-147:counteroffer:'+(input.message_id??input.external_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "147-evaluate",
+      "name": "Evaluate Counteroffer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.decision}}",
+              "rightValue": "evidence_required",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "147-evidence",
+      "name": "Evidence Required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,decision:$json.decision,counteroffer:$json.counteroffer,offer:$json.offer,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "147-crm",
+      "name": "Persist Counteroffer Decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Evaluate Counteroffer').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{decision:original.decision,next_workflow:original.routing.next_workflow,status:original.status}}}];"
+      },
+      "id": "147-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Counteroffer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Counteroffer": {
+      "main": [
+        [
+          {
+            "node": "Evidence Required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evidence Required?": {
+      "main": [
+        [
+          {
+            "node": "Persist Counteroffer Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Counteroffer Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Counteroffer Decision": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-147-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

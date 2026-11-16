@@ -1,0 +1,181 @@
+{
+  "name": "WF-200 — Negotiation Outcome → Contract Trigger / Rejection / Re-engagement Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-200-negotiation-outcome-contract-rejection-reengagement",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Negotiation Outcome",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-200-negotiation-outcome-contract-rejection-reengagement"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const d=x.counteroffer_contract_decision??{};const decision=String(d.decision??x.negotiation_decision??'').toLowerCase();const seller=x.seller_response_classification??{};const accepted=decision==='contract_decision'||decision==='accept_counteroffer'||seller.classification==='accepted';const rejected=decision==='rejected'||seller.classification==='rejected'||decision==='walk_away';const revised=decision==='revised_offer';const above=decision==='walk_away_or_revised_offer';let outcome='needs_review';if(accepted)outcome='contract_trigger';else if(revised)outcome='revised_offer_follow_up';else if(rejected)outcome='rejection_reengagement';else if(above)outcome='walk_away_reengagement';const route={contract_trigger:'WF-201',revised_offer_follow_up:'WF-195',rejection_reengagement:'WF-202',walk_away_reengagement:'WF-202',needs_review:'WF-126'}[outcome]??'WF-126';const review=outcome==='needs_review'||outcome==='walk_away_reengagement';return[{json:{...x,workflow:'WF-200',negotiation_outcome:{outcome,source_decision:decision||null,accepted,rejected,revised_offer:revised,maoprotected:d.maoprotected??null,proposed_price:d.proposed_price??null},routing:{next_workflow:route,requires_human_review:review},audit:{event:'negotiation_outcome_contract_rejection_reengagement_evaluated',status:outcome}}}];"
+      },
+      "name": "Code — Negotiation Outcome Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "contract",
+              "leftValue": "={{$json.negotiation_outcome.outcome}}",
+              "rightValue": "contract_trigger",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "revised",
+              "leftValue": "={{$json.negotiation_outcome.outcome}}",
+              "rightValue": "revised_offer_follow_up",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "reengage",
+              "leftValue": "={{$json.negotiation_outcome.outcome}}",
+              "rightValue": "rejection_reengagement",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "name": "IF — Negotiation Outcome Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-200:'+($json.deal_id||$json.property_id||'unknown')+':negotiation-outcome',external_source:'wholesale-os',activity_type:'negotiation_outcome_contract_rejection_reengagement',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.negotiation_outcome?.outcome||'unknown',notes:JSON.stringify({workflow:'WF-200',negotiation_outcome:$json.negotiation_outcome,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Negotiation Outcome Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-200',outcome:$json.negotiation_outcome?.outcome??'unknown',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),negotiation_outcome:$json.negotiation_outcome??null}}}];"
+      },
+      "name": "Code — Negotiation Outcome Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Negotiation Outcome": {
+      "main": [
+        [
+          {
+            "node": "Code — Negotiation Outcome Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Negotiation Outcome Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Negotiation Outcome Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Negotiation Outcome Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Negotiation Outcome Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Negotiation Outcome Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Negotiation Outcome Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Negotiation Outcome Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-200-v1"
+}

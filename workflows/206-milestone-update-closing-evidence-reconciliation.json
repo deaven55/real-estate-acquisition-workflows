@@ -1,0 +1,163 @@
+{
+  "name": "WF-206 — Milestone Update → Closing Evidence Reconciliation & Recovery Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-206-milestone-update-closing-evidence-reconciliation",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Milestone Update",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-206-milestone-update-closing-evidence-reconciliation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const m=x.milestone??x.milestone_update??{};const evidence=x.closing_evidence??x.evidence??{};const required=Array.isArray(x.required_evidence)?x.required_evidence:Array.isArray(evidence.required)?evidence.required:[];const verified=Array.isArray(x.verified_evidence)?x.verified_evidence:Array.isArray(evidence.verified)?evidence.verified:[];const failed=Array.isArray(x.failed_evidence)?x.failed_evidence:Array.isArray(evidence.failed)?evidence.failed:[];const blockers=Array.isArray(x.blockers)?x.blockers:[];const missing=required.filter(v=>!verified.includes(v));const identityOk=x.deal_id||x.lead_id||x.property_id;let status='reconciled';if(!identityOk)status='blocked';else if(blockers.length||failed.length)status='recovery_required';else if(missing.length)status='evidence_gap';else if(['completed','verified','closed'].includes(String(m.status??'').toLowerCase()))status='reconciled';else status='incomplete';const next={reconciled:'WF-207',recovery_required:'WF-208',evidence_gap:'WF-208',incomplete:'WF-205',blocked:'WF-126'}[status];return[{json:{...x,workflow:'WF-206',closing_evidence_reconciliation:{status,milestone_id:m.milestone_id??m.id??null,milestone_status:m.status??null,required_count:required.length,verified_count:verified.length,failed_count:failed.length,missing,failed_evidence:failed,blockers},routing:{next_workflow:next,requires_human_review:['blocked','recovery_required','evidence_gap'].includes(status)},audit:{event:'milestone_update_closing_evidence_reconciliation_evaluated',status}}}];"
+      },
+      "name": "Code — Evidence Reconciliation Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "reconciled",
+              "leftValue": "={{$json.closing_evidence_reconciliation.status}}",
+              "rightValue": "reconciled",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Evidence Reconciliation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-206:'+($json.deal_id||$json.property_id||'unknown')+':evidence-reconciliation',external_source:'wholesale-os',activity_type:'milestone_closing_evidence_reconciliation',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.closing_evidence_reconciliation?.status||'blocked',notes:JSON.stringify({workflow:'WF-206',closing_evidence_reconciliation:$json.closing_evidence_reconciliation,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Evidence Reconciliation Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-206',status:$json.closing_evidence_reconciliation?.status??'blocked',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),closing_evidence_reconciliation:$json.closing_evidence_reconciliation??null}}}];"
+      },
+      "name": "Code — Evidence Reconciliation Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Milestone Update": {
+      "main": [
+        [
+          {
+            "node": "Code — Evidence Reconciliation Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Evidence Reconciliation Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Evidence Reconciliation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Evidence Reconciliation Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Evidence Reconciliation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Evidence Reconciliation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Evidence Reconciliation Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Evidence Reconciliation Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-206-v1"
+}

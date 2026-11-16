@@ -1,0 +1,163 @@
+{
+  "name": "WF-185 — Active Closing Execution → Critical-Date & Milestone Monitoring Loop",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-185-active-closing-milestone-monitor",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Closing Milestone Monitor",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-185-active-closing-milestone-monitor"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{}; const e=x.execution_activation??x.execution??{}; const s=e.active_state??x.active_state??{}; const ms=Array.isArray(s.milestones)?s.milestones:[]; const nowMs=Date.parse(x.now??new Date().toISOString()); const closingAt=Date.parse(x.closing_date??x.closingDate??s.closing_date??''); const blockers=Array.isArray(x.blockers)?x.blockers.filter(Boolean):[]; const evaluated=ms.map((m,i)=>{const due=Date.parse(m.due_at??m.dueAt??m.due_date??''); const done=m.status==='completed'||m.completed===true; const overdue=!done&&Number.isFinite(due)&&due<nowMs; const critical=m.critical===true||m.priority==='critical'; return {...m,sequence:m.sequence??i+1,status:done?'completed':overdue?'overdue':(m.status??'pending'),overdue,critical};}); const overdue=evaluated.filter(m=>m.overdue); const criticalOverdue=overdue.filter(m=>m.critical); const daysToClose=Number.isFinite(closingAt)?Math.ceil((closingAt-nowMs)/86400000):null; let status=blockers.length?'blocked':criticalOverdue.length?'critical_overdue':overdue.length?'attention_required':daysToClose!==null&&daysToClose<=1?'closing_due_soon':evaluated.length&&evaluated.every(m=>m.status==='completed')?'milestones_completed':'on_track'; const route=status==='blocked'?'WF-126':status==='critical_overdue'?'WF-155':status==='attention_required'||status==='closing_due_soon'?'WF-155':status==='milestones_completed'?'WF-137':'WF-136'; return [{json:{...x,workflow:'WF-185',monitoring:{status,checked_at:x.now??new Date().toISOString(),closing_date:x.closing_date??x.closingDate??s.closing_date??null,days_to_closing:daysToClose,overdue_count:overdue.length,critical_overdue_count:criticalOverdue.length,milestones:evaluated,blockers},routing:{next_workflow:route,requires_human_review:status==='blocked'||status==='critical_overdue'},audit:{event:'active_closing_milestone_monitoring_evaluated',status}}}];"
+      },
+      "name": "Code — Critical-Date & Milestone Evaluator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "attention",
+              "leftValue": "={{$json.monitoring.status}}",
+              "rightValue": "on_track",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Exception / Attention Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-185:'+($json.deal_id||$json.property_id||'unknown')+':'+($json.monitoring?.checked_at||'unknown'),external_source:'wholesale-os',activity_type:'closing_milestone_monitoring',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.monitoring?.status||'unknown',notes:JSON.stringify({workflow:'WF-185',monitoring:$json.monitoring,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Monitoring Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{...$json,response:{ok:true,workflow:'WF-185',status:$json.monitoring?.status??'unknown',next_workflow:$json.routing?.next_workflow??'WF-136',requires_human_review:Boolean($json.routing?.requires_human_review),monitoring:$json.monitoring??null}}}];"
+      },
+      "name": "Code — Monitoring Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Closing Milestone Monitor": {
+      "main": [
+        [
+          {
+            "node": "Code — Critical-Date & Milestone Evaluator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Critical-Date & Milestone Evaluator": {
+      "main": [
+        [
+          {
+            "node": "IF — Exception / Attention Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Exception / Attention Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Monitoring Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Monitoring Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Monitoring Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Monitoring Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-185-v1"
+}

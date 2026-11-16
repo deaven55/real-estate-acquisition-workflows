@@ -1,0 +1,163 @@
+{
+  "name": "WF-208 — Final Closing Outcome → Verified Close, Profit Reconciliation & CRM Closeout",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-208-final-closing-outcome-verified-close-profit-reconciliation",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Final Closing Outcome",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-208-final-closing-outcome-verified-close-profit-reconciliation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const o=x.final_closing_outcome??{};const funding=x.funding??{};const title=x.title??{};const costs=x.closing_costs??x.costs??{};const blockers=Array.isArray(x.blockers)?x.blockers:(Array.isArray(o.blockers)?o.blockers:[]);const executed=o.executed_agreement===true||x.executed_agreement===true;const closed=String(x.closing_status??x.close_status??'').toLowerCase()in{'closed':1,'funded':1,'verified_close':1};const identity=Boolean(x.deal_id&&x.lead_id&&x.property_id);const gross=Number(x.gross_assignment_profit??x.gross_profit??x.assignment_fee??0);const totalCosts=Number(x.total_closing_costs??costs.total??0);const net=Number(x.net_profit??(gross-totalCosts));let status='profit_reconciliation_blocked';if(!identity)status='blocked';else if(blockers.length)status='blocked';else if(!executed)status='execution_evidence_missing';else if(!closed)status='close_verification_required';else if(!Number.isFinite(gross)||!Number.isFinite(totalCosts)||!Number.isFinite(net))status='profit_inputs_invalid';else status='verified_close';const next={verified_close:'WF-209',close_verification_required:'WF-207',execution_evidence_missing:'WF-207',profit_inputs_invalid:'WF-126',blocked:'WF-126'}[status];return[{json:{...x,workflow:'WF-208',verified_close:{status,deal_id:x.deal_id??null,lead_id:x.lead_id??null,property_id:x.property_id??null,executed_agreement:executed,closing_status:x.closing_status??x.close_status??null,gross_profit:gross,total_closing_costs:totalCosts,net_profit:net,profit_margin:gross?net/gross:null,funding_verified:Boolean(funding.verified===true||funding.status==='verified'),title_verified:Boolean(title.verified===true||title.status==='verified'),blockers},routing:{next_workflow:next,requires_human_review:status!=='verified_close'},audit:{event:'final_closing_outcome_verified_close_profit_reconciliation_evaluated',status}}}];"
+      },
+      "name": "Code — Verified Close & Profit Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "verified",
+              "leftValue": "={{$json.verified_close.status}}",
+              "rightValue": "verified_close",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Verified Close Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-208:'+($json.deal_id||$json.property_id||'unknown')+':verified-close-profit',external_source:'wholesale-os',activity_type:'final_closing_outcome_verified_close_profit_reconciliation',lead_id:$json.verified_close?.lead_id||null,property_id:$json.verified_close?.property_id||null,deal_id:$json.verified_close?.deal_id||null,status:$json.verified_close?.status||'blocked',notes:JSON.stringify({workflow:'WF-208',verified_close:$json.verified_close,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Verified Close Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-208',status:$json.verified_close?.status??'blocked',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),verified_close:$json.verified_close??null}}}];"
+      },
+      "name": "Code — Verified Close Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Final Closing Outcome": {
+      "main": [
+        [
+          {
+            "node": "Code — Verified Close & Profit Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Verified Close & Profit Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Verified Close Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Verified Close Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Verified Close Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Verified Close Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Verified Close Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Verified Close Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-208-v1"
+}

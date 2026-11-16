@@ -1,0 +1,186 @@
+{
+  "name": "WF-178 — Final Closing Authorization → Closing Execution Launch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-178-final-closing-authorization-execution-launch-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf178-webhook",
+      "name": "WF-178 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-178-final-closing-authorization-execution-launch-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json ?? {};\nconst deal = input.deal ?? input.transaction ?? input;\nconst authorization = input.closing_authorization ?? input.authorization ?? {};\nconst readiness = input.final_closing_readiness ?? input.transaction_readiness ?? {};\nconst execution = input.closing_execution ?? {};\n\nconst identityComplete = Boolean(deal.deal_id ?? deal.transaction_id) &&\n  Boolean(deal.property_id) &&\n  Boolean(deal.lead_id ?? deal.seller_id);\nconst executedAgreement = String(deal.execution_state ?? deal.agreement?.execution_state ?? '').toLowerCase() === 'executed';\nconst signedEvidence = Boolean(deal.signed_evidence ?? deal.agreement?.signed_evidence);\nconst agreementType = String(deal.agreement_type ?? deal.agreement?.type ?? '').toLowerCase();\nconst validAgreementType = ['assignment','novation','double_close'].includes(agreementType);\n\nconst agreedPrice = Number(deal.agreed_price ?? deal.purchase_price ?? deal.contract_price);\nconst effectiveMao = Number(deal.effective_mao ?? deal.mao ?? deal.underwriting?.effective_mao);\nconst priceWithinMao = Number.isFinite(agreedPrice) && Number.isFinite(effectiveMao) && agreedPrice <= effectiveMao;\n\nconst authApproved = Boolean(authorization.approved ?? authorization.authorized ?? authorization.confirmed);\nconst authType = String(authorization.type ?? '').toLowerCase();\nconst validAuth = authApproved && ['human_approval','closing_authorization','authorized'].includes(authType || 'authorized');\n\nconst readinessStatus = String(input.decision?.status ?? input.final_closing_status ?? '').toLowerCase();\nconst readinessReady = readinessStatus === 'final_closing_ready' || Boolean(readiness.ready);\nconst executionState = String(execution.status ?? '').toLowerCase();\nconst alreadyLaunched = ['launched','initiated','in_progress'].includes(executionState);\n\nconst closingDate = execution.closing_date ?? readiness.closing_date ?? deal.closing_date ?? deal.critical_dates?.closing_date ?? null;\nconst closingDateValid = Boolean(closingDate && !Number.isNaN(new Date(closingDate).getTime()));\nconst blockers = [\n  ...(Array.isArray(deal.blockers) ? deal.blockers : []),\n  ...(Array.isArray(readiness.blockers) ? readiness.blockers : []),\n  ...(Array.isArray(execution.blockers) ? execution.blockers : [])\n].filter(Boolean);\n\nlet status = 'launch_blocked';\nlet severity = 'urgent';\n\nif (!identityComplete || !executedAgreement || !signedEvidence || !validAgreementType || !priceWithinMao) {\n  status = 'launch_blocked';\n  severity = 'urgent';\n} else if (!readinessReady || !validAuth || !closingDateValid || blockers.length) {\n  status = 'authorization_or_readiness_required';\n  severity = 'high';\n} else if (alreadyLaunched) {\n  status = 'already_launched';\n  severity = 'normal';\n} else {\n  status = 'launch_ready';\n  severity = 'normal';\n}\n\nconst routing = status === 'launch_ready' || status === 'already_launched'\n  ? {next_workflow:'WF-126',reason:'Final authorization is satisfied; continue closing execution coordination.'}\n  : {next_workflow:'WF-126',reason:'Closing execution cannot safely launch until authorization/readiness blockers are resolved.'};\n\nreturn [{\n  json:{\n    ...input,\n    workflow_id:'WF-178',\n    workflow_name:'Final Closing Authorization → Closing Execution Launch Controller',\n    decision:{status,severity},\n    identity_complete:identityComplete,\n    executed_agreement:executedAgreement,\n    signed_evidence_present:signedEvidence,\n    agreement_type:agreementType || null,\n    valid_agreement_type:validAgreementType,\n    agreed_price:Number.isFinite(agreedPrice) ? agreedPrice : null,\n    effective_mao:Number.isFinite(effectiveMao) ? effectiveMao : null,\n    price_within_mao:priceWithinMao,\n    readiness_ready:readinessReady,\n    authorization_approved:authApproved,\n    authorization_type:authType || null,\n    valid_authorization:validAuth,\n    closing_date:closingDate,\n    closing_date_valid:closingDateValid,\n    execution_state:executionState || null,\n    already_launched:alreadyLaunched,\n    blockers,\n    launch_status:status,\n    routing\n  }\n}];"
+      },
+      "id": "wf178-controller",
+      "name": "WF-178 Closing Execution Launch Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchers": []
+          },
+          "conditions": [
+            {
+              "id": "wf178-gate",
+              "leftValue": "={{ $json.decision.status }}",
+              "rightValue": "launch_blocked",
+              "operator": {
+                "type": "string",
+                "operation": "notEqual"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf178-gate",
+      "name": "WF-178 Launch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{ $json.deal?.lead_id || $json.lead_id || $json.seller_id }}"
+            },
+            {
+              "name": "activity_type",
+              "value": "closing_execution_launch"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.decision.status }}"
+            },
+            {
+              "name": "notes",
+              "value": "={{ JSON.stringify({workflow_id:$json.workflow_id, severity:$json.decision.severity, launch_status:$json.launch_status, authorization_approved:$json.authorization_approved, authorization_type:$json.authorization_type, closing_date:$json.closing_date, blockers:$json.blockers, routing:$json.routing}) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf178-crm",
+      "name": "Persist CRM Closing Execution Launch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = $json ?? {};\nreturn [{\n  json:{\n    ...out,\n    workflow_id:'WF-178',\n    result:'closing_execution_launch_evaluated',\n    next_workflow:out.routing?.next_workflow ?? 'WF-126'\n  }\n}];"
+      },
+      "id": "wf178-response",
+      "name": "WF-178 Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-178 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-178 Closing Execution Launch Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-178 Closing Execution Launch Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-178 Launch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-178 Launch Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist CRM Closing Execution Launch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist CRM Closing Execution Launch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist CRM Closing Execution Launch": {
+      "main": [
+        [
+          {
+            "node": "WF-178 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-178-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

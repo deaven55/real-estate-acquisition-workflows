@@ -1,0 +1,163 @@
+{
+  "name": "WF-190 — Final CRM Closeout → Portfolio Performance Record & Underwriting Feedback",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-190-portfolio-performance-underwriting-feedback",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Final CRM Closeout",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-190-portfolio-performance-underwriting-feedback"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const c=x.crm_closeout??{};const p=c.profit_record??{};const verified=c.status==='closeout_ready'||x.verified_close?.status==='verified_close';const net=Number(p.net_profit??x.net_profit??0);const gross=Number(p.gross_profit??x.gross_profit??0);const costs=Number(p.total_costs??x.total_costs??0);const dealType=String(c.portfolio_feedback?.deal_type??x.deal_type??'unknown');const exit=String(c.portfolio_feedback?.exit_strategy??x.exit_strategy??'unknown');const blockers=Array.isArray(x.blockers)?x.blockers.filter(Boolean):[];const missing=[];if(!verified)missing.push('final_crm_closeout');if(!p.deal_id)missing.push('deal_id');if(!p.close_id)missing.push('close_id');if(!Number.isFinite(net))missing.push('net_profit');let status=blockers.length?'blocked':missing.length?'performance_data_incomplete':'performance_record_ready';const margin=Number.isFinite(gross)&&gross!==0?net/gross:null;const feedback={deal_id:p.deal_id??x.deal_id??null,close_id:p.close_id??null,deal_type:dealType,exit_strategy:exit,gross_profit:Number.isFinite(gross)?gross:null,total_costs:Number.isFinite(costs)?costs:null,net_profit:Number.isFinite(net)?net:null,profit_margin:margin,underwriting_feedback:{actual_net_profit:Number.isFinite(net)?net:null,actual_costs:Number.isFinite(costs)?costs:null,calibration_signal:Number.isFinite(net)?(net>0?'positive':net<0?'negative':'neutral'):'unknown'}};const route=status==='performance_record_ready'?'WF-191':status==='blocked'?'WF-126':'WF-189';return[{json:{...x,workflow:'WF-190',portfolio_performance:{status,missing_requirements:missing,performance_record:feedback},routing:{next_workflow:route,requires_human_review:status==='blocked'},audit:{event:'portfolio_performance_underwriting_feedback_evaluated',status}}}];"
+      },
+      "name": "Code — Portfolio Performance & Underwriting Feedback Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.portfolio_performance.status}}",
+              "rightValue": "performance_record_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Performance Record Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-190:'+($json.portfolio_performance?.performance_record?.close_id||'unknown'),external_source:'wholesale-os',activity_type:'portfolio_performance_underwriting_feedback',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.portfolio_performance?.status||'unknown',notes:JSON.stringify({workflow:'WF-190',portfolio_performance:$json.portfolio_performance,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Portfolio Feedback Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-190',status:$json.portfolio_performance?.status??'unknown',next_workflow:$json.routing?.next_workflow??'WF-189',requires_human_review:Boolean($json.routing?.requires_human_review),portfolio_performance:$json.portfolio_performance??null}}}];"
+      },
+      "name": "Code — Portfolio Feedback Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Final CRM Closeout": {
+      "main": [
+        [
+          {
+            "node": "Code — Portfolio Performance & Underwriting Feedback Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Portfolio Performance & Underwriting Feedback Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Performance Record Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Performance Record Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Portfolio Feedback Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Portfolio Feedback Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Portfolio Feedback Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Portfolio Feedback Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-190-v1"
+}

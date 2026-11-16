@@ -1,0 +1,181 @@
+{
+  "name": "WF-199 — Counteroffer / Acceptance → Revised Offer or Contract Decision",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-199-counteroffer-acceptance-revised-offer-contract-decision",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Negotiation Decision",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-199-counteroffer-acceptance-revised-offer-contract-decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const d=x.negotiation_follow_up_decision??{};const cls=String(x.seller_response_classification?.classification??d.classification??'').toLowerCase();const counter=Number(d.counteroffer_amount??x.counteroffer_amount??0);const mao=Number(d.adjusted_mao??x.adjusted_mao??x.mao??0);const original=Number(d.original_offer??x.offer_price??0);let decision='needs_review';let proposed=original||null;if(cls==='accepted'||d.decision==='acceptance_ready'){decision='contract_decision';proposed=original||null;}else if(cls==='counteroffer'||String(d.decision??'').startsWith('counteroffer')){if(counter>0&&mao>0&&counter<=mao){decision='accept_counteroffer';proposed=counter;}else if(counter>0&&mao>0&&counter<=mao*1.05){decision='revised_offer';proposed=Math.min(counter,mao);}else if(counter>0){decision='walk_away_or_revised_offer';proposed=mao||null;}}const route={contract_decision:'WF-200',accept_counteroffer:'WF-200',revised_offer:'WF-200',walk_away_or_revised_offer:'WF-200',needs_review:'WF-126'}[decision]??'WF-126';const human=decision==='walk_away_or_revised_offer'||decision==='needs_review';return[{json:{...x,workflow:'WF-199',counteroffer_contract_decision:{decision,classification:cls||'unknown',original_offer:original||null,counteroffer_amount:counter||null,adjusted_mao:mao||null,proposed_price:proposed,maoprotected:!proposed||!mao||proposed<=mao},routing:{next_workflow:route,requires_human_review:human},audit:{event:'counteroffer_acceptance_revised_offer_contract_decision',status:decision}}}];"
+      },
+      "name": "Code — Counteroffer Contract Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "contract",
+              "leftValue": "={{$json.counteroffer_contract_decision.decision}}",
+              "rightValue": "contract_decision",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "accept",
+              "leftValue": "={{$json.counteroffer_contract_decision.decision}}",
+              "rightValue": "accept_counteroffer",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "revised",
+              "leftValue": "={{$json.counteroffer_contract_decision.decision}}",
+              "rightValue": "revised_offer",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "name": "IF — Contract / Revised Offer Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-199:'+($json.deal_id||$json.property_id||'unknown')+':counteroffer-contract',external_source:'wholesale-os',activity_type:'counteroffer_acceptance_revised_offer_contract_decision',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.counteroffer_contract_decision?.decision||'unknown',notes:JSON.stringify({workflow:'WF-199',counteroffer_contract_decision:$json.counteroffer_contract_decision,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Contract Decision Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-199',decision:$json.counteroffer_contract_decision?.decision??'unknown',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),counteroffer_contract_decision:$json.counteroffer_contract_decision??null}}}];"
+      },
+      "name": "Code — Contract Decision Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Negotiation Decision": {
+      "main": [
+        [
+          {
+            "node": "Code — Counteroffer Contract Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Counteroffer Contract Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Contract / Revised Offer Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Contract / Revised Offer Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Contract Decision Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Contract Decision Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Contract Decision Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Contract Decision Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-199-v1"
+}

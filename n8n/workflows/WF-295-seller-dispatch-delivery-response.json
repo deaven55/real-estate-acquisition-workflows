@@ -1,0 +1,158 @@
+{
+  "name": "WF-295 — Seller Dispatch → Delivery Receipt & Response Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-295-seller-dispatch-delivery-response",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf295-webhook",
+      "name": "WF-295 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-295-seller-dispatch-delivery-response"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst dispatch=input.dispatch??{};\nconst provider=input.provider??{};\nconst delivery=String(input.delivery_status??input.receipt_status??dispatch.delivery_status??\"\").toLowerCase();\nconst inbound=Boolean(input.inbound_message||input.seller_response||input.message_direction===\"inbound\");\nconst channel=String(dispatch.channel||input.channel||\"\").toLowerCase();\nconst recipient=String(dispatch.recipient||input.recipient||\"\").trim();\nconst dispatchId=String(dispatch.dispatch_id||input.dispatch_id||\"\").trim();\nconst dnc=Boolean(input.dnc||input.do_not_contact);\nlet status=\"receipt_pending\",state=\"pending\",nextWorkflow=\"WF-289\",human=false,reason=\"delivery receipt is pending\";\nif(dnc){status=\"blocked_dnc\";state=\"blocked\";nextWorkflow=\"WF-126\";human=true;reason=\"seller is marked do-not-contact\";}\nelse if(!dispatchId||!recipient||![\"sms\",\"email\"].includes(channel)){status=\"dispatch_identity_invalid\";state=\"blocked\";nextWorkflow=\"WF-126\";human=true;reason=\"dispatch identity, recipient, and channel are required\";}\nelse if(inbound||delivery===\"response_received\"||delivery===\"replied\"){\n  status=\"seller_response_received\";state=\"response_received\";nextWorkflow=\"WF-296\";human=false;reason=\"seller response received and ready for classification\";\n}\nelse if([\"delivered\",\"delivery_confirmed\",\"sent\"].includes(delivery)){\n  status=\"delivered_awaiting_response\";state=\"delivered\";nextWorkflow=\"WF-296\";human=false;reason=\"message delivered; awaiting seller response\";\n}\nelse if([\"failed\",\"undelivered\",\"bounced\",\"rejected\"].includes(delivery)){\n  status=\"delivery_failed\";state=\"failed\";nextWorkflow=\"WF-289\";human=true;reason=\"provider reported delivery failure\";\n}\nelse if([\"timeout\",\"expired\"].includes(delivery)){\n  status=\"seller_response_timeout\";state=\"timeout\";nextWorkflow=\"WF-290\";human=false;reason=\"seller response window expired\";\n}\nconst idempotencyKey=input.idempotency_key||`wf-295:${dispatchId||\"unknown\"}:${input.provider_event_id||input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-295\",workflow_name:\"Seller Dispatch → Delivery Receipt & Response Controller\",status,delivery_state:{state,delivery_status:delivery||null,dispatch_id:dispatchId,channel,recipient,provider_event_id:provider.event_id||input.provider_event_id||null,reason},next_workflow:nextWorkflow,human_review_required:human,audit:{event_type:\"seller_dispatch_delivery_receipt_response\",idempotency_key:idempotencyKey}}}];"
+      },
+      "id": "wf295-controller",
+      "name": "WF-295 Delivery Receipt Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['response_received','delivered'].includes($json.delivery_state.state)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf295-if",
+      "name": "WF-295 Delivery Response Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-295 seller dispatch delivery receipt',description:$json.delivery_state.reason,metadata:{workflow:'WF-295',status:$json.status,delivery_state:$json.delivery_state,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf295-crm",
+      "name": "WF-295 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,delivery_state:$json.delivery_state,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf295-response",
+      "name": "WF-295 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-295 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-295 Delivery Receipt Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-295 Delivery Receipt Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-295 Delivery Response Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-295 Delivery Response Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-295 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-295 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-295 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-295 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-295-v1"
+}

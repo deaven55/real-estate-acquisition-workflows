@@ -1,0 +1,156 @@
+{
+  "name": "WF-264 Delivery Receipt / Provider Callback → Seller Response Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-264-provider-callback-seller-response",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf264-webhook",
+      "name": "WF-264 Provider Callback Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst eventType = String(input.event_type ?? input.type ?? input.status ?? '').toLowerCase();\nconst dispatchId = input.dispatch_id ?? input.message_id ?? input.provider_message_id ?? null;\nconst dealId = input.deal_id ?? null;\nconst leadId = input.lead_id ?? null;\nconst propertyId = input.property_id ?? null;\nconst channel = String(input.channel ?? '').toLowerCase();\nconst deliveryStatus = String(input.delivery_status ?? input.status ?? '').toLowerCase();\nconst inboundMessage = input.message ?? input.body ?? input.text ?? null;\nconst identityOk = Boolean(dispatchId && leadId);\nconst responseReceived = Boolean(inboundMessage && String(inboundMessage).trim());\nconst delivered = ['delivered','delivery_confirmed','sent','accepted'].includes(deliveryStatus) || ['delivered','message.delivered','delivery'].includes(eventType);\nconst failed = ['failed','undelivered','bounced','rejected'].includes(deliveryStatus) || ['failed','message.failed','bounce'].includes(eventType);\nconst receiptPending = !delivered && !failed && !responseReceived;\nlet status = 'receipt_pending';\nlet action = 'await_receipt';\nlet nextWorkflow = 'WF-265';\n\nif (!identityOk) {\n  status = 'invalid_callback';\n  action = 'human_review';\n  nextWorkflow = 'WF-126';\n} else if (responseReceived) {\n  status = 'response_received';\n  action = 'classify_seller_response';\n  nextWorkflow = 'WF-265';\n} else if (failed) {\n  status = 'delivery_failed';\n  action = 'retry_or_alternate_channel';\n  nextWorkflow = 'WF-263';\n} else if (delivered) {\n  status = 'delivered_awaiting_response';\n  action = 'await_seller_response';\n  nextWorkflow = 'WF-265';\n} else if (receiptPending) {\n  status = 'receipt_pending';\n  action = 'await_receipt';\n  nextWorkflow = 'WF-265';\n}\n\nreturn [{ json: {\n  ...input,\n  workflow_id: 'WF-264',\n  workflow_name: 'Delivery Receipt / Provider Callback → Seller Response Controller',\n  status,\n  action,\n  next_workflow: nextWorkflow,\n  dispatch_id: dispatchId,\n  provider_event: {\n    event_type: eventType || null,\n    delivery_status: deliveryStatus || null,\n    channel: channel || null,\n    provider_message_id: input.provider_message_id ?? input.message_id ?? null\n  },\n  seller_response: responseReceived ? {\n    received: true,\n    message: String(inboundMessage).trim(),\n    received_at: input.received_at ?? new Date().toISOString()\n  } : { received: false },\n  delivery: {\n    delivered,\n    failed,\n    receipt_pending: receiptPending\n  },\n  identity_valid: identityOk,\n  human_review_required: status === 'invalid_callback',\n  crm_activity: {\n    activity_type: responseReceived ? 'seller_response_received' : 'communication_delivery_update',\n    workflow_id: 'WF-264',\n    status,\n    action,\n    dispatch_id: dispatchId,\n    next_workflow: nextWorkflow\n  }\n} }];"
+      },
+      "id": "wf264-controller",
+      "name": "WF-264 Callback & Seller Response Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "operation": "equal",
+              "value2": "response_received"
+            }
+          ]
+        }
+      },
+      "id": "wf264-gate",
+      "name": "WF-264 Seller Response Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:$json.crm_activity.activity_type,subject:'WF-264 provider callback / seller response',body:JSON.stringify({workflow_id:$json.workflow_id,status:$json.status,action:$json.action,dispatch_id:$json.dispatch_id,provider_event:$json.provider_event,seller_response:$json.seller_response,delivery:$json.delivery,next_workflow:$json.next_workflow}),source:'wholesaling-os',external_id:'WF-264:'+($json.dispatch_id ?? $json.lead_id ?? 'unknown')+':'+$json.status})}})"
+      },
+      "id": "wf264-crm",
+      "name": "WF-264 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf264-response",
+      "name": "WF-264 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-264 Provider Callback Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-264 Callback & Seller Response Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-264 Callback & Seller Response Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-264 Seller Response Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-264 Seller Response Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-264 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-264 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-264 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-264 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

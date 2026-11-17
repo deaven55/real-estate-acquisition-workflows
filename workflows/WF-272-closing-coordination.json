@@ -1,0 +1,156 @@
+{
+  "name": "WF-272 Transaction Readiness → Title / Attorney / Funding / Broker Closing Coordination Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-272-closing-coordination",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf272-webhook",
+      "name": "WF-272 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;const dealId=input.deal_id??null,leadId=input.lead_id??null,propertyId=input.property_id??null;const transactionStatus=String(input.transaction_status??input.status??'').toLowerCase();const closingDate=input.closing_date??input.target_closing_date??null;const seller=input.seller??{};const buyer=input.buyer??{};const contacts=input.closing_contacts??{};const required=['title','attorney','funding','broker'];const missing=required.filter(k=>!(contacts[k]&&String(contacts[k]).trim()));const blockers=Array.isArray(input.blockers)?input.blockers:[];const identityOk=Boolean(dealId&&leadId&&propertyId);const partiesOk=Boolean((seller.name||input.seller_name)&&(buyer.name||input.buyer_name||input.assignee_name));const transactionReady=transactionStatus==='transaction_ready'||transactionStatus==='ready';let status='blocked',next='WF-126',human=true;if(!identityOk||!partiesOk||!closingDate||blockers.length){status='coordination_blocked';}else if(!transactionReady){status='transaction_not_ready';next='WF-271';}else if(missing.length){status='coordination_incomplete';next='WF-272';}else{status='coordination_ready';next='WF-273';}return[{json:{...input,workflow_id:'WF-272',workflow_name:'Transaction Readiness → Title / Attorney / Funding / Broker Closing Coordination Controller',status,next_workflow:next,human_review_required:human,identity_valid:identityOk,parties_valid:partiesOk,closing_date_valid:Boolean(closingDate),coordination:{ready:status==='coordination_ready',required_roles:required,missing_roles:missing,contacts,closing_date:closingDate,seller:seller.name||input.seller_name||null,buyer:buyer.name||input.buyer_name||input.assignee_name||null},crm_activity:{activity_type:'closing_coordination_readiness',workflow_id:'WF-272',status,next_workflow:next,human_review_required:human,missing_roles:missing}}}];"
+      },
+      "id": "wf272-controller",
+      "name": "WF-272 Closing Coordination Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "operation": "equal",
+              "value2": "coordination_ready"
+            }
+          ]
+        }
+      },
+      "id": "wf272-gate",
+      "name": "WF-272 Coordination Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'closing_coordination_readiness',subject:'WF-272 closing coordination readiness',body:JSON.stringify({workflow_id:$json.workflow_id,status:$json.status,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,coordination:$json.coordination}),source:'wholesaling-os',external_id:'WF-272:'+($json.deal_id??$json.lead_id??'unknown')+':'+($execution.id)})}})"
+      },
+      "id": "wf272-crm",
+      "name": "WF-272 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf272-response",
+      "name": "WF-272 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-272 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-272 Closing Coordination Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-272 Closing Coordination Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-272 Coordination Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-272 Coordination Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-272 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-272 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-272 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-272 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

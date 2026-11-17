@@ -1,0 +1,156 @@
+{
+  "name": "WF-270 Signature Dispatch / Execution Tracking & Outcome Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-270-signature-dispatch-execution-outcome",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf270-webhook",
+      "name": "WF-270 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;const signatureStatus=String(input.signature_status??input.status??'').toLowerCase();const action=String(input.action??'').toLowerCase();const dealId=input.deal_id??null,leadId=input.lead_id??null,propertyId=input.property_id??null;const packageId=input.contract_package_id??input.package_id??null;const idempotency=input.signature_idempotency_key??input.idempotency_key??('WF-270:'+String(dealId??leadId??'unknown')+':signature');const agreementType=String(input.agreement_type??'purchase_agreement').toLowerCase();const blockers=Array.isArray(input.blockers)?input.blockers:[];const identityOk=Boolean(dealId&&leadId&&propertyId);const packageOk=Boolean(packageId||input.contract_package||input.signature_package);let status='blocked',next='WF-126',dispatchReady=false,human=true; if(!identityOk||blockers.length){status='blocked';} else if(signatureStatus==='executed'||signatureStatus==='signed'){status='executed';next='WF-271';human=false;} else if(signatureStatus==='declined'||signatureStatus==='rejected'){status='declined';next='WF-204';} else if(signatureStatus==='expired'){status='expired';next='WF-204';} else if(signatureStatus==='awaiting_signature'||signatureStatus==='sent'){status='awaiting_signature';next='WF-271';} else if(packageOk||action.includes('dispatch')){status='dispatch_ready';dispatchReady=true;next='WF-271';} else {status='signature_package_missing';} return [{json:{...input,workflow_id:'WF-270',workflow_name:'Signature Dispatch / Execution Tracking & Outcome Controller',status,next_workflow:next,human_review_required:human,identity_valid:identityOk,package_valid:packageOk,dispatch:{ready:dispatchReady,idempotency_key:idempotency,agreement_type:agreementType,transport:'provider-agnostic',credentials_runtime_only:true},execution:{signature_status:signatureStatus||'not_started',outcome:status},crm_activity:{activity_type:'signature_dispatch_execution_outcome',workflow_id:'WF-270',status,next_workflow:next,human_review_required:human,dispatch:{ready:dispatchReady,idempotency_key:idempotency},execution:{signature_status:signatureStatus||'not_started',outcome:status}}}}];"
+      },
+      "id": "wf270-controller",
+      "name": "WF-270 Signature Execution Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "operation": "in",
+              "value2": "dispatch_ready,awaiting_signature,executed"
+            }
+          ]
+        }
+      },
+      "id": "wf270-gate",
+      "name": "WF-270 Signature Outcome Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'signature_dispatch_execution_outcome',subject:'WF-270 signature dispatch/execution outcome',body:JSON.stringify({workflow_id:$json.workflow_id,status:$json.status,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,dispatch:$json.dispatch,execution:$json.execution}),source:'wholesaling-os',external_id:'WF-270:'+($json.deal_id??$json.lead_id??'unknown')+':'+($json.dispatch_id??$json.dispatch?.idempotency_key??$execution.id)})}})"
+      },
+      "id": "wf270-crm",
+      "name": "WF-270 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf270-response",
+      "name": "WF-270 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-270 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-270 Signature Execution Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-270 Signature Execution Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-270 Signature Outcome Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-270 Signature Outcome Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-270 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-270 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-270 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-270 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

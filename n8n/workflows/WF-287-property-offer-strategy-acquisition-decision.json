@@ -1,0 +1,158 @@
+{
+  "name": "WF-287 — Dynamic MAO Calibration → Property-Level Offer Strategy & Acquisition Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-287-property-offer-strategy-acquisition-decision",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf287-webhook",
+      "name": "WF-287 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-287-property-offer-strategy-acquisition-decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst cal=input.calibration??{};\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst asking=Number(input.asking_price??input.askingPrice);\nconst mao=Number(cal.adjusted_mao??input.adjusted_mao??input.dynamic_mao);\nconst projectedProfit=Number(input.projected_assignment_profit??input.projected_profit);\nconst motivation=String(input.motivation||input.seller_motivation||\"unknown\").toLowerCase();\nconst evidenceComplete=input.evidence_complete===true||input.evidence_status===\"complete\";\nconst assetType=String(input.asset_type||input.property_type||\"residential\").toLowerCase();\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id);\nconst validEconomics=Number.isFinite(asking)&&Number.isFinite(mao)&&Number.isFinite(projectedProfit);\nlet decision=\"needs_evidence\",reason=\"insufficient underwriting evidence\";\nif(!identityComplete){decision=\"blocked\";reason=\"missing deal/lead/property identity\";}\nelse if(blockers.length){decision=\"blocked\";reason=\"active blockers present\";}\nelse if(!validEconomics){decision=\"needs_evidence\";reason=\"asking price, dynamic MAO, or projected profit is missing/invalid\";}\nelse if(!evidenceComplete){decision=\"needs_evidence\";reason=\"underwriting evidence is incomplete\";}\nelse if(asking<=mao && projectedProfit>0){decision=\"pursue\";reason=\"asking price is within dynamic MAO and projected profit is positive\";}\nelse if(asking>mao && asking<=mao*1.10 && projectedProfit>0){decision=\"negotiate\";reason=\"asking price is above MAO but within a controlled negotiation band\";}\nelse if(asking>mao){decision=\"pass\";reason=\"asking price exceeds protected dynamic MAO\";}\nelse if(projectedProfit<=0){decision=\"pass\";reason=\"projected profit is non-positive\";}\nconst strategy={asset_type:assetType,asking_price:asking,dynamic_mao:mao,projected_assignment_profit:projectedProfit,motivation,evidence_complete:evidenceComplete,decision,reason,mao_guardrail:\"Do not approve an acquisition price above dynamic MAO without an explicit recalibration/review event.\",secondary_rule_note:\"70% rule remains secondary/reference only; property economics and executable exit determine the decision.\"};\nlet status=decision===\"blocked\"?\"acquisition_blocked\":decision===\"needs_evidence\"?\"underwriting_evidence_required\":\"acquisition_decision_ready\";\nlet nextWorkflow=decision===\"pursue\"||decision===\"negotiate\"?\"WF-288\":decision===\"pass\"?\"WF-289\":\"WF-126\";\nconst humanReview=decision!==\"pursue\";\nreturn [{json:{...input,workflow:\"WF-287\",workflow_name:\"Dynamic MAO Calibration → Property-Level Offer Strategy & Acquisition Decision Controller\",status,acquisition_strategy:strategy,next_workflow:nextWorkflow,human_review_required:humanReview,audit:{event_type:\"property_offer_strategy_acquisition_decision\",idempotency_key:input.idempotency_key||`wf-287:${input.deal_id||\"unknown\"}:${input.property_id||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf287-controller",
+      "name": "WF-287 Property Offer Strategy Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'acquisition_decision_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf287-if",
+      "name": "WF-287 Acquisition Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-287 property-level offer strategy and acquisition decision',description:$json.status,metadata:{workflow:'WF-287',status:$json.status,acquisition_strategy:$json.acquisition_strategy,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf287-crm",
+      "name": "WF-287 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,acquisition_strategy:$json.acquisition_strategy,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf287-response",
+      "name": "WF-287 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-287 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-287 Property Offer Strategy Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-287 Property Offer Strategy Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-287 Acquisition Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-287 Acquisition Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-287 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-287 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-287 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-287 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-287-v1"
+}

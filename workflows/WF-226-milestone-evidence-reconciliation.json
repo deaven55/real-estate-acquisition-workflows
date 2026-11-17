@@ -1,0 +1,165 @@
+{
+  "name": "WF-226 — Milestone Update → Closing Evidence Reconciliation & Recovery Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-226-closing-evidence-reconciliation",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;const d=input.deal??input;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const required=Array.isArray(d.required_evidence)?d.required_evidence:[];const verified=Array.isArray(d.verified_evidence)?d.verified_evidence:[];const failed=Array.isArray(d.failed_evidence)?d.failed_evidence:[];const milestones=Array.isArray(d.milestones)?d.milestones:[];const blockers=Array.isArray(d.blockers)?d.blockers:[];const verifiedKeys=new Set(verified.map(x=>String(x.key??x.type??x.name??\"\").toLowerCase()).filter(Boolean));const missing=required.filter(x=>!verifiedKeys.has(String(x.key??x.type??x.name??\"\").toLowerCase()));const incomplete=milestones.filter(m=>![\"completed\",\"verified\",\"closed\"].includes(String(m.status??\"\").toLowerCase()));let state=\"blocked\",route=\"WF-126\",reason=\"Evidence reconciliation cannot proceed.\";if(!lead_id||!deal_id||!property_id){reason=\"Missing transaction identity.\";}else if(blockers.length){reason=\"Transaction blockers prevent evidence reconciliation.\";}else if(failed.length){state=\"recovery_required\";route=\"WF-208\";reason=\"One or more required closing evidence items failed validation.\";}else if(missing.length){state=\"evidence_gap\";route=\"WF-208\";reason=\"Required closing evidence is missing.\";}else if(incomplete.length){state=\"incomplete\";route=\"WF-205\";reason=\"Required closing milestones remain incomplete.\";}else{state=\"reconciled\";route=\"WF-207\";reason=\"Required closing evidence and milestones are reconciled.\";}return[{json:{workflow:\"WF-226\",lead_id,deal_id,property_id,required_evidence:required,verified_evidence:verified,failed_evidence:failed,missing_evidence:missing,incomplete_milestones:incomplete,blockers,state,route,reason,requires_human_review:state!==\"reconciled\"}}];"
+      },
+      "name": "Closing Evidence Reconciliation Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "reconciled",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Evidence Reconciliation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'closing_evidence_reconciliation',notes:'WF-226 state='+$json.state+' route='+$json.route+' reason='+$json.reason,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Evidence Reconciliation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,next_workflow:$json.route,evidence_reconciled:$json.state===\"reconciled\"}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Closing Evidence Reconciliation Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closing Evidence Reconciliation Controller": {
+      "main": [
+        [
+          {
+            "node": "Evidence Reconciliation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evidence Reconciliation Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Evidence Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Evidence Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Evidence Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-226-evidence-reconciliation-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

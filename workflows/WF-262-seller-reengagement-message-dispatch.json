@@ -1,0 +1,156 @@
+{
+  "name": "WF-262 Seller Re-engagement Message Generation & Dispatch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-262-seller-reengagement-message-dispatch",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf262-webhook",
+      "name": "WF-262 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst dealId = input.deal_id ?? null;\nconst leadId = input.lead_id ?? null;\nconst propertyId = input.property_id ?? null;\nconst channel = String(input.channel ?? input.preferred_channel ?? 'sms').toLowerCase();\nconst attempt = Number(input.attempt_number ?? input.reengagement_attempts ?? 1);\nconst cadence = input.cadence ?? (attempt === 1 ? '24h' : attempt === 2 ? '72h' : '7d');\nconst dnc = Boolean(input.dnc ?? input.do_not_contact);\nconst phone = input.phone ?? input.mobile_phone ?? null;\nconst email = input.email ?? null;\nconst sellerName = input.seller_name ?? input.first_name ?? 'there';\nconst propertyAddress = input.property_address ?? input.address ?? 'the property';\nconst reason = input.reason ?? input.negotiation_outcome ?? 'our recent conversation';\nconst lastOffer = Number(input.last_offer_price ?? input.offer_price);\nconst askingPrice = Number(input.asking_price);\nconst dynamicMao = Number(input.dynamic_mao ?? input.adjusted_mao ?? input.mao);\nconst identityOk = Boolean(dealId && leadId && propertyId);\nconst recipientOk = channel === 'sms' ? Boolean(phone) : channel === 'email' ? Boolean(email) : false;\nconst eligible = identityOk && recipientOk && !dnc;\n\nlet message = '';\nif (attempt <= 1) {\n  message = channel === 'email'\n    ? `Hi ${sellerName}, I wanted to circle back about ${propertyAddress}. I know we weren't able to get something finalized earlier, but I'm still interested in finding a number that makes sense for you. If you're open to it, what would you need to make a deal work?`\n    : `Hi ${sellerName}, just circling back about ${propertyAddress}. I know we couldn't get something finalized earlier, but I'm still interested. If you're open to it, what would you need to make a deal work?`;\n} else if (attempt === 2) {\n  message = channel === 'email'\n    ? `Hi ${sellerName}, following up once more on ${propertyAddress}. If your plans have changed, I'm happy to revisit the numbers and see if there's a way to make this work. Want to talk through it?`\n    : `Hi ${sellerName}, following up once more on ${propertyAddress}. If your plans changed, I'm happy to revisit the numbers and see if we can make this work. Want to talk through it?`;\n} else {\n  message = channel === 'email'\n    ? `Hi ${sellerName}, I'll close the loop for now on ${propertyAddress}. If you'd like to revisit the sale later, feel free to reach back out and I'll be happy to take another look.`\n    : `Hi ${sellerName}, I'll close the loop for now on ${propertyAddress}. If you want to revisit the sale later, just reach back out and I'll take another look.`;\n}\n\nconst dispatchId = 'WF-262:' + (dealId ?? leadId ?? 'unknown') + ':attempt:' + attempt;\nconst idempotencyKey = dispatchId + ':' + channel;\nconst dispatchReady = eligible && message.length > 0 && channel !== 'unknown';\n\nreturn [{ json: {\n  ...input,\n  workflow_id: 'WF-262',\n  workflow_name: 'Seller Re-engagement Message Generation & Dispatch Controller',\n  status: dispatchReady ? 'dispatch_ready' : dnc ? 'do_not_contact' : 'blocked',\n  dispatch_ready: dispatchReady,\n  human_review_required: false,\n  channel,\n  recipient: channel === 'sms' ? phone : email,\n  message,\n  message_context: {\n    seller_name: sellerName,\n    property_address: propertyAddress,\n    reason,\n    attempt_number: attempt,\n    cadence,\n    last_offer_price: Number.isFinite(lastOffer) ? lastOffer : null,\n    asking_price: Number.isFinite(askingPrice) ? askingPrice : null,\n    dynamic_mao: Number.isFinite(dynamicMao) ? dynamicMao : null\n  },\n  dispatch: {\n    dispatch_id: dispatchId,\n    idempotency_key: idempotencyKey,\n    delivery_receipt_required: true,\n    provider: input.provider ?? 'configured_communication_provider'\n  },\n  identity_valid: identityOk,\n  recipient_valid: recipientOk,\n  contact_suppressed: dnc,\n  next_workflow: dispatchReady ? 'WF-263' : 'WF-126',\n  crm_activity: {\n    activity_type: 'seller_reengagement_message_prepared',\n    workflow_id: 'WF-262',\n    status: dispatchReady ? 'dispatch_ready' : dnc ? 'do_not_contact' : 'blocked',\n    dispatch_id: dispatchId,\n    channel,\n    attempt_number: attempt\n  }\n} }];"
+      },
+      "id": "wf262-controller",
+      "name": "WF-262 Message Generator & Dispatch Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "operation": "equal",
+              "value2": "dispatch_ready"
+            }
+          ]
+        }
+      },
+      "id": "wf262-gate",
+      "name": "WF-262 Dispatch Readiness Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'seller_reengagement_message_prepared',subject:'WF-262 re-engagement message prepared',body:JSON.stringify({workflow_id:$json.workflow_id,status:$json.status,channel:$json.channel,recipient:$json.recipient,message:$json.message,dispatch:$json.dispatch,next_workflow:$json.next_workflow}),source:'wholesaling-os',external_id:$json.dispatch.dispatch_id})}})"
+      },
+      "id": "wf262-crm",
+      "name": "WF-262 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf262-response",
+      "name": "WF-262 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-262 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-262 Message Generator & Dispatch Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-262 Message Generator & Dispatch Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-262 Dispatch Readiness Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-262 Dispatch Readiness Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-262 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-262 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-262 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-262 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

@@ -1,0 +1,158 @@
+{
+  "name": "WF-293 — Negotiation Decision → Revised Offer / Contract Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-293-revised-offer-contract-decision",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf293-webhook",
+      "name": "WF-293 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-293-revised-offer-contract-decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst nd=input.negotiation_decision??{};\nconst decision=String(nd.decision||input.negotiation_decision_type||\"\").toLowerCase();\nconst mao=Number(nd.dynamic_mao??input.dynamic_mao??input.adjusted_mao??input.mao);\nconst counter=Number(nd.counteroffer_amount??input.counteroffer_amount);\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst validMao=Number.isFinite(mao)&&mao>0;\nconst validCounter=Number.isFinite(counter)&&counter>0;\nconst within=validMao&&validCounter&&counter<=mao;\nconst near=validMao&&validCounter&&counter>mao&&counter<=mao*1.10;\nlet action=\"needs_review\",status=\"contract_decision_review_required\",nextWorkflow=\"WF-126\",reason=\"negotiation state requires human review\",human=true;\nif(blockers.length){action=\"blocked\";status=\"negotiation_blocked\";reason=\"active blockers present\";}\nelse if(!validMao){action=\"needs_review\";reason=\"dynamic MAO missing or invalid\";}\nelse if(decision===\"acceptance_ready\"||decision===\"counteroffer_within_mao\"||within){\n  action=\"contract_ready\";status=\"contract_decision_ready\";nextWorkflow=\"WF-201\";reason=\"seller terms are within protected dynamic MAO\";human=true;\n}\nelse if(decision===\"counteroffer_near_mao\"||near){\n  action=\"revised_offer\";status=\"revised_offer_ready\";nextWorkflow=\"WF-255\";reason=\"counteroffer is above MAO but inside controlled negotiation band\";human=true;\n}\nelse if(decision===\"counteroffer_above_mao\"){\n  action=\"walk_away_or_reengage\";status=\"walk_away_review_required\";nextWorkflow=\"WF-261\";reason=\"counteroffer exceeds protected dynamic MAO\";human=true;\n}\nelse if(decision===\"rejected\"){\n  action=\"reengage\";status=\"reengagement_ready\";nextWorkflow=\"WF-261\";reason=\"seller rejected the offer\";human=true;\n}\nelse if(decision===\"clarification_required\"){\n  action=\"clarify\";status=\"clarification_required\";nextWorkflow=\"WF-255\";reason=\"seller response requires clarification\";human=true;\n}\nelse if(decision===\"timeout_followup\"){\n  action=\"followup\";status=\"followup_required\";nextWorkflow=\"WF-290\";reason=\"seller response timed out\";human=false;\n}\nconst guardrail=(action===\"contract_ready\"||action===\"revised_offer\")&&validCounter&&counter>mao?\"HARD_BLOCK_ABOVE_DYNAMIC_MAO\":\"PASS\";\nconst idempotencyKey=input.idempotency_key||`wf-293:${input.deal_id||\"unknown\"}:${input.dispatch_id||\"none\"}:${input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-293\",workflow_name:\"Negotiation Decision → Revised Offer / Contract Decision Controller\",status,contract_decision:{action,reason,dynamic_mao:validMao?mao:null,counteroffer_amount:validCounter?counter:null,within_dynamic_mao:within,near_dynamic_mao:near,guardrail},next_workflow:nextWorkflow,human_review_required:human,audit:{event_type:\"revised_offer_contract_decision\",idempotency_key:idempotencyKey}}}];"
+      },
+      "id": "wf293-controller",
+      "name": "WF-293 Revised Offer Contract Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['contract_ready','revised_offer'].includes($json.contract_decision.action)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf293-if",
+      "name": "WF-293 Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-293 revised offer / contract decision',description:$json.contract_decision.reason,metadata:{workflow:'WF-293',status:$json.status,contract_decision:$json.contract_decision,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf293-crm",
+      "name": "WF-293 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,contract_decision:$json.contract_decision,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf293-response",
+      "name": "WF-293 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-293 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-293 Revised Offer Contract Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-293 Revised Offer Contract Decision": {
+      "main": [
+        [
+          {
+            "node": "WF-293 Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-293 Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-293 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-293 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-293 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-293 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-293-v1"
+}

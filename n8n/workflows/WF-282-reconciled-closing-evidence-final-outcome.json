@@ -1,0 +1,158 @@
+{
+  "name": "WF-282 — Reconciled Closing Evidence → Final Closing Outcome & Completion Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-282-final-closing-outcome",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf282-webhook",
+      "name": "WF-282 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-282-final-closing-outcome"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst arr=v=>Array.isArray(v)?v:[];\nconst truthy=v=>v===true||v===\"true\"||v===1||v===\"1\";\nconst requiredEvidence=arr(input.required_evidence);\nconst verifiedEvidence=arr(input.verified_evidence);\nconst milestones=arr(input.milestones);\nconst blockers=arr(input.blockers);\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id);\nconst execution=input.execution??{};\nconst active=truthy(input.closing_active)||truthy(execution.active)||[\"active\",\"in_progress\",\"closing_active\"].includes(String(execution.status||\"\").toLowerCase());\nconst evidenceReconciled=truthy(input.evidence_reconciled)||[\"reconciled\",\"complete\",\"verified\"].includes(String(input.evidence_status||\"\").toLowerCase());\nconst verifiedIds=new Set(verifiedEvidence.map(e=>String(e.id??e)));\nconst evidenceComplete=requiredEvidence.length===0||requiredEvidence.every(e=>verifiedIds.has(String(e.id??e)));\nconst failedEvidence=verifiedEvidence.filter(e=>truthy(e.failed)||[\"failed\",\"rejected\",\"invalid\"].includes(String(e.status||\"\").toLowerCase()));\nconst milestonesComplete=milestones.length===0||milestones.every(m=>truthy(m.completed)||[\"completed\",\"done\",\"verified\"].includes(String(m.status||\"\").toLowerCase()));\nconst executionIdentity=Boolean(input.execution_id||execution.execution_id||execution.id);\nconst signedExecuted=truthy(input.executed_agreement)||[\"executed\",\"signed\",\"fully_executed\"].includes(String(input.agreement_status||\"\").toLowerCase());\nconst blockersClear=blockers.length===0;\nconst closingDateValid=Boolean(input.closing_date)&&!Number.isNaN(new Date(input.closing_date).getTime());\nconst outcomeReady=identityComplete&&active&&evidenceReconciled&&evidenceComplete&&failedEvidence.length===0&&milestonesComplete&&executionIdentity&&signedExecuted&&blockersClear&&closingDateValid;\n\nlet status=\"outcome_confirmation_required\",nextWorkflow=\"WF-282\",humanReview=true;\nif(!identityComplete){status=\"blocked_missing_identity\";nextWorkflow=\"WF-126\";}\nelse if(!active){status=\"closing_not_active\";nextWorkflow=\"WF-279\";}\nelse if(!evidenceReconciled||!evidenceComplete||failedEvidence.length>0){status=\"evidence_reconciliation_incomplete\";nextWorkflow=\"WF-281\";}\nelse if(!milestonesComplete){status=\"milestone_completion_incomplete\";nextWorkflow=\"WF-280\";}\nelse if(!executionIdentity||!signedExecuted){status=\"execution_evidence_missing\";nextWorkflow=\"WF-278\";}\nelse if(!blockersClear||!closingDateValid){status=\"blocked\";nextWorkflow=\"WF-126\";}\nelse{status=\"final_closing_outcome_ready\";nextWorkflow=\"WF-283\";}\n\nreturn [{json:{...input,workflow:\"WF-282\",workflow_name:\"Reconciled Closing Evidence → Final Closing Outcome & Completion Controller\",status,final_closing_outcome:{identity_complete:identityComplete,closing_active:active,evidence_reconciled:evidenceReconciled,evidence_complete:evidenceComplete,failed_evidence_count:failedEvidence.length,milestones_complete:milestonesComplete,execution_identity_present:executionIdentity,signed_executed:signedExecuted,blockers_clear:blockersClear,closing_date_valid:closingDateValid,ready:outcomeReady},next_workflow:nextWorkflow,human_review_required:humanReview,routing_reason:status,audit:{event_type:\"reconciled_closing_evidence_final_outcome\",idempotency_key:input.idempotency_key||`wf-282:${input.deal_id||\"unknown\"}:${input.close_id||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf282-controller",
+      "name": "WF-282 Final Closing Outcome Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'final_closing_outcome_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf282-if",
+      "name": "WF-282 Final Outcome Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-282 final closing outcome and completion',description:$json.routing_reason,metadata:{workflow:'WF-282',status:$json.status,final_closing_outcome:$json.final_closing_outcome,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf282-crm",
+      "name": "WF-282 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,final_closing_outcome_ready:$json.final_closing_outcome?.ready,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf282-response",
+      "name": "WF-282 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-282 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-282 Final Closing Outcome Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-282 Final Closing Outcome Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-282 Final Outcome Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-282 Final Outcome Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-282 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-282 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-282 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-282 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-282-v1"
+}

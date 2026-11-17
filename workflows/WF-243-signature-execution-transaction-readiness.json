@@ -1,0 +1,165 @@
+{
+  "name": "WF-243 — Signature Execution → Transaction Readiness & Closing Launch",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-243-signature-execution",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const signature_status=String(d.signature_status??d.status??\"\").toLowerCase();const agreement_type=String(d.agreement_type??\"purchase_agreement\").toLowerCase();const contract_price=Number(d.contract_price??d.accepted_price??NaN);const dynamic_mao=Number(d.dynamic_mao??d.maximum_offer??NaN);const signature_id=d.signature_id??null;const execution_timestamp=d.execution_timestamp??d.signed_at??null;const closing_date=d.closing_date??null;const seller_name=String(d.seller_name??\"\").trim();const blockers=Array.isArray(d.blockers)?d.blockers:[];let status=\"needs_review\",reason=\"Signature execution requires review.\",next=\"WF-126\";if(!lead_id||!deal_id||!property_id){status=\"blocked\";reason=\"Missing lead, deal, or property identity.\";}else if(blockers.length){status=\"blocked\";reason=\"Unresolved blockers prevent transaction launch.\";}else if(![\"executed\",\"signed\",\"completed\"].includes(signature_status)){status=\"signature_incomplete\";reason=\"Executed signature evidence has not been confirmed.\";}else if(!signature_id||!execution_timestamp){status=\"evidence_incomplete\";reason=\"Executed signature requires signature ID and execution timestamp.\";}else if(!seller_name){status=\"incomplete\";reason=\"Seller identity is incomplete.\";}else if(!agreement_type){status=\"incomplete\";reason=\"Agreement type is missing.\";}else if(!Number.isFinite(contract_price)){status=\"incomplete\";reason=\"Contract price is missing or invalid.\";}else if(Number.isFinite(dynamic_mao)&&contract_price>dynamic_mao){status=\"blocked\";reason=\"Executed contract price exceeds protected dynamic MAO.\";}else if(!closing_date){status=\"incomplete\";reason=\"Closing date is required for transaction readiness.\";}else{status=\"transaction_ready\";reason=\"Executed agreement and required transaction inputs are validated; closing coordination may launch.\";next=\"WF-244\";}return[{json:{workflow:\"WF-243\",lead_id,deal_id,property_id,signature_status,signature_id,execution_timestamp,agreement_type,contract_price:Number.isFinite(contract_price)?contract_price:null,dynamic_mao:Number.isFinite(dynamic_mao)?dynamic_mao:null,seller_name,closing_date,transaction_status:status,reason,requires_human_review:status!==\"transaction_ready\",next_workflow:next,maO_protection:{price_within_mao:Number.isFinite(contract_price)&&Number.isFinite(dynamic_mao)?contract_price<=dynamic_mao:null}}}];"
+      },
+      "name": "Transaction Readiness Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.transaction_status }}",
+              "rightValue": "transaction_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Closing Launch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'transaction_readiness',notes:'WF-243 status='+$json.transaction_status+' next='+$json.next_workflow+' contract_price='+$json.contract_price+' closing_date='+$json.closing_date,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Transaction Readiness",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,transaction_ready:$json.transaction_status===\"transaction_ready\",closing_launch_ready:$json.transaction_status===\"transaction_ready\",next_workflow:$json.next_workflow}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Transaction Readiness Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transaction Readiness Controller": {
+      "main": [
+        [
+          {
+            "node": "Closing Launch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closing Launch Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Transaction Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Transaction Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Transaction Readiness": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-243-transaction-readiness-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

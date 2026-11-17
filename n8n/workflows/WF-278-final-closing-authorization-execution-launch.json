@@ -1,0 +1,158 @@
+{
+  "name": "WF-278 — Final Closing Authorization → Closing Execution Launch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-278-final-closing-authorization",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf278-webhook",
+      "name": "WF-278 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-278-final-closing-authorization"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst arr=v=>Array.isArray(v)?v:[];\nconst truthy=v=>v===true||v===\"true\"||v===1||v===\"1\";\nconst auth=input.authorization??{};\nconst pkg=input.closing_package??{};\nconst blockers=arr(input.blockers);\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id);\nconst finalReady=truthy(input.final_closing_ready)||[\"final_closing_ready\",\"ready\",\"authorized\"].includes(String(input.status||\"\").toLowerCase());\nconst packageFinalized=truthy(pkg.finalized)||[\"finalized\",\"ready\",\"complete\"].includes(String(pkg.status||\"\").toLowerCase());\nconst authorizationConfirmed=truthy(auth.confirmed)||[\"confirmed\",\"authorized\",\"approved\"].includes(String(auth.status||\"\").toLowerCase());\nconst authorizationType=String(auth.type||auth.authorization_type||\"\").trim();\nconst authorizedBy=String(auth.authorized_by||auth.approved_by||\"\").trim();\nconst launchKey=String(input.launch_idempotency_key||input.execution_idempotency_key||\"\").trim();\nconst launchEvidence=input.launch_evidence??{};\nconst alreadyLaunched=truthy(input.execution_launched)||truthy(launchEvidence.confirmed)||[\"launched\",\"active\",\"confirmed\"].includes(String(launchEvidence.status||\"\").toLowerCase());\nconst duplicateSafe=Boolean(launchKey)&&(!alreadyLaunched||Boolean(launchEvidence.idempotency_key===launchKey));\nconst blockersClear=blockers.length===0;\nconst closingDateValid=Boolean(input.closing_date)&&!Number.isNaN(new Date(input.closing_date).getTime());\n\nlet status=\"authorization_required\",nextWorkflow=\"WF-278\",humanReview=true;\nif(!identityComplete){status=\"blocked_missing_identity\";nextWorkflow=\"WF-126\";}\nelse if(!packageFinalized||!finalReady){status=\"final_readiness_not_confirmed\";nextWorkflow=\"WF-277\";}\nelse if(!blockersClear||!closingDateValid){status=\"blocked\";nextWorkflow=\"WF-126\";}\nelse if(!authorizationConfirmed||!authorizationType||!authorizedBy){status=\"explicit_authorization_required\";nextWorkflow=\"WF-278\";}\nelse if(!launchKey){status=\"launch_idempotency_key_required\";nextWorkflow=\"WF-278\";}\nelse if(alreadyLaunched&&duplicateSafe){status=\"already_launched\";nextWorkflow=\"WF-279\";}\nelse if(!duplicateSafe){status=\"launch_conflict\";nextWorkflow=\"WF-126\";}\nelse{status=\"closing_execution_launch_ready\";nextWorkflow=\"WF-279\";}\n\nreturn [{json:{...input,workflow:\"WF-278\",workflow_name:\"Final Closing Authorization → Closing Execution Launch Controller\",status,launch_authorization:{identity_complete:identityComplete,final_readiness_confirmed:finalReady,package_finalized:packageFinalized,blockers_clear:blockersClear,closing_date_valid:closingDateValid,authorization_confirmed:authorizationConfirmed,authorization_type_present:Boolean(authorizationType),authorized_by_present:Boolean(authorizedBy),launch_idempotency_key_present:Boolean(launchKey),already_launched:alreadyLaunched,duplicate_safe:duplicateSafe,ready:[\"closing_execution_launch_ready\",\"already_launched\"].includes(status)},next_workflow:nextWorkflow,human_review_required:humanReview,routing_reason:status,audit:{event_type:\"final_closing_authorization_execution_launch\",idempotency_key:input.idempotency_key||`wf-278:${input.deal_id||\"unknown\"}:${launchKey||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf278-controller",
+      "name": "WF-278 Launch Authorization Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'closing_execution_launch_ready' || $json.status === 'already_launched'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf278-if",
+      "name": "WF-278 Execution Launch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-278 final closing authorization and execution launch',description:$json.routing_reason,metadata:{workflow:'WF-278',status:$json.status,launch_authorization:$json.launch_authorization,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf278-crm",
+      "name": "WF-278 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,execution_launch_ready:$json.launch_authorization?.ready,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf278-response",
+      "name": "WF-278 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-278 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-278 Launch Authorization Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-278 Launch Authorization Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-278 Execution Launch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-278 Execution Launch Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-278 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-278 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-278 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-278 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-278-v1"
+}

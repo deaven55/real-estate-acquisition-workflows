@@ -1,0 +1,168 @@
+{
+  "name": "WF-220 — Negotiation Outcome → Contract Trigger / Rejection / Re-engagement Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-220-negotiation-outcome",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst deal = input.deal ?? input;\nconst outcome = String(deal.negotiation_outcome ?? deal.outcome ?? '').toLowerCase();\nconst leadId = deal.lead_id ?? null;\nconst dealId = deal.deal_id ?? null;\nconst propertyId = deal.property_id ?? null;\nconst contractPrice = Number(deal.contract_price ?? deal.accepted_price ?? deal.counteroffer_amount ?? NaN);\nconst adjustedMao = Number(deal.adjusted_mao ?? deal.dynamic_mao ?? NaN);\nconst sellerResponse = String(deal.seller_response ?? deal.response_text ?? '').trim();\nconst blockers = Array.isArray(deal.blockers) ? deal.blockers : [];\nconst base = { workflow:\"WF-220\", lead_id:leadId, deal_id:dealId, property_id:propertyId, outcome, seller_response:sellerResponse, blockers };\nlet state=\"needs_review\", route=\"WF-126\", reason=\"Outcome requires human review.\";\nif ([\"accepted\",\"accept\",\"accepted_counteroffer\",\"contract_ready\",\"contract_trigger\"].includes(outcome)) {\n  if (!leadId || !dealId || !propertyId || !Number.isFinite(contractPrice)) { state=\"blocked\"; reason=\"Missing contract identity or accepted price.\"; }\n  else if (Number.isFinite(adjustedMao) && contractPrice > adjustedMao) { state=\"blocked\"; reason=\"Accepted price exceeds dynamic MAO protection.\"; }\n  else if (blockers.length) { state=\"blocked\"; reason=\"Deal has unresolved blockers.\"; }\n  else { state=\"contract_trigger\"; route=\"WF-201\"; reason=\"Negotiation produced a contract-ready outcome within MAO.\"; }\n} else if ([\"rejected\",\"declined\",\"seller_rejected\"].includes(outcome)) {\n  state=\"rejection_reengagement\"; route=\"WF-202\"; reason=\"Seller rejected the current offer; re-engagement or alternative disposition is required.\";\n} else if ([\"walk_away\",\"walk-away\",\"passed\"].includes(outcome)) {\n  state=\"walk_away_reengagement\"; route=\"WF-202\"; reason=\"Acquisition was walked away from; preserve re-engagement path where appropriate.\";\n} else if ([\"counteroffer\",\"counter\",\"revised_offer\"].includes(outcome)) {\n  state=\"revised_offer_follow_up\"; route=\"WF-215\"; reason=\"Negotiation produced a counter/revised offer requiring another controlled offer cycle.\";\n} else if ([\"timeout\",\"no_response\",\"seller_silent\"].includes(outcome)) {\n  state=\"reengagement_required\"; route=\"WF-202\"; reason=\"Seller did not respond within the expected negotiation window.\";\n}\nconst result = {...base,state,route,reason,requires_human_review:[\"blocked\",\"needs_review\",\"rejection_reengagement\",\"walk_away_reengagement\"].includes(state),contract_price:Number.isFinite(contractPrice)?contractPrice:null,adjusted_mao:Number.isFinite(adjustedMao)?adjustedMao:null};\nreturn [{json:result}];"
+      },
+      "name": "Negotiation Outcome Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "contract_trigger",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Contract Trigger Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": []
+        },
+        "jsonBody": "={{ JSON.stringify({ lead_id:$json.lead_id, activity_type:'negotiation_outcome', notes:'WF-220 outcome='+$json.outcome+' state='+$json.state+' route='+$json.route+' reason='+$json.reason, metadata:$json }) }}",
+        "options": {}
+      },
+      "name": "Persist Negotiation Outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{...$json, workflow:\"WF-220\", persisted:true, contract_trigger_ready:$json.state===\"contract_trigger\", next_workflow:$json.route}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Negotiation Outcome Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Negotiation Outcome Controller": {
+      "main": [
+        [
+          {
+            "node": "Contract Trigger Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contract Trigger Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Negotiation Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Negotiation Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Negotiation Outcome": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-220-negotiation-outcome-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

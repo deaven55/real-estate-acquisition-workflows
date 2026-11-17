@@ -1,0 +1,156 @@
+{
+  "name": "WF-274 Milestone Exception / Recovery Routing Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-274-milestone-exception-recovery-routing",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf274-webhook",
+      "name": "WF-274 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;const dealId=input.deal_id??null,leadId=input.lead_id??null,propertyId=input.property_id??null;const status=String(input.status??input.monitoring_status??'').toLowerCase();const milestones=Array.isArray(input.milestones)?input.milestones:[];const blockers=Array.isArray(input.blockers)?input.blockers:[];const recovery=input.recovery??{};const overdue=milestones.filter(m=>m&&String(m.status??'').toLowerCase()!=='completed'&&m.due_date&&new Date(m.due_date)<new Date());const failed=milestones.filter(m=>['failed','blocked','rejected'].includes(String(m.status??'').toLowerCase()));const critical=overdue.filter(m=>m.critical===true||String(m.priority??'').toLowerCase()==='critical');const identityOk=Boolean(dealId&&leadId&&propertyId);const hasRecoveryPlan=Boolean(recovery.owner||recovery.action||recovery.target_date||recovery.plan);let state='needs_recovery',next='WF-126',human=true;if(!identityOk){state='blocked';}else if(status==='milestones_completed'&&failed.length===0&&overdue.length===0){state='recovered';next='WF-275';human=true;}else if(critical.length||blockers.length){state='critical_exception';next='WF-126';human=true;}else if(hasRecoveryPlan){state='recovery_ready';next='WF-275';human=true;}else if(failed.length||overdue.length){state='recovery_required';next='WF-274';human=true;}else{state='monitoring_required';next='WF-273';human=true;}return[{json:{...input,workflow_id:'WF-274',workflow_name:'Milestone Exception / Recovery Routing Controller',state,next_workflow:next,human_review_required:human,identity_valid:identityOk,exception_summary:{overdue_milestones:overdue.length,failed_milestones:failed.length,critical_overdue_milestones:critical.length,blockers:blockers.length,recovery_plan_present:hasRecoveryPlan},recovery:{required:state==='recovery_required'||state==='critical_exception',ready:state==='recovery_ready',plan:recovery},crm_activity:{activity_type:'milestone_exception_recovery_routing',workflow_id:'WF-274',state,next_workflow:next,human_review_required:human,exception_summary:{overdue:overdue.length,failed:failed.length,critical_overdue:critical.length,blockers:blockers.length}}}}];"
+      },
+      "id": "wf274-controller",
+      "name": "WF-274 Exception Recovery Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.state}}",
+              "operation": "in",
+              "value2": "recovered,recovery_ready"
+            }
+          ]
+        }
+      },
+      "id": "wf274-gate",
+      "name": "WF-274 Recovery Routing Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'milestone_exception_recovery_routing',subject:'WF-274 milestone exception and recovery routing',body:JSON.stringify({workflow_id:$json.workflow_id,state:$json.state,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,exception_summary:$json.exception_summary,recovery:$json.recovery}),source:'wholesaling-os',external_id:'WF-274:'+($json.deal_id??$json.lead_id??'unknown')+':'+$execution.id})}})"
+      },
+      "id": "wf274-crm",
+      "name": "WF-274 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf274-response",
+      "name": "WF-274 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-274 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-274 Exception Recovery Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-274 Exception Recovery Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-274 Recovery Routing Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-274 Recovery Routing Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-274 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-274 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-274 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-274 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

@@ -1,0 +1,158 @@
+{
+  "name": "WF-288 — Property-Level Offer Strategy → Seller Offer Package & Negotiation Launch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-288-seller-offer-package-negotiation-launch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf288-webhook",
+      "name": "WF-288 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-288-seller-offer-package-negotiation-launch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst strategy=input.acquisition_strategy??{};\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst decision=String(strategy.decision||input.decision||\"\").toLowerCase();\nconst mao=Number(strategy.dynamic_mao??input.dynamic_mao??input.adjusted_mao);\nconst asking=Number(strategy.asking_price??input.asking_price);\nconst projectedProfit=Number(strategy.projected_assignment_profit??input.projected_assignment_profit);\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id);\nconst valid=Number.isFinite(mao)&&Number.isFinite(asking)&&Number.isFinite(projectedProfit);\nconst eligible=[\"pursue\",\"negotiate\"].includes(decision)&&valid&&projectedProfit>0&&blockers.length===0;\nconst openingOffer=Number(input.opening_offer??input.offer_price??(Number.isFinite(asking)&&Number.isFinite(mao)?Math.min(mao,asking):NaN));\nconst negotiationTarget=Number(input.negotiation_target??(Number.isFinite(mao)?mao:NaN));\nconst offerWithinMao=Number.isFinite(openingOffer)&&Number.isFinite(mao)&&openingOffer<=mao;\nconst targetWithinMao=Number.isFinite(negotiationTarget)&&Number.isFinite(mao)&&negotiationTarget<=mao;\nlet status=\"offer_package_ready\",nextWorkflow=\"WF-289\",humanReview=true,reason=\"seller offer package prepared for human review\";\nif(!identityComplete){status=\"blocked_missing_identity\";nextWorkflow=\"WF-126\";reason=\"missing deal/lead/property identity\";}\nelse if(!eligible){status=\"offer_package_not_ready\";nextWorkflow=\"WF-287\";reason=\"acquisition decision or economics are not eligible\";}\nelse if(!offerWithinMao||!targetWithinMao){status=\"mao_guardrail_violation\";nextWorkflow=\"WF-287\";reason=\"offer or negotiation target exceeds dynamic MAO\";}\nconst offerPackage={deal_id:input.deal_id,lead_id:input.lead_id,property_id:input.property_id,asking_price:asking,dynamic_mao:mao,opening_offer:openingOffer,negotiation_target:negotiationTarget,projected_assignment_profit:projectedProfit,motivation:strategy.motivation||input.motivation||\"unknown\",decision,offer_within_mao:offerWithinMao,target_within_mao:targetWithinMao,seller_review_required:true,reason};\nreturn [{json:{...input,workflow:\"WF-288\",workflow_name:\"Property-Level Offer Strategy → Seller Offer Package & Negotiation Launch Controller\",status,offer_package:offerPackage,next_workflow:nextWorkflow,human_review_required:humanReview,audit:{event_type:\"seller_offer_package_negotiation_launch\",idempotency_key:input.idempotency_key||`wf-288:${input.deal_id||\"unknown\"}:${input.property_id||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf288-controller",
+      "name": "WF-288 Seller Offer Package Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'offer_package_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf288-if",
+      "name": "WF-288 Offer Package Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-288 seller offer package and negotiation launch',description:$json.status,metadata:{workflow:'WF-288',status:$json.status,offer_package:$json.offer_package,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf288-crm",
+      "name": "WF-288 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,offer_package:$json.offer_package,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf288-response",
+      "name": "WF-288 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-288 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-288 Seller Offer Package Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-288 Seller Offer Package Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-288 Offer Package Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-288 Offer Package Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-288 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-288 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-288 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-288 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-288-v1"
+}

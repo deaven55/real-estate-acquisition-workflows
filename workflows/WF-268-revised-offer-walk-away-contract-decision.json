@@ -1,0 +1,156 @@
+{
+  "name": "WF-268 Revised Offer / Walk-Away / Contract Package Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-268-revised-offer-walk-away-contract-decision",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf268-webhook",
+      "name": "WF-268 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;const action=String(input.action??input.recommendation??'').toLowerCase();const status=String(input.status??'').toLowerCase();const mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao);const price=Number(input.contract_price??input.counteroffer_amount??input.offer_price);const dealId=input.deal_id??null,leadId=input.lead_id??null,propertyId=input.property_id??null;const blockers=Array.isArray(input.blockers)?input.blockers:[];const identityOk=Boolean(dealId&&leadId&&propertyId);const priceValid=Number.isFinite(price)&&price>0;const withinMao=priceValid&&Number.isFinite(mao)&&price<=mao;const nearMao=priceValid&&Number.isFinite(mao)&&price>mao&&price<=mao*1.05;let decision='needs_review',next='WF-126',human=true,state='needs_review';if(!identityOk||blockers.length){decision='human_review';state='blocked';}else if((action.includes('contract')||action.includes('accept'))&&withinMao){decision='contract_package_ready';state='contract_ready';next='WF-269';}else if(action.includes('revised')&&priceValid&&withinMao){decision='revised_offer_ready';state='revised_offer_ready';next='WF-269';}else if((action.includes('revised')||action.includes('walk'))&&nearMao){decision='revised_offer_or_walk_away';state='near_mao_review';next='WF-261';}else if(action.includes('walk')||action.includes('reengage')){decision='walk_away_reengagement';state='walk_away';next='WF-261';}else if(priceValid&&!Number.isFinite(mao)){decision='human_review';state='mao_missing';}return[{json:{...input,workflow_id:'WF-268',workflow_name:'Revised Offer / Walk-Away / Contract Package Decision Controller',decision,state,next_workflow:next,human_review_required:human,identity_valid:identityOk,price_valid:priceValid,guardrail:{dynamic_mao_protected:true,contract_or_offer_price:priceValid?price:null,dynamic_mao:Number.isFinite(mao)?mao:null,within_mao:withinMao,near_mao:nearMao},contract_package:{ready:state==='contract_ready',price:priceValid?price:null},revised_offer:{ready:state==='revised_offer_ready',price:priceValid?price:null},crm_activity:{activity_type:'revised_offer_contract_decision',workflow_id:'WF-268',decision,state,next_workflow:next,human_review_required:human}}}];"
+      },
+      "id": "wf268-controller",
+      "name": "WF-268 Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.state}}",
+              "operation": "in",
+              "value2": "contract_ready,revised_offer_ready"
+            }
+          ]
+        }
+      },
+      "id": "wf268-gate",
+      "name": "WF-268 Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'revised_offer_contract_decision',subject:'WF-268 revised offer / walk-away / contract decision',body:JSON.stringify({workflow_id:$json.workflow_id,decision:$json.decision,state:$json.state,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,guardrail:$json.guardrail,contract_package:$json.contract_package,revised_offer:$json.revised_offer}),source:'wholesaling-os',external_id:'WF-268:'+($json.deal_id??$json.lead_id??'unknown')+':'+($json.dispatch_id??$execution.id)})}})"
+      },
+      "id": "wf268-crm",
+      "name": "WF-268 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf268-response",
+      "name": "WF-268 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-268 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-268 Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-268 Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-268 Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-268 Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-268 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-268 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-268 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-268 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

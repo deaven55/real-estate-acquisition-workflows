@@ -1,0 +1,156 @@
+{
+  "name": "WF-271 Executed Signature → Transaction Readiness & Closing Launch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-271-executed-signature-transaction-readiness",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf271-webhook",
+      "name": "WF-271 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;const signatureStatus=String(input.signature_status??input.execution_status??input.status??'').toLowerCase();const dealId=input.deal_id??null,leadId=input.lead_id??null,propertyId=input.property_id??null;const agreementType=String(input.agreement_type??'purchase_agreement').toLowerCase();const contractPrice=Number(input.contract_price??input.agreed_price??input.offer_price);const dynamicMao=Number(input.dynamic_mao??input.adjusted_mao??input.mao);const closingDate=input.closing_date??input.target_closing_date??null;const executionTimestamp=input.execution_timestamp??input.signed_at??null;const seller=input.seller??{};const buyer=input.buyer??{};const blockers=Array.isArray(input.blockers)?input.blockers:[];const identityOk=Boolean(dealId&&leadId&&propertyId);const executed=signatureStatus==='executed'||signatureStatus==='signed';const priceOk=Number.isFinite(contractPrice)&&contractPrice>0;const maoOk=Number.isFinite(dynamicMao)&&priceOk&&contractPrice<=dynamicMao;const partiesOk=Boolean((seller.name||input.seller_name)&&(buyer.name||input.buyer_name||input.assignee_name));const dateOk=Boolean(closingDate);const evidenceOk=Boolean(executionTimestamp);let status='blocked',next='WF-126',human=true;if(!identityOk||!partiesOk||!dateOk||!evidenceOk||blockers.length){status='transaction_readiness_blocked';}else if(!executed){status='signature_not_executed';next='WF-270';}else if(!priceOk||!Number.isFinite(dynamicMao)){status='pricing_evidence_missing';}else if(!maoOk){status='above_mao_blocked';next='WF-126';}else{status='transaction_ready';next='WF-272';human=true;}return[{json:{...input,workflow_id:'WF-271',workflow_name:'Executed Signature → Transaction Readiness & Closing Launch Controller',status,next_workflow:next,human_review_required:human,identity_valid:identityOk,signature_executed:executed,parties_valid:partiesOk,closing_date_valid:dateOk,execution_evidence_valid:evidenceOk,guardrail:{dynamic_mao_protected:true,contract_price:priceOk?contractPrice:null,dynamic_mao:Number.isFinite(dynamicMao)?dynamicMao:null,within_mao:maoOk},transaction_readiness:{ready:status==='transaction_ready',agreement_type:agreementType,closing_date:closingDate,execution_timestamp:executionTimestamp,seller:seller.name||input.seller_name||null,buyer:buyer.name||input.buyer_name||input.assignee_name||null},crm_activity:{activity_type:'transaction_readiness_closing_launch',workflow_id:'WF-271',status,next_workflow:next,human_review_required:human}}}];"
+      },
+      "id": "wf271-controller",
+      "name": "WF-271 Transaction Readiness Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "operation": "equal",
+              "value2": "transaction_ready"
+            }
+          ]
+        }
+      },
+      "id": "wf271-gate",
+      "name": "WF-271 Closing Launch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'transaction_readiness_closing_launch',subject:'WF-271 executed signature transaction readiness',body:JSON.stringify({workflow_id:$json.workflow_id,status:$json.status,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,guardrail:$json.guardrail,transaction_readiness:$json.transaction_readiness}),source:'wholesaling-os',external_id:'WF-271:'+($json.deal_id??$json.lead_id??'unknown')+':'+($json.signature_idempotency_key??$execution.id)})}})"
+      },
+      "id": "wf271-crm",
+      "name": "WF-271 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf271-response",
+      "name": "WF-271 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-271 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-271 Transaction Readiness Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-271 Transaction Readiness Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-271 Closing Launch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-271 Closing Launch Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-271 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-271 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-271 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-271 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

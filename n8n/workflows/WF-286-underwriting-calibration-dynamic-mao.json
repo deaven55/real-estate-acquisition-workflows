@@ -1,0 +1,158 @@
+{
+  "name": "WF-286 — Portfolio Performance → Underwriting Calibration & Dynamic MAO Strategy Feedback Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-286-underwriting-calibration-dynamic-mao",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf286-webhook",
+      "name": "WF-286 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-286-underwriting-calibration-dynamic-mao"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst perf=input.portfolio_performance??{};\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst sample=Math.max(0,Number(perf.historical_sample_size??input.historical_sample_size??0));\nconst netDelta=Number(perf.net_profit_delta??input.net_profit_delta);\nconst marginDelta=Number(perf.margin_delta??input.margin_delta);\nconst valid=Number.isFinite(netDelta)||Number.isFinite(marginDelta);\nlet confidence=sample>=20?\"high\":sample>=10?\"medium\":\"low\";\nlet factor=1;\nlet rationale=\"insufficient evidence for calibration\";\nif(valid){\n  if(confidence===\"high\"){\n    if((Number.isFinite(marginDelta)&&marginDelta<-0.10)||(Number.isFinite(netDelta)&&netDelta<0)){factor=0.95;rationale=\"high-confidence underperformance\";}\n    else if((Number.isFinite(marginDelta)&&marginDelta>0.10)&&(Number.isFinite(netDelta)&&netDelta>0)){factor=1.03;rationale=\"high-confidence outperformance\";}\n    else rationale=\"high-confidence performance within calibration band\";\n  } else if(confidence===\"medium\"){\n    if(Number.isFinite(marginDelta)&&marginDelta<-0.15){factor=0.97;rationale=\"medium-confidence underperformance\";}\n    else if(Number.isFinite(marginDelta)&&marginDelta>0.15&&Number.isFinite(netDelta)&&netDelta>0){factor=1.02;rationale=\"medium-confidence outperformance\";}\n    else rationale=\"medium-confidence performance within calibration band\";\n  }\n}\nconst baseMao=Number(input.base_mao??input.dynamic_mao??input.mao);\nconst adjustedMao=Number.isFinite(baseMao)?baseMao*factor:null;\nlet status=\"calibration_ready\",nextWorkflow=\"WF-287\",humanReview=false;\nif(blockers.length){status=\"calibration_blocked\";nextWorkflow=\"WF-126\";humanReview=true;}\nelse if(!valid){status=\"performance_evidence_invalid\";nextWorkflow=\"WF-285\";humanReview=true;}\nelse if(confidence===\"low\"){status=\"low_confidence_human_review\";nextWorkflow=\"WF-126\";humanReview=true;}\nelse if(!Number.isFinite(baseMao)){status=\"base_mao_missing\";nextWorkflow=\"WF-126\";humanReview=true;}\nconst calibration={sample_size:sample,confidence,base_mao:Number.isFinite(baseMao)?baseMao:null,adjustment_factor:factor,adjusted_mao:adjustedMao,net_profit_delta:Number.isFinite(netDelta)?netDelta:null,margin_delta:Number.isFinite(marginDelta)?marginDelta:null,rationale,rule_note:\"70% rule is secondary/reference only; calibration remains asset-specific and economics-driven.\"};\nreturn [{json:{...input,workflow:\"WF-286\",workflow_name:\"Portfolio Performance → Underwriting Calibration & Dynamic MAO Strategy Feedback Controller\",status,calibration,next_workflow:nextWorkflow,human_review_required:humanReview,audit:{event_type:\"underwriting_calibration_dynamic_mao\",idempotency_key:input.idempotency_key||`wf-286:${input.deal_id||\"unknown\"}:${input.close_id||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf286-controller",
+      "name": "WF-286 Underwriting Calibration Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'calibration_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf286-if",
+      "name": "WF-286 Calibration Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-286 underwriting calibration and dynamic MAO feedback',description:$json.status,metadata:{workflow:'WF-286',status:$json.status,calibration:$json.calibration,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf286-crm",
+      "name": "WF-286 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,calibration:$json.calibration,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf286-response",
+      "name": "WF-286 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-286 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-286 Underwriting Calibration Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-286 Underwriting Calibration Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-286 Calibration Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-286 Calibration Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-286 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-286 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-286 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-286 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-286-v1"
+}

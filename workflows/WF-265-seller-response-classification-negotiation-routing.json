@@ -1,0 +1,156 @@
+{
+  "name": "WF-265 Seller Response Classification & Negotiation Routing Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-265-seller-response-classification",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf265-webhook",
+      "name": "WF-265 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst text = String(input.message ?? input.seller_message ?? input.body ?? '').trim();\nconst normalized = text.toLowerCase();\nconst dealId = input.deal_id ?? null;\nconst leadId = input.lead_id ?? null;\nconst propertyId = input.property_id ?? null;\nconst identityOk = Boolean(dealId && leadId && propertyId);\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\n\nconst moneyMatches = text.match(/(?:\\$\\s*)?\\b\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?\\b/g) || [];\nconst amounts = moneyMatches.map(v => Number(v.replace(/[$,\\s]/g,''))).filter(Number.isFinite);\nconst counteroffer = amounts.length ? amounts[0] : null;\n\nlet classification = 'other_response';\nif (!text) classification = 'no_response';\nelse if (/\\b(no|not interested|pass|decline|declined|never mind|sold already)\\b/.test(normalized)) classification = 'rejected';\nelse if (/\\b(yes|yeah|yep|okay|ok|deal|accept|accepted|let's do it|lets do it)\\b/.test(normalized) && !/\\bhow|what|when|where|why\\b/.test(normalized)) classification = 'accepted';\nelse if (counteroffer !== null && /\\b(offer|take|would take|can do|need|want|price|cash)\\b/.test(normalized)) classification = 'counteroffer';\nelse if (/\\b(how much|what can you offer|what's your offer|whats your offer|when can you close|how does this work|what are the terms|why)\\b/.test(normalized)) classification = 'question';\nelse if (/\\b(call me|text me|send|email|talk|interested|maybe|possibly|think about it)\\b/.test(normalized)) classification = 'other_response';\n\nconst dynamicMao = Number(input.dynamic_mao ?? input.adjusted_mao ?? input.mao);\nconst aboveMao = Number.isFinite(counteroffer) && Number.isFinite(dynamicMao) && counteroffer > dynamicMao;\nconst withinMao = Number.isFinite(counteroffer) && Number.isFinite(dynamicMao) && counteroffer <= dynamicMao;\n\nlet route = 'WF-126';\nlet status = 'needs_review';\nlet humanReview = true;\n\nif (!identityOk || blockers.length) {\n  route = 'WF-126';\n  status = 'blocked';\n} else if (classification === 'accepted') {\n  route = 'WF-266';\n  status = 'accepted_pending_negotiation_decision';\n} else if (classification === 'counteroffer') {\n  route = withinMao ? 'WF-266' : aboveMao ? 'WF-267' : 'WF-266';\n  status = withinMao ? 'counteroffer_within_mao' : aboveMao ? 'counteroffer_above_mao' : 'counteroffer_amount_uncertain';\n  humanReview = !withinMao;\n} else if (classification === 'rejected') {\n  route = 'WF-261';\n  status = 'rejected_reengagement';\n  humanReview = false;\n} else if (classification === 'question') {\n  route = 'WF-266';\n  status = 'seller_question';\n} else if (classification === 'no_response') {\n  route = 'WF-261';\n  status = 'no_response_reengagement';\n  humanReview = false;\n} else {\n  route = 'WF-266';\n  status = 'other_response_review';\n}\n\nreturn [{ json: {\n  ...input,\n  workflow_id: 'WF-265',\n  workflow_name: 'Seller Response Classification & Negotiation Routing Controller',\n  status,\n  classification,\n  counteroffer_amount: counteroffer,\n  dynamic_mao: Number.isFinite(dynamicMao) ? dynamicMao : null,\n  mao_comparison: Number.isFinite(counteroffer) && Number.isFinite(dynamicMao)\n    ? (withinMao ? 'within_mao' : 'above_mao')\n    : 'not_comparable',\n  next_workflow: route,\n  human_review_required: humanReview,\n  identity_valid: identityOk,\n  blockers,\n  seller_response: { received: Boolean(text), text },\n  crm_activity: {\n    activity_type: 'seller_response_classification',\n    workflow_id: 'WF-265',\n    classification,\n    status,\n    counteroffer_amount: counteroffer,\n    next_workflow: route,\n    human_review_required: humanReview\n  }\n} }];"
+      },
+      "id": "wf265-controller",
+      "name": "WF-265 Seller Response Classifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.classification}}",
+              "operation": "equal",
+              "value2": "counteroffer"
+            }
+          ]
+        }
+      },
+      "id": "wf265-gate",
+      "name": "WF-265 Negotiation Routing Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'seller_response_classification',subject:'WF-265 seller response classified',body:JSON.stringify({workflow_id:$json.workflow_id,status:$json.status,classification:$json.classification,counteroffer_amount:$json.counteroffer_amount,dynamic_mao:$json.dynamic_mao,mao_comparison:$json.mao_comparison,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,seller_response:$json.seller_response}),source:'wholesaling-os',external_id:'WF-265:'+($json.deal_id ?? $json.lead_id ?? 'unknown')+':'+($json.dispatch_id ?? $execution.id)})}})"
+      },
+      "id": "wf265-crm",
+      "name": "WF-265 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf265-response",
+      "name": "WF-265 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-265 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-265 Seller Response Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-265 Seller Response Classifier": {
+      "main": [
+        [
+          {
+            "node": "WF-265 Negotiation Routing Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-265 Negotiation Routing Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-265 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-265 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-265 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-265 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

@@ -1,0 +1,158 @@
+{
+  "name": "WF-284 — Verified Close → Final CRM Closeout, Assignment Profit Record & Portfolio Feedback Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-284-final-crm-closeout-profit-record",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf284-webhook",
+      "name": "WF-284 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-284-final-crm-closeout-profit-record"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst verified=input.verified_close??{};\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id&&input.close_id);\nconst verifiedClose=verified.verified===true||verified.status===\"verified_close\"||input.status===\"verified_close_ready\";\nconst closeDate=input.actual_closing_date||input.close_date||input.closing_date;\nconst closeDateValid=Boolean(closeDate)&&!Number.isNaN(new Date(closeDate).getTime());\nconst gross=Number(verified.gross_profit??input.gross_profit??input.assignment_fee);\nconst costs=Number(verified.closing_costs??input.closing_costs??input.total_costs??0);\nconst net=Number(verified.net_profit??input.net_profit??(Number.isFinite(gross)?gross-costs:NaN));\nconst profitValid=Number.isFinite(gross)&&Number.isFinite(costs)&&Number.isFinite(net);\nconst exitStrategy=input.exit_strategy||\"assignment\";\nconst negativeProfit=profitValid&&net<0;\nlet status=\"closeout_ready\",nextWorkflow=\"WF-285\",humanReview=false;\nif(!identityComplete){status=\"blocked_missing_identity\";nextWorkflow=\"WF-126\";humanReview=true;}\nelse if(!verifiedClose){status=\"verified_close_required\";nextWorkflow=\"WF-283\";humanReview=true;}\nelse if(!closeDateValid||!profitValid){status=\"profit_or_close_data_invalid\";nextWorkflow=\"WF-283\";humanReview=true;}\nelse if(blockers.length){status=\"closeout_blocked\";nextWorkflow=\"WF-126\";humanReview=true;}\nelse if(negativeProfit){status=\"negative_profit_review\";nextWorkflow=\"WF-126\";humanReview=true;}\nconst profitRecord={deal_id:input.deal_id,lead_id:input.lead_id,property_id:input.property_id,close_id:input.close_id,close_date:closeDate,exit_strategy:exitStrategy,gross_profit:gross,closing_costs:costs,net_profit:net,profit_margin:gross!==0?net/gross:null,verified:true};\nreturn [{json:{...input,workflow:\"WF-284\",workflow_name:\"Verified Close → Final CRM Closeout, Assignment Profit Record & Portfolio Feedback Controller\",status,profit_record:profitRecord,next_workflow:nextWorkflow,human_review_required:humanReview,audit:{event_type:\"final_crm_closeout_profit_record\",idempotency_key:input.idempotency_key||`wf-284:${input.deal_id||\"unknown\"}:${input.close_id||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf284-controller",
+      "name": "WF-284 Final CRM Closeout Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'closeout_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf284-if",
+      "name": "WF-284 Closeout Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-284 final CRM closeout and assignment profit record',description:$json.status,metadata:{workflow:'WF-284',status:$json.status,profit_record:$json.profit_record,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf284-crm",
+      "name": "WF-284 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,profit_record:$json.profit_record,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf284-response",
+      "name": "WF-284 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-284 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-284 Final CRM Closeout Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-284 Final CRM Closeout Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-284 Closeout Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-284 Closeout Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-284 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-284 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-284 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-284 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-284-v1"
+}

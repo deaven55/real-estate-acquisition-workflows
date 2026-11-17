@@ -1,0 +1,165 @@
+{
+  "name": "WF-240 — Negotiation Outcome → Contract Trigger / Rejection / Re-engagement Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-240-negotiation-outcome",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const action=String(d.action??d.decision??\"\").toLowerCase(),state=String(d.state??\"\").toLowerCase();const mao=Number(d.dynamic_mao??d.maximum_offer??NaN),price=Number(d.revised_offer_price??d.counteroffer_amount??d.offer_price??NaN);const blockers=Array.isArray(d.blockers)?d.blockers:[];let outcome=\"needs_review\",route=\"WF-126\",reason=\"Negotiation outcome requires review.\";if(!lead_id||!deal_id||!property_id){reason=\"Missing negotiation identity.\";}else if(blockers.length){reason=\"Unresolved blockers prevent outcome routing.\";}else if([\"accept_counteroffer\",\"accept_offer\"].includes(action)){if(Number.isFinite(price)&&Number.isFinite(mao)&&price<=mao){outcome=\"contract_trigger\";route=\"WF-241\";reason=\"Seller agreement is within the protected dynamic MAO ceiling; contract package may be prepared.\";}else{outcome=\"needs_review\";reason=\"Accepted price cannot be validated against dynamic MAO.\";}}else if(action===\"revised_offer\"){outcome=\"revised_offer_follow_up\";route=\"WF-235\";reason=\"Revised offer requires controlled seller dispatch and delivery tracking.\";}else if([\"rejection_reengagement\",\"reengage\"].includes(action)){outcome=\"rejection_reengagement\";route=\"WF-241\";reason=\"Seller rejection requires controlled re-engagement.\";}else if(action===\"walk_away_or_revised_offer\"){outcome=\"walk_away_reengagement\";route=\"WF-241\";reason=\"Above-MAO negotiation requires a controlled walk-away or re-engagement path.\";}else if(state===\"human_review\"){outcome=\"needs_review\";route=\"WF-126\";reason=\"Human review remains required before further negotiation action.\";}return[{json:{workflow:\"WF-240\",lead_id,deal_id,property_id,action,state,negotiation_outcome:outcome,route,reason,price:Number.isFinite(price)?price:null,dynamic_mao:Number.isFinite(mao)?mao:null,maO_protection:{price_within_mao:Number.isFinite(price)&&Number.isFinite(mao)?price<=mao:null,override_required:outcome===\"needs_review\"},requires_human_review:outcome===\"needs_review\"}}];"
+      },
+      "name": "Negotiation Outcome Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.negotiation_outcome }}",
+              "rightValue": "contract_trigger",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Contract Trigger Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'negotiation_outcome',notes:'WF-240 outcome='+$json.negotiation_outcome+' route='+$json.route+' price='+$json.price+' dynamic_mao='+$json.dynamic_mao,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Negotiation Outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,next_workflow:$json.route,outcome_ready:$json.negotiation_outcome!==\"needs_review\"}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Negotiation Outcome Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Negotiation Outcome Controller": {
+      "main": [
+        [
+          {
+            "node": "Contract Trigger Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contract Trigger Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Negotiation Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Negotiation Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Negotiation Outcome": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-240-negotiation-outcome-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

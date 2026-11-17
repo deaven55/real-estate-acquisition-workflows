@@ -1,0 +1,158 @@
+{
+  "name": "WF-285 — Final CRM Closeout → Portfolio Performance Record & Underwriting Feedback Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-285-portfolio-performance-underwriting-feedback",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf285-webhook",
+      "name": "WF-285 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-285-portfolio-performance-underwriting-feedback"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst record=input.profit_record??{};\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id&&input.close_id);\nconst closeoutReady=input.status===\"closeout_ready\"||input.closeout_ready===true||record.verified===true;\nconst gross=Number(record.gross_profit??input.gross_profit);\nconst costs=Number(record.closing_costs??input.closing_costs??0);\nconst net=Number(record.net_profit??input.net_profit??(Number.isFinite(gross)?gross-costs:NaN));\nconst margin=Number.isFinite(gross)&&gross!==0?net/gross:null;\nconst valid=Number.isFinite(gross)&&Number.isFinite(costs)&&Number.isFinite(net);\nconst sampleSize=Math.max(0,Number(input.historical_sample_size??input.portfolio_sample_size??0));\nconst avgNet=Number(input.historical_avg_net_profit??input.average_net_profit);\nconst avgMargin=Number(input.historical_avg_margin??input.average_margin);\nconst netDelta=Number.isFinite(avgNet)?net-avgNet:null;\nconst marginDelta=Number.isFinite(avgMargin)&&margin!==null?margin-avgMargin:null;\nconst performanceSignal=margin!==null&&margin>=0.30?\"strong\":margin!==null&&margin>=0.15?\"acceptable\":margin!==null?\"weak\":\"unknown\";\nlet status=\"performance_record_ready\",nextWorkflow=\"WF-286\",humanReview=false;\nif(!identityComplete){status=\"blocked_missing_identity\";nextWorkflow=\"WF-126\";humanReview=true;}\nelse if(!closeoutReady){status=\"closeout_required\";nextWorkflow=\"WF-284\";humanReview=true;}\nelse if(!valid){status=\"performance_data_invalid\";nextWorkflow=\"WF-284\";humanReview=true;}\nelse if(blockers.length){status=\"performance_blocked\";nextWorkflow=\"WF-126\";humanReview=true;}\nconst performance={deal_id:input.deal_id,lead_id:input.lead_id,property_id:input.property_id,close_id:input.close_id,gross_profit:gross,closing_costs:costs,net_profit:net,profit_margin:margin,historical_sample_size:sampleSize,historical_avg_net_profit:Number.isFinite(avgNet)?avgNet:null,historical_avg_margin:Number.isFinite(avgMargin)?avgMargin:null,net_profit_delta:netDelta,margin_delta:marginDelta,performance_signal:performanceSignal,exit_strategy:record.exit_strategy||input.exit_strategy||\"assignment\"};\nreturn [{json:{...input,workflow:\"WF-285\",workflow_name:\"Final CRM Closeout → Portfolio Performance Record & Underwriting Feedback Controller\",status,portfolio_performance:performance,next_workflow:nextWorkflow,human_review_required:humanReview,audit:{event_type:\"portfolio_performance_underwriting_feedback\",idempotency_key:input.idempotency_key||`wf-285:${input.deal_id||\"unknown\"}:${input.close_id||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf285-controller",
+      "name": "WF-285 Portfolio Performance Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'performance_record_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf285-if",
+      "name": "WF-285 Performance Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-285 portfolio performance and underwriting feedback',description:$json.status,metadata:{workflow:'WF-285',status:$json.status,portfolio_performance:$json.portfolio_performance,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf285-crm",
+      "name": "WF-285 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,portfolio_performance:$json.portfolio_performance,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf285-response",
+      "name": "WF-285 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-285 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-285 Portfolio Performance Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-285 Portfolio Performance Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-285 Performance Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-285 Performance Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-285 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-285 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-285 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-285 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-285-v1"
+}

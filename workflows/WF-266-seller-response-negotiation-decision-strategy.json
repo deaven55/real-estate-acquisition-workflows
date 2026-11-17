@@ -1,0 +1,156 @@
+{
+  "name": "WF-266 Seller Response → Negotiation Decision & Response Strategy Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-266-seller-response-negotiation-decision",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf266-webhook",
+      "name": "WF-266 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst classification = String(input.classification ?? input.seller_response_classification ?? '').toLowerCase();\nconst counteroffer = Number(input.counteroffer_amount ?? input.counteroffer ?? input.accepted_price);\nconst dynamicMao = Number(input.dynamic_mao ?? input.adjusted_mao ?? input.mao);\nconst askingPrice = Number(input.asking_price);\nconst lastOffer = Number(input.last_offer_price ?? input.offer_price);\nconst motivation = Number(input.motivation_score);\nconst dealId = input.deal_id ?? null;\nconst leadId = input.lead_id ?? null;\nconst propertyId = input.property_id ?? null;\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\nconst identityOk = Boolean(dealId && leadId && propertyId);\nconst withinMao = Number.isFinite(counteroffer) && Number.isFinite(dynamicMao) && counteroffer <= dynamicMao;\nconst nearMao = Number.isFinite(counteroffer) && Number.isFinite(dynamicMao) && counteroffer > dynamicMao && counteroffer <= dynamicMao * 1.05;\nconst materiallyAboveMao = Number.isFinite(counteroffer) && Number.isFinite(dynamicMao) && counteroffer > dynamicMao * 1.05;\n\nlet decision = 'needs_review';\nlet status = 'needs_review';\nlet nextWorkflow = 'WF-126';\nlet humanReview = true;\nlet strategy = 'review';\n\nif (!identityOk || blockers.length) {\n  decision = 'blocked';\n  status = 'blocked';\n} else if (classification === 'accepted') {\n  decision = Number.isFinite(counteroffer) && Number.isFinite(dynamicMao) && counteroffer <= dynamicMao\n    ? 'acceptance_ready'\n    : 'acceptance_price_review';\n  status = decision === 'acceptance_ready' ? 'accepted_within_mao' : 'accepted_price_review';\n  nextWorkflow = decision === 'acceptance_ready' ? 'WF-267' : 'WF-126';\n  humanReview = decision !== 'acceptance_ready';\n  strategy = decision === 'acceptance_ready' ? 'move_to_contract' : 'verify_price';\n} else if (classification === 'counteroffer') {\n  if (withinMao) {\n    decision = 'counteroffer_within_mao';\n    status = 'negotiable_within_mao';\n    nextWorkflow = 'WF-267';\n    humanReview = true;\n    strategy = 'evaluate_accept_or_revise';\n  } else if (nearMao) {\n    decision = 'counteroffer_near_mao';\n    status = 'near_mao';\n    nextWorkflow = 'WF-267';\n    humanReview = true;\n    strategy = 'protect_margin_and_consider_revised_offer';\n  } else if (materiallyAboveMao) {\n    decision = 'counteroffer_above_mao';\n    status = 'above_mao';\n    nextWorkflow = 'WF-268';\n    humanReview = true;\n    strategy = 'reengage_or_walk_away';\n  }\n} else if (classification === 'question') {\n  decision = 'seller_question_follow_up';\n  status = 'clarification_required';\n  nextWorkflow = 'WF-269';\n  humanReview = false;\n  strategy = 'answer_then_continue_negotiation';\n} else if (classification === 'rejected') {\n  decision = 'rejection_reengagement';\n  status = 'rejected';\n  nextWorkflow = 'WF-261';\n  humanReview = false;\n  strategy = 'reengage';\n} else if (classification === 'no_response') {\n  decision = 'no_response_reengagement';\n  status = 'no_response';\n  nextWorkflow = 'WF-261';\n  humanReview = false;\n  strategy = 'cadence_reengagement';\n} else {\n  decision = 'other_response_review';\n  status = 'other_response';\n  nextWorkflow = 'WF-269';\n  humanReview = false;\n  strategy = 'clarify_and_continue';\n}\n\nconst priceContext = {\n  counteroffer: Number.isFinite(counteroffer) ? counteroffer : null,\n  dynamic_mao: Number.isFinite(dynamicMao) ? dynamicMao : null,\n  asking_price: Number.isFinite(askingPrice) ? askingPrice : null,\n  last_offer: Number.isFinite(lastOffer) ? lastOffer : null,\n  within_mao: withinMao,\n  near_mao: nearMao,\n  materially_above_mao: materiallyAboveMao\n};\n\nreturn [{ json: {\n  ...input,\n  workflow_id: 'WF-266',\n  workflow_name: 'Seller Response → Negotiation Decision & Response Strategy Controller',\n  decision,\n  status,\n  strategy,\n  next_workflow: nextWorkflow,\n  human_review_required: humanReview,\n  price_context: priceContext,\n  identity_valid: identityOk,\n  blockers,\n  negotiation_response: {\n    objective: strategy,\n    protect_dynamic_mao: true,\n    seller_response_classification: classification\n  },\n  crm_activity: {\n    activity_type: 'negotiation_decision',\n    workflow_id: 'WF-266',\n    decision,\n    status,\n    strategy,\n    next_workflow: nextWorkflow,\n    human_review_required: humanReview\n  }\n} }];"
+      },
+      "id": "wf266-controller",
+      "name": "WF-266 Negotiation Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "operation": "equal",
+              "value2": "negotiable_within_mao"
+            }
+          ]
+        }
+      },
+      "id": "wf266-gate",
+      "name": "WF-266 Negotiation Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'negotiation_decision',subject:'WF-266 negotiation decision',body:JSON.stringify({workflow_id:$json.workflow_id,decision:$json.decision,status:$json.status,strategy:$json.strategy,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,price_context:$json.price_context,negotiation_response:$json.negotiation_response}),source:'wholesaling-os',external_id:'WF-266:'+($json.deal_id ?? $json.lead_id ?? 'unknown')+':'+($json.dispatch_id ?? $execution.id)})}})"
+      },
+      "id": "wf266-crm",
+      "name": "WF-266 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf266-response",
+      "name": "WF-266 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-266 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-266 Negotiation Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-266 Negotiation Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-266 Negotiation Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-266 Negotiation Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-266 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-266 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-266 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-266 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

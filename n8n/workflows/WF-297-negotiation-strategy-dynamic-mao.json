@@ -1,0 +1,158 @@
+{
+  "name": "WF-297 — AI Seller Response Classification → Negotiation Strategy & Dynamic MAO Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-297-negotiation-strategy-dynamic-mao",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf297-webhook",
+      "name": "WF-297 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-297-negotiation-strategy-dynamic-mao"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst a=input.seller_response_analysis??{};\nconst classification=String(a.classification||input.classification||\"\").toLowerCase();\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao);\nconst counter=Number(a.counteroffer_amount??input.counteroffer_amount);\nconst validMao=Number.isFinite(mao)&&mao>0;\nconst validCounter=Number.isFinite(counter)&&counter>0;\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst motivation=Number(input.motivation_score??input.motivation??0);\nlet strategy=\"human_review\",decision=\"needs_review\",nextWorkflow=\"WF-126\",human=true,reason=\"negotiation strategy requires review\";\nif(input.dnc||input.do_not_contact){decision=\"blocked_dnc\";reason=\"seller is do-not-contact\";}\nelse if(blockers.length){decision=\"blocked\";reason=\"active blockers present\";}\nelse if(!validMao){decision=\"mao_missing\";reason=\"dynamic MAO is missing or invalid\";}\nelse if(classification===\"accepted\"){\n  decision=\"acceptance_ready\";strategy=\"prepare_contract\";nextWorkflow=\"WF-293\";reason=\"seller accepted; preserve dynamic MAO and move to contract decision\";\n}\nelse if(classification===\"counteroffer_or_price_question\"&&validCounter){\n  if(counter<=mao){decision=\"counteroffer_within_mao\";strategy=\"accept_or_contract\";nextWorkflow=\"WF-293\";reason=\"counteroffer is within dynamic MAO\";}\n  else if(counter<=mao*1.10){decision=\"counteroffer_near_mao\";strategy=\"revised_offer_or_walkaway\";nextWorkflow=\"WF-293\";reason=\"counteroffer is above MAO but within controlled 10% negotiation band\";}\n  else{decision=\"counteroffer_above_mao\";strategy=\"walkaway_or_reengage\";nextWorkflow=\"WF-294\";reason=\"counteroffer exceeds protected dynamic MAO\";}\n}\nelse if(classification===\"rejected\"){decision=\"reengage\";strategy=\"reengagement\";nextWorkflow=\"WF-294\";reason=\"seller rejected the offer\";}\nelse if(classification===\"question\"){decision=\"clarify\";strategy=\"clarification\";nextWorkflow=\"WF-294\";reason=\"seller needs clarification before negotiation can continue\";}\nelse if(classification===\"no_response\"){decision=\"timeout\";strategy=\"followup\";nextWorkflow=\"WF-290\";human=false;reason=\"seller response timed out\";}\nelse{decision=\"other_response\";strategy=\"review_and_clarify\";nextWorkflow=\"WF-294\";reason=\"seller response requires contextual negotiation review\";}\nconst guardrail=(validCounter&&counter>mao)?\"HARD_BLOCK_ABOVE_DYNAMIC_MAO\":\"PASS\";\nconst idempotencyKey=input.idempotency_key||`wf-297:${input.deal_id||input.dispatch_id||\"unknown\"}:${input.provider_event_id||input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-297\",workflow_name:\"AI Seller Response Classification → Negotiation Strategy & Dynamic MAO Controller\",status:decision===\"blocked_dnc\"?\"blocked_dnc\":decision===\"blocked\"?\"negotiation_blocked\":decision===\"mao_missing\"?\"negotiation_review_required\":\"strategy_ready\",negotiation_strategy:{decision,strategy,reason,dynamic_mao:validMao?mao:null,counteroffer_amount:validCounter?counter:null,motivation_score:Number.isFinite(motivation)?motivation:null,guardrail,protected_mao:true},next_workflow:nextWorkflow,human_review_required:human,audit:{event_type:\"ai_negotiation_strategy_dynamic_mao\",idempotency_key:idempotencyKey}}}];"
+      },
+      "id": "wf297-controller",
+      "name": "WF-297 Negotiation Strategy Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['acceptance_ready','counteroffer_within_mao','counteroffer_near_mao'].includes($json.negotiation_strategy.decision)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf297-if",
+      "name": "WF-297 Strategy Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-297 negotiation strategy and dynamic MAO',description:$json.negotiation_strategy.reason,metadata:{workflow:'WF-297',status:$json.status,negotiation_strategy:$json.negotiation_strategy,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf297-crm",
+      "name": "WF-297 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,negotiation_strategy:$json.negotiation_strategy,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf297-response",
+      "name": "WF-297 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-297 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-297 Negotiation Strategy Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-297 Negotiation Strategy Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-297 Strategy Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-297 Strategy Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-297 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-297 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-297 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-297 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-297-v1"
+}

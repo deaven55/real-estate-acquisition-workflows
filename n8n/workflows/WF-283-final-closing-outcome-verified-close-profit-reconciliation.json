@@ -1,0 +1,158 @@
+{
+  "name": "WF-283 — Final Closing Outcome → Verified Close, Profit Reconciliation & CRM Closeout Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-283-verified-close-profit-reconciliation",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf283-webhook",
+      "name": "WF-283 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-283-verified-close-profit-reconciliation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst arr=v=>Array.isArray(v)?v:[];\nconst truthy=v=>v===true||v===\"true\"||v===1||v===\"1\";\nconst blockers=arr(input.blockers);\nconst outcome=input.final_closing_outcome??{};\nconst execution=input.execution??{};\nconst funding=input.funding??{};\nconst title=input.title??{};\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id&&input.close_id);\nconst outcomeReady=truthy(input.final_closing_outcome_ready)||[\"ready\",\"final_closing_outcome_ready\",\"completed\"].includes(String(outcome.status||\"\").toLowerCase());\nconst executedAgreement=truthy(input.executed_agreement)||[\"executed\",\"signed\",\"fully_executed\"].includes(String(input.agreement_status||\"\").toLowerCase());\nconst executionComplete=truthy(input.execution_complete)||[\"completed\",\"closed\",\"executed\"].includes(String(execution.status||\"\").toLowerCase());\nconst fundingVerified=truthy(input.funding_verified)||[\"verified\",\"funded\",\"complete\"].includes(String(funding.status||\"\").toLowerCase());\nconst titleVerified=truthy(input.title_verified)||[\"verified\",\"clear\",\"complete\"].includes(String(title.status||\"\").toLowerCase());\nconst closingDateValid=Boolean(input.actual_closing_date||input.closing_date)&&!Number.isNaN(new Date(input.actual_closing_date||input.closing_date).getTime());\nconst gross=Number(input.gross_profit??input.assignment_fee??input.gross_revenue);\nconst costs=Number(input.closing_costs??input.total_costs??0);\nconst net=Number(input.net_profit??(Number.isFinite(gross)?gross-costs:NaN));\nconst profitInputsValid=Number.isFinite(gross)&&Number.isFinite(costs)&&Number.isFinite(net);\nconst blockersClear=blockers.length===0;\nconst verifiedClose=identityComplete&&outcomeReady&&executedAgreement&&executionComplete&&fundingVerified&&titleVerified&&closingDateValid&&profitInputsValid&&blockersClear;\n\nlet status=\"close_verification_required\",nextWorkflow=\"WF-283\",humanReview=true;\nif(!identityComplete){status=\"blocked_missing_identity\";nextWorkflow=\"WF-126\";}\nelse if(!outcomeReady){status=\"final_outcome_not_ready\";nextWorkflow=\"WF-282\";}\nelse if(!executedAgreement||!executionComplete){status=\"execution_evidence_missing\";nextWorkflow=\"WF-282\";}\nelse if(!fundingVerified||!titleVerified){status=\"funding_or_title_unverified\";nextWorkflow=\"WF-282\";}\nelse if(!closingDateValid||!profitInputsValid||!blockersClear){status=\"profit_or_close_inputs_invalid\";nextWorkflow=\"WF-126\";}\nelse{status=\"verified_close_ready\";nextWorkflow=\"WF-284\";}\n\nreturn [{json:{...input,workflow:\"WF-283\",workflow_name:\"Final Closing Outcome → Verified Close, Profit Reconciliation & CRM Closeout Controller\",status,verified_close:{identity_complete:identityComplete,final_outcome_ready:outcomeReady,executed_agreement:executedAgreement,execution_complete:executionComplete,funding_verified:fundingVerified,title_verified:titleVerified,actual_closing_date_valid:closingDateValid,gross_profit:gross,closing_costs:costs,net_profit:net,profit_inputs_valid:profitInputsValid,blockers_clear:blockersClear,verified:verifiedClose},next_workflow:nextWorkflow,human_review_required:humanReview,routing_reason:status,audit:{event_type:\"verified_close_profit_reconciliation\",idempotency_key:input.idempotency_key||`wf-283:${input.deal_id||\"unknown\"}:${input.close_id||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf283-controller",
+      "name": "WF-283 Verified Close Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'verified_close_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf283-if",
+      "name": "WF-283 Verified Close Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-283 verified close and profit reconciliation',description:$json.routing_reason,metadata:{workflow:'WF-283',status:$json.status,verified_close:$json.verified_close,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf283-crm",
+      "name": "WF-283 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,verified_close:$json.verified_close?.verified,net_profit:$json.verified_close?.net_profit,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf283-response",
+      "name": "WF-283 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-283 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-283 Verified Close Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-283 Verified Close Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-283 Verified Close Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-283 Verified Close Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-283 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-283 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-283 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-283 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-283-v1"
+}

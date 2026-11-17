@@ -1,0 +1,158 @@
+{
+  "name": "WF-300 — Seller Response → Final Negotiation Decision & Contract/Re-engagement Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-300-final-negotiation-contract-reengagement",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf300-webhook",
+      "name": "WF-300 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-300-final-negotiation-contract-reengagement"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst msg=String(input.seller_response||input.message||input.inbound_message||\"\").trim();\nconst text=msg.toLowerCase();\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao);\nconst nums=(msg.match(/\\\\$?\\\\d[\\\\d,]*(?:\\\\.\\\\d+)?/g)||[]).map(v=>Number(v.replace(/[$,]/g,\"\"))).filter(Number.isFinite);\nconst counter=Number(input.counteroffer_amount??nums[0]);\nconst validMao=Number.isFinite(mao)&&mao>0;\nconst validCounter=Number.isFinite(counter)&&counter>0;\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst dnc=Boolean(input.dnc||input.do_not_contact);\nlet classification=\"other_response\",decision=\"needs_review\",nextWorkflow=\"WF-126\",human=true,reason=\"seller response requires final negotiation review\";\nif(dnc||/\\\\b(stop|remove me|do not contact|don't contact)\\\\b/i.test(text)){classification=\"dnc\";decision=\"blocked\";reason=\"seller requested no further contact\";}\nelse if(blockers.length){decision=\"blocked\";reason=\"active blockers present\";}\nelse if(!msg){classification=\"no_response\";decision=\"timeout_followup\";nextWorkflow=\"WF-290\";human=false;reason=\"no seller response supplied\";}\nelse if(/\\\\b(no|not interested|pass|decline|rejected)\\\\b/i.test(text)){classification=\"rejected\";decision=\"reengage\";nextWorkflow=\"WF-261\";reason=\"seller rejected the current terms\";}\nelse if(/\\\\b(yes|accept|accepted|deal|agreed|let's do it)\\\\b/i.test(text)){classification=\"accepted\";decision=\"contract_ready\";nextWorkflow=\"WF-201\";reason=\"seller accepted the proposed terms\";}\nelse if(validCounter&&/(\\\\$|offer|price|counter|would you do|can you do|i need)/i.test(text)){\n  classification=\"counteroffer\";\n  if(counter<=mao){decision=\"counteroffer_within_mao\";nextWorkflow=\"WF-201\";reason=\"counteroffer is within protected dynamic MAO\";}\n  else if(validMao&&counter<=mao*1.10){decision=\"counteroffer_near_mao\";nextWorkflow=\"WF-298\";reason=\"counteroffer is above MAO but within controlled negotiation band\";}\n  else{decision=\"counteroffer_above_mao\";nextWorkflow=\"WF-261\";reason=\"counteroffer exceeds protected dynamic MAO\";}\n}\nelse if(/\\\\b(what|how|when|where|why|explain|question)\\\\b/i.test(text)){classification=\"question\";decision=\"clarification\";nextWorkflow=\"WF-298\";reason=\"seller needs clarification before final negotiation decision\";}\nconst guardrail=(validCounter&&validMao&&counter>mao)?\"HARD_BLOCK_ABOVE_DYNAMIC_MAO\":\"PASS\";\nconst idempotencyKey=input.idempotency_key||`wf-300:${input.deal_id||input.dispatch_id||\"unknown\"}:${input.provider_event_id||input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-300\",workflow_name:\"Seller Response → Final Negotiation Decision & Contract/Re-engagement Controller\",status:decision===\"blocked\"?\"blocked\":decision===\"contract_ready\"?\"contract_ready\":decision===\"counteroffer_within_mao\"?\"contract_ready\":decision===\"counteroffer_near_mao\"?\"revised_offer_ready\":decision===\"counteroffer_above_mao\"?\"above_mao_reengagement\":\"negotiation_review\",final_negotiation:{classification,decision,counteroffer_amount:validCounter?counter:null,dynamic_mao:validMao?mao:null,guardrail,reason},next_workflow:nextWorkflow,human_review_required:human,audit:{event_type:\"final_negotiation_decision\",idempotency_key:idempotencyKey}}}];"
+      },
+      "id": "wf300-controller",
+      "name": "WF-300 Final Negotiation Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['contract_ready','counteroffer_within_mao'].includes($json.final_negotiation.decision)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf300-if",
+      "name": "WF-300 Contract Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-300 final negotiation decision',description:$json.final_negotiation.reason,metadata:{workflow:'WF-300',status:$json.status,final_negotiation:$json.final_negotiation,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf300-crm",
+      "name": "WF-300 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,final_negotiation:$json.final_negotiation,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf300-response",
+      "name": "WF-300 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-300 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-300 Final Negotiation Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-300 Final Negotiation Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-300 Contract Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-300 Contract Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-300 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-300 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-300 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-300 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-300-v1"
+}

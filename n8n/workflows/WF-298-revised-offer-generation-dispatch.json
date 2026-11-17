@@ -1,0 +1,158 @@
+{
+  "name": "WF-298 — Negotiation Strategy → Revised Offer Generation & Seller Dispatch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-298-revised-offer-generation-dispatch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf298-webhook",
+      "name": "WF-298 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-298-revised-offer-generation-dispatch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=input.negotiation_strategy??{};\nconst decision=String(s.decision||input.decision||\"\").toLowerCase();\nconst mao=Number(s.dynamic_mao??input.dynamic_mao??input.adjusted_mao??input.mao);\nconst counter=Number(s.counteroffer_amount??input.counteroffer_amount);\nconst asking=Number(input.asking_price);\nconst validMao=Number.isFinite(mao)&&mao>0;\nconst validCounter=Number.isFinite(counter)&&counter>0;\nconst channel=String(input.channel||input.preferred_channel||\"\").toLowerCase();\nconst recipient=String(input.recipient||input.phone||input.email||\"\").trim();\nconst dnc=Boolean(input.dnc||input.do_not_contact);\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nlet status=\"offer_generation_review_required\",offerState=\"needs_review\",nextWorkflow=\"WF-126\",human=true,reason=\"offer generation requires review\";\nlet offerPrice=null,negotiationTarget=null;\nif(dnc){status=\"blocked_dnc\";offerState=\"blocked\";reason=\"seller is marked do-not-contact\";}\nelse if(blockers.length){status=\"blocked\";offerState=\"blocked\";reason=\"active blockers present\";}\nelse if(!validMao){status=\"mao_missing\";offerState=\"needs_review\";reason=\"dynamic MAO is missing or invalid\";}\nelse if(decision===\"counteroffer_near_mao\"&&validCounter){\n  offerPrice=Math.min(counter,mao);\n  negotiationTarget=Math.min(Math.max(Math.round((offerPrice+mao)/2),offerPrice),mao);\n  status=\"revised_offer_ready\";offerState=\"ready\";nextWorkflow=\"WF-294\";reason=\"revised offer generated inside protected dynamic MAO\";\n}\nelse if(decision===\"counteroffer_within_mao\"&&validCounter){\n  offerPrice=counter;negotiationTarget=counter;\n  status=\"acceptance_or_contract_ready\";offerState=\"contract_path\";nextWorkflow=\"WF-293\";reason=\"counteroffer is already within dynamic MAO; no upward offer is authorized\";\n}\nelse if(decision===\"counteroffer_above_mao\"){\n  status=\"above_mao_blocked\";offerState=\"blocked\";nextWorkflow=\"WF-294\";reason=\"no revised offer may exceed dynamic MAO\";\n}\nelse if(decision===\"accepted\"){\n  status=\"contract_ready\";offerState=\"contract_path\";nextWorkflow=\"WF-293\";reason=\"seller accepted; proceed to contract decision\";\n}\nelse if(decision===\"rejected\"||decision===\"reengage\"){\n  status=\"reengagement_ready\";offerState=\"reengagement\";nextWorkflow=\"WF-294\";reason=\"seller requires controlled re-engagement\";\n}\nelse{\n  status=\"needs_review\";offerState=\"needs_review\";reason=\"negotiation state does not authorize automated offer generation\";\n}\nconst channelReady=[\"sms\",\"email\"].includes(channel)&&recipient.length>0;\nif(offerState===\"ready\"&&!channelReady){status=\"dispatch_identity_missing\";offerState=\"needs_review\";nextWorkflow=\"WF-126\";reason=\"revised offer is ready but valid channel/recipient is missing\";}\nif(offerPrice!==null&&offerPrice>mao){status=\"above_mao_blocked\";offerState=\"blocked\";nextWorkflow=\"WF-126\";reason=\"hard guardrail prevented an offer above dynamic MAO\";}\nconst idempotencyKey=input.idempotency_key||`wf-298:${input.deal_id||\"unknown\"}:${input.dispatch_id||\"none\"}:${input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-298\",workflow_name:\"Negotiation Strategy → Revised Offer Generation & Seller Dispatch Controller\",status,revised_offer:{state:offerState,offer_price:offerPrice,negotiation_target:negotiationTarget,dynamic_mao:validMao?mao:null,counteroffer_amount:validCounter?counter:null,asking_price:Number.isFinite(asking)?asking:null,channel:channelReady?channel:null,recipient:channelReady?recipient:null,reason,guardrail:\"HARD_PROTECT_DYNAMIC_MAO\"},next_workflow:nextWorkflow,human_review_required:human,audit:{event_type:\"revised_offer_generation_dispatch\",idempotency_key:idempotencyKey}}}];"
+      },
+      "id": "wf298-controller",
+      "name": "WF-298 Revised Offer Generator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.revised_offer.state === 'ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf298-if",
+      "name": "WF-298 Dispatch Readiness Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-298 revised offer generation and dispatch readiness',description:$json.revised_offer.reason,metadata:{workflow:'WF-298',status:$json.status,revised_offer:$json.revised_offer,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf298-crm",
+      "name": "WF-298 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,revised_offer:$json.revised_offer,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf298-response",
+      "name": "WF-298 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-298 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-298 Revised Offer Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-298 Revised Offer Generator": {
+      "main": [
+        [
+          {
+            "node": "WF-298 Dispatch Readiness Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-298 Dispatch Readiness Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-298 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-298 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-298 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-298 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-298-v1"
+}

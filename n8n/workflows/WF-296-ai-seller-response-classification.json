@@ -1,0 +1,158 @@
+{
+  "name": "WF-296 — Seller Response → AI Classification & Negotiation Routing Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-296-ai-seller-response-classification",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf296-webhook",
+      "name": "WF-296 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-296-ai-seller-response-classification"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst msg=String(input.seller_response||input.message||input.inbound_message||\"\").trim();\nconst text=msg.toLowerCase();\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst dnc=Boolean(input.dnc||input.do_not_contact);\nlet classification=\"other_response\",route=\"WF-292\",human=false,reason=\"response requires standard negotiation analysis\";\nif(dnc){classification=\"dnc_request\";route=\"WF-126\";human=true;reason=\"seller requested or is marked do-not-contact\";}\nelse if(!msg){classification=\"no_response\";route=\"WF-290\";reason=\"no seller message was supplied\";}\nelse if(/\\\\b(no|not interested|stop|remove me|do not contact|don't contact|leave me alone)\\\\b/i.test(text)){classification=\"rejected\";route=\"WF-261\";human=true;reason=\"seller rejected or requested contact cessation\";}\nelse if(/\\\\b(yes|accept|accepted|deal|let's do it|sounds good|i agree|agreed)\\\\b/i.test(text)){classification=\"accepted\";route=\"WF-292\";human=true;reason=\"seller appears to accept the proposed terms\";}\nelse if(/\\\\b(offer|price|counter|would you do|can you do|i need|i want)\\\\b/i.test(text)){classification=\"counteroffer_or_price_question\";route=\"WF-292\";human=true;reason=\"seller response appears price/offer related\";}\nelse if(/\\\\b(what|how|when|where|why|can you explain|question)\\\\b/i.test(text)){classification=\"question\";route=\"WF-292\";reason=\"seller asked for clarification\";}\nif(blockers.length){route=\"WF-126\";human=true;reason=\"active deal blockers require review\";}\nconst nums=(msg.match(/\\\\$?\\\\d[\\\\d,]*(?:\\\\.\\\\d+)?/g)||[]).map(v=>Number(v.replace(/[$,]/g,\"\"))).filter(Number.isFinite);\nconst counteroffer=nums.length?nums[0]:null;\nconst idempotencyKey=input.idempotency_key||`wf-296:${input.dispatch_id||input.deal_id||\"unknown\"}:${input.provider_event_id||input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-296\",workflow_name:\"Seller Response → AI Classification & Negotiation Routing Controller\",status:classification===\"dnc_request\"?\"blocked_dnc\":classification===\"no_response\"?\"no_response\":\"response_classified\",seller_response_analysis:{classification,confidence:msg?0.75:1.0,reason,counteroffer_amount:counteroffer,message_present:Boolean(msg)},next_workflow:route,human_review_required:human,audit:{event_type:\"ai_seller_response_classification\",idempotency_key:idempotencyKey}}}];"
+      },
+      "id": "wf296-controller",
+      "name": "WF-296 AI Response Classifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['accepted','counteroffer_or_price_question','question'].includes($json.seller_response_analysis.classification)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf296-if",
+      "name": "WF-296 Negotiation Routing Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-296 AI seller response classification',description:$json.seller_response_analysis.reason,metadata:{workflow:'WF-296',status:$json.status,seller_response_analysis:$json.seller_response_analysis,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf296-crm",
+      "name": "WF-296 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,seller_response_analysis:$json.seller_response_analysis,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf296-response",
+      "name": "WF-296 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-296 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-296 AI Response Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-296 AI Response Classifier": {
+      "main": [
+        [
+          {
+            "node": "WF-296 Negotiation Routing Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-296 Negotiation Routing Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-296 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-296 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-296 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-296 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-296-v1"
+}

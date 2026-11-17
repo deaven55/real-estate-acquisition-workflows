@@ -1,0 +1,158 @@
+{
+  "name": "WF-294 — Revised Offer / Contract Decision → Seller Re-engagement & Offer Dispatch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-294-seller-reengagement-offer-dispatch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf294-webhook",
+      "name": "WF-294 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-294-seller-reengagement-offer-dispatch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst cd=input.contract_decision??input.revised_offer_decision??{};\nconst action=String(cd.action||input.action||\"\").toLowerCase();\nconst channel=String(input.channel||input.preferred_channel||\"\").toLowerCase();\nconst recipient=String(input.recipient||input.phone||input.email||\"\").trim();\nconst mao=Number(cd.dynamic_mao??input.dynamic_mao??input.adjusted_mao??input.mao);\nconst offer=Number(input.revised_offer_amount??input.offer_price??cd.offer_price);\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst dnc=Boolean(input.dnc||input.do_not_contact);\nconst validChannel=[\"sms\",\"email\"].includes(channel);\nconst validRecipient=recipient.length>0;\nconst validMao=Number.isFinite(mao)&&mao>0;\nconst validOffer=Number.isFinite(offer)&&offer>0;\nlet status=\"dispatch_review_required\",dispatchState=\"needs_review\",nextWorkflow=\"WF-126\",human=true,reason=\"dispatch requires review\";\nif(dnc){status=\"blocked_dnc\";dispatchState=\"blocked\";nextWorkflow=\"WF-126\";human=true;reason=\"seller is marked do-not-contact\";}\nelse if(blockers.length){status=\"blocked\";dispatchState=\"blocked\";nextWorkflow=\"WF-126\";human=true;reason=\"active blockers present\";}\nelse if(action===\"revised_offer\"){\n  if(!validMao||!validOffer){status=\"revised_offer_invalid\";dispatchState=\"needs_review\";reason=\"revised offer or dynamic MAO is missing/invalid\";}\n  else if(offer>mao){status=\"revised_offer_above_mao\";dispatchState=\"blocked\";nextWorkflow=\"WF-126\";reason=\"revised offer exceeds protected dynamic MAO\";}\n  else if(!validChannel||!validRecipient){status=\"dispatch_missing_channel_or_recipient\";dispatchState=\"needs_review\";reason=\"valid SMS/email channel and recipient are required\";}\n  else {status=\"dispatch_ready\";dispatchState=\"ready\";nextWorkflow=\"WF-289\";human=true;reason=\"revised offer is within dynamic MAO and ready for controlled dispatch\";}\n}\nelse if(action===\"reengage\"||action===\"walk_away_or_reengage\"){\n  if(!validChannel||!validRecipient){status=\"reengagement_missing_channel_or_recipient\";dispatchState=\"needs_review\";reason=\"valid SMS/email channel and recipient are required\";}\n  else {status=\"reengagement_ready\";dispatchState=\"ready\";nextWorkflow=\"WF-262\";human=true;reason=\"seller re-engagement is ready for controlled message generation and dispatch\";}\n}\nelse if(action===\"contract_ready\"){\n  status=\"contract_ready\";dispatchState=\"not_dispatch\";nextWorkflow=\"WF-201\";human=true;reason=\"seller terms are ready for contract package validation\";}\nelse {status=\"no_dispatch_action\";dispatchState=\"no_action\";nextWorkflow=\"WF-126\";human=true;reason=\"decision does not authorize seller dispatch\";}\nconst idempotencyKey=input.idempotency_key||`wf-294:${input.deal_id||\"unknown\"}:${input.dispatch_id||\"none\"}:${input.version||1}`;\nconst dispatchId=input.dispatch_id||`wf294-${input.deal_id||\"unknown\"}-${input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-294\",workflow_name:\"Revised Offer / Contract Decision → Seller Re-engagement & Offer Dispatch Controller\",status,dispatch:{state:dispatchState,dispatch_id:dispatchId,channel:validChannel?channel:null,recipient:validRecipient?recipient:null,offer_price:validOffer?offer:null,dynamic_mao:validMao?mao:null,reason},next_workflow:nextWorkflow,human_review_required:human,audit:{event_type:\"seller_reengagement_offer_dispatch_controller\",idempotency_key:idempotencyKey}}}];"
+      },
+      "id": "wf294-controller",
+      "name": "WF-294 Dispatch Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['ready'].includes($json.dispatch.state)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf294-if",
+      "name": "WF-294 Dispatch Readiness Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-294 seller re-engagement / offer dispatch controller',description:$json.dispatch.reason,metadata:{workflow:'WF-294',status:$json.status,dispatch:$json.dispatch,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf294-crm",
+      "name": "WF-294 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,dispatch:$json.dispatch,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf294-response",
+      "name": "WF-294 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-294 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-294 Dispatch Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-294 Dispatch Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-294 Dispatch Readiness Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-294 Dispatch Readiness Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-294 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-294 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-294 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-294 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-294-v1"
+}

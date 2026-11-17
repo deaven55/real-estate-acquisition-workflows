@@ -1,0 +1,165 @@
+{
+  "name": "WF-237 — Seller Response → Offer/Counteroffer Classification & Negotiation Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-237-seller-response-classifier",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const text=String(d.seller_response_text??d.message??\"\").trim();const explicit=String(d.seller_response_type??\"\").toLowerCase();const amountRaw=d.counteroffer_amount;const amount=Number.isFinite(Number(amountRaw))?Number(amountRaw):null;let classification=\"other_response\",state=\"classified\",route=\"WF-238\",reason=\"Seller response was received but needs normal negotiation handling.\";const t=text.toLowerCase();if(explicit&&[\"accepted\",\"counteroffer\",\"rejected\",\"question\",\"no_response\",\"other_response\"].includes(explicit))classification=explicit;else if(/\\\\b(yes|accept|accepted|deal|let's do it|lets do it|agreed|agree)\\\\b/.test(t))classification=\"accepted\";else if(/\\\\b(counter|counteroffer|offer \\\\$?\\\\d|can you do \\\\$?\\\\d|would you do \\\\$?\\\\d|meet me at)\\\\b/.test(t)||amount!==null)classification=\"counteroffer\";else if(/\\\\b(no|not interested|reject|rejected|pass|can't|cannot)\\\\b/.test(t))classification=\"rejected\";else if(/\\\\?|how much|why|when|what about/.test(t))classification=\"question\";else if(!text)classification=\"no_response\";if(classification===\"accepted\"){state=\"accepted\";route=\"WF-238\";reason=\"Seller accepted the offer; route to acceptance/contract decision.\";}else if(classification===\"counteroffer\"){state=\"counteroffer\";route=\"WF-239\";reason=\"Seller counteroffer requires MAO-aware negotiation evaluation.\";}else if(classification===\"rejected\"){state=\"rejected\";route=\"WF-240\";reason=\"Seller rejected the offer; route to rejection/re-engagement logic.\";}else if(classification===\"question\"){state=\"question\";route=\"WF-238\";reason=\"Seller asked a question requiring negotiation follow-up.\";}else if(classification===\"no_response\"){state=\"no_response\";route=\"WF-238\";reason=\"No substantive seller response was received.\"}return[{json:{workflow:\"WF-237\",lead_id,deal_id,property_id,seller_response_text:text,seller_response_type:explicit||null,classification,state,route,counteroffer_amount:amount,reason,negotiation:{response_received:classification!==\"no_response\",requires_mao_check:[\"accepted\",\"counteroffer\"].includes(classification),requires_human_review:classification===\"counteroffer\"||classification===\"rejected\"},requires_human_review:classification===\"counteroffer\"||classification===\"rejected\"}}];"
+      },
+      "name": "Seller Response Classifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "counteroffer",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Negotiation Classification Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'seller_response_classification',notes:'WF-237 classification='+$json.classification+' state='+$json.state+' route='+$json.route+' counteroffer='+$json.counteroffer_amount,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Seller Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,next_workflow:$json.route,classification_ready:true}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Seller Response Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seller Response Classifier": {
+      "main": [
+        [
+          {
+            "node": "Negotiation Classification Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Negotiation Classification Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Seller Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Seller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Seller Response": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-237-seller-response-classifier-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

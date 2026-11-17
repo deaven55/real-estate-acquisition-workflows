@@ -1,0 +1,158 @@
+{
+  "name": "WF-290 — Offer Delivery Receipt → Seller Response / Timeout Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-290-offer-delivery-receipt-seller-response-timeout",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf290-webhook",
+      "name": "WF-290 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-290-offer-delivery-receipt-seller-response-timeout"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst dispatch=input.dispatch??{};\nconst receipt=input.delivery_receipt??input.receipt??{};\nconst response=input.seller_response??input.response??{};\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst dispatchId=String(input.dispatch_id||dispatch.dispatch_id||\"\").trim();\nconst deliveryStatus=String(receipt.status||input.delivery_status||\"\").toLowerCase();\nconst responseReceived=Boolean(input.response_received||response.received===true||String(response.status||\"\").toLowerCase()===\"received\"||String(response.text||\"\").trim());\nconst responseText=String(response.text||input.response_text||\"\").trim();\nconst timeout=Boolean(input.response_timeout||input.timed_out||String(input.response_state||\"\").toLowerCase()===\"timeout\");\nconst deliveryFailed=[\"failed\",\"undelivered\",\"rejected\",\"bounced\"].includes(deliveryStatus);\nconst delivered=[\"delivered\",\"sent\",\"accepted\"].includes(deliveryStatus);\nconst pending=[\"pending\",\"queued\",\"processing\",\"\"].includes(deliveryStatus);\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id&&dispatchId);\nlet status=\"receipt_pending\",nextWorkflow=\"WF-290\",humanReview=false,reason=\"awaiting provider delivery receipt\";\nif(!identityComplete){status=\"blocked_missing_identity\";nextWorkflow=\"WF-126\";humanReview=true;reason=\"missing deal/lead/property/dispatch identity\";}\nelse if(blockers.length){status=\"response_routing_blocked\";nextWorkflow=\"WF-126\";humanReview=true;reason=\"active blockers present\";}\nelse if(deliveryFailed){status=\"delivery_failed\";nextWorkflow=\"WF-289\";humanReview=true;reason=\"provider delivery failed; retry requires controlled dispatch\";}\nelse if(responseReceived){status=\"seller_response_received\";nextWorkflow=\"WF-291\";humanReview=false;reason=\"seller response received and ready for classification\";}\nelse if(timeout){status=\"seller_response_timeout\";nextWorkflow=\"WF-292\";humanReview=false;reason=\"seller response window expired\";}\nelse if(delivered){status=\"delivered_awaiting_response\";nextWorkflow=\"WF-290\";humanReview=false;reason=\"offer delivered; awaiting seller response\";}\nelse if(pending){status=\"receipt_pending\";nextWorkflow=\"WF-290\";humanReview=false;reason=\"provider receipt still pending\";}\nconst routing={dispatch_id:dispatchId,delivery_status:deliveryStatus||\"unknown\",delivered,response_received:responseReceived,response_text_present:Boolean(responseText),response_timeout:timeout,delivery_failed:deliveryFailed,next_action:nextWorkflow};\nreturn [{json:{...input,workflow:\"WF-290\",workflow_name:\"Offer Delivery Receipt → Seller Response / Timeout Controller\",status,delivery_response_routing:routing,next_workflow:nextWorkflow,human_review_required:humanReview,routing_reason:reason,audit:{event_type:\"offer_delivery_receipt_seller_response_timeout\",idempotency_key:input.idempotency_key||`wf-290:${dispatchId||\"unknown\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf290-controller",
+      "name": "WF-290 Delivery Receipt Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'seller_response_received'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf290-if",
+      "name": "WF-290 Seller Response Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-290 offer delivery receipt and seller response state',description:$json.routing_reason,metadata:{workflow:'WF-290',status:$json.status,delivery_response_routing:$json.delivery_response_routing,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf290-crm",
+      "name": "WF-290 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,delivery_response_routing:$json.delivery_response_routing,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf290-response",
+      "name": "WF-290 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-290 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-290 Delivery Receipt Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-290 Delivery Receipt Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-290 Seller Response Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-290 Seller Response Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-290 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-290 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-290 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-290 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-290-v1"
+}

@@ -1,0 +1,216 @@
+{
+  "name": "WF-319 — Negotiation Decision → Revised Offer / Contract Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-319-revised-offer-contract-decision",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf319-webhook",
+      "name": "Webhook — Revised Offer / Contract Decision",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst decision=String(input.negotiation_decision??input.status??'').toLowerCase();\nconst amount=Number(input.counteroffer_amount??0);\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao??0);\nconst hasMao=mao>0;\nconst within=hasMao&&amount>0&&amount<=mao;\nconst near=hasMao&&amount>mao&&amount<=mao*1.10;\nconst above=hasMao&&amount>mao*1.10;\nconst dnc=input.dnc===true||decision==='blocked_dnc';\nlet outcome='needs_review',next='WF-126',reason='negotiation state requires review';\nif(dnc){outcome='blocked_dnc';next='WF-126';reason='DNC/contact restriction';}\nelse if(decision==='contract_ready'||decision==='accepted'){outcome='contract_decision_ready';next='WF-320';reason='seller acceptance is within protected MAO';}\nelse if(decision==='counteroffer_within_mao'||(decision==='counteroffer'&&within)){outcome='accept_counteroffer';next='WF-320';reason='counteroffer is within dynamic MAO';}\nelse if(decision==='counteroffer_near_mao'||near){outcome='revised_offer';next='WF-320';reason='counteroffer is near but above dynamic MAO; controlled revision required';}\nelse if(decision==='counteroffer_above_mao'||above){outcome='walk_away_or_reengage';next='WF-320';reason='counteroffer exceeds protected negotiation band';}\nelse if(decision==='clarification_response'||decision==='question'){outcome='clarification_response';next='WF-320';reason='seller question requires response before price decision';}\nelse if(decision==='reengage'||decision==='rejected'||decision==='timeout_followup'){outcome='reengage';next='WF-320';reason='seller is not currently ready to contract';}\nreturn [{json:{...input,workflow_id:'WF-319',workflow_name:'Negotiation Decision → Revised Offer / Contract Decision Controller',outcome,reason,dynamic_mao:mao,counteroffer_amount:amount||null,mao_relationship:amount===0?'unknown':above?'above_110_percent_mao':near?'near_mao':'within_mao',next_workflow:next,human_review_required:['revised_offer','walk_away_or_reengage','needs_review'].includes(outcome),guardrails:{dynamic_mao_protected:hasMao,offer_ceiling:mao||null},crm_activity:{activity_type:'negotiation_outcome',deal_id:input.deal_id,lead_id:input.lead_id,property_id:input.property_id,status:outcome,counteroffer_amount:amount||null,reason}}}];"
+      },
+      "id": "wf319-controller",
+      "name": "Controller — Revised Offer / Contract Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "outcome-gate",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "blocked_dnc",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "identity-gate",
+              "leftValue": "={{ $json.deal_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf319-gate",
+      "name": "IF — Contract / Revised Offer Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "counteroffer_amount",
+              "value": "={{ $json.crm_activity.counteroffer_amount }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf319-crm",
+      "name": "InsulaCRM — Negotiation Outcome Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, outcome: $json.outcome, reason: $json.reason, dynamic_mao: $json.dynamic_mao, counteroffer_amount: $json.counteroffer_amount, mao_relationship: $json.mao_relationship, human_review_required: $json.human_review_required, next_workflow: $json.next_workflow, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf319-response",
+      "name": "Response — Negotiation Outcome Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Revised Offer / Contract Decision": {
+      "main": [
+        [
+          {
+            "node": "Controller — Revised Offer / Contract Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Revised Offer / Contract Decision": {
+      "main": [
+        [
+          {
+            "node": "IF — Contract / Revised Offer Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Contract / Revised Offer Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Negotiation Outcome Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Negotiation Outcome Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Negotiation Outcome Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Negotiation Outcome Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-319-v1",
+  "meta": {
+    "workflow_id": "WF-319",
+    "description": "Converts negotiation decisions into contract-ready, accept-counteroffer, controlled revised-offer, walk-away/re-engagement, or clarification outcomes while protecting dynamic MAO.",
+    "safety": {
+      "dnc_protection": true,
+      "dynamic_mao_protection": true,
+      "human_review_for_sensitive_negotiation": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

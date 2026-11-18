@@ -1,0 +1,193 @@
+{
+  "name": "WF-340 — Revised Offer / Contract Decision → Seller Dispatch & Re-engagement Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-340-revised-offer-contract-dispatch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf340-webhook",
+      "name": "WF-340 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-340-revised-offer-contract-dispatch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json ?? {};\nconst decision = String(input.decision ?? input.negotiation_decision ?? '').toLowerCase();\nconst dealId = input.deal_id ?? null;\nconst leadId = input.lead_id ?? null;\nconst propertyId = input.property_id ?? null;\nconst dynamicMao = Number(input.dynamic_mao ?? input.adjusted_mao ?? input.mao);\nconst offerPrice = input.offer_price == null ? null : Number(input.offer_price);\nconst seller = input.seller ?? {};\nconst channel = String(input.channel ?? input.preferred_channel ?? '').toLowerCase();\nconst recipient = String(input.recipient ?? seller.phone ?? seller.email ?? input.seller_phone ?? input.seller_email ?? '').trim();\nconst dnc = Boolean(input.dnc ?? input.do_not_contact ?? false);\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\nconst assetType = String(input.asset_type ?? input.property_type ?? 'residential').toLowerCase();\nconst identityComplete = Boolean(dealId && leadId && propertyId);\nconst maoValid = Number.isFinite(dynamicMao) && dynamicMao > 0;\nconst offerValid = offerPrice == null || (Number.isFinite(offerPrice) && offerPrice > 0);\nconst channelValid = ['sms','email'].includes(channel);\nconst recipientValid = Boolean(recipient);\nconst hardBlock = dnc || blockers.length > 0;\nlet action = 'needs_review'; let nextWorkflow = 'WF-126'; let reason = 'Decision requires review before external action.'; let dispatchReady = false; let reengagement = false; let humanReviewRequired = true;\nif (hardBlock) { action = dnc ? 'dnc_blocked' : 'blocked'; reason = dnc ? 'Seller is on DNC; no outbound communication permitted.' : 'Active blocker prevents seller communication.'; }\nelse if (!identityComplete || !maoValid || !offerValid || !channelValid || !recipientValid) { action = 'incomplete'; reason = 'Required deal identity, MAO, offer, channel, or recipient data is missing/invalid.'; nextWorkflow = 'WF-339'; }\nelse if (['contract_decision_ready','accept_counteroffer_contract_review','contract_ready'].includes(decision)) {\n  if (offerPrice != null && offerPrice > dynamicMao) { action = 'mao_violation_blocked'; reason = 'Contract/offer price exceeds dynamic MAO; dispatch is prohibited.'; nextWorkflow = 'WF-339'; }\n  else { action = 'contract_review_required'; reason = 'Contract path is ready for human authorization before signature launch.'; nextWorkflow = 'WF-321'; }\n}\nelse if (['near_mao_controlled_review','above_mao_revised_offer_or_walk_away','clarification_response'].includes(decision)) {\n  action = 'revised_offer_review'; reason = 'Revised seller response requires controlled review before dispatch.'; dispatchReady = false; nextWorkflow = 'WF-334'; }\nelse if (['rejection_reengagement','timeout_reengagement','walk_away_or_reengage'].includes(decision)) {\n  action = 'reengagement_ready'; reengagement = true; reason = 'Seller outcome requires controlled re-engagement.'; nextWorkflow = 'WF-261'; }\nelse { action = 'needs_review'; nextWorkflow = 'WF-339'; reason = 'WF-340 received an unsupported decision state.'; }\nconst assetStrategy = { residential:'Residential wholesale economics; 70% rule is secondary reference only.', multifamily:'Multifamily economics; prioritize NOI, cap rate/value evidence, debt and buyer demand.', land:'Land economics; prioritize zoning, utilities, access, topography, flood risk, land comps and development potential.', commercial:'Commercial economics; prioritize income/value evidence, lease/tenant factors, financing and exit demand.' }[assetType] ?? 'Asset-specific economics required; 70% rule is secondary reference only.';\nconst dispatchId = dispatchReady ? 'wf340-' + String(dealId) + '-' + String(offerPrice ?? 'na') + '-' + channel : null;\nconst idempotencyKey = dispatchReady ? 'WF-340:' + String(dealId) + ':' + String(offerPrice ?? 'na') + ':' + channel : null;\nconst activity = {activity_type:'revised_offer_contract_decision_dispatch_controller',subject:'WF-340 ' + (dealId ?? 'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,status:action,decision,next_workflow:nextWorkflow,offer_price:offerPrice,dynamic_mao:dynamicMao,channel,recipient,dispatch_id:dispatchId,idempotency_key:idempotencyKey,reengagement,human_review_required:humanReviewRequired,asset_type:assetType,asset_strategy:assetStrategy,hard_mao_guardrail:true,dnc,blockers,reason};\nreturn [{json:{...input,wf_id:'WF-340',action,next_workflow:nextWorkflow,dispatch_ready:dispatchReady,reengagement,human_review_required:humanReviewRequired,dynamic_mao:dynamicMao,offer_price:offerPrice,channel,recipient,dispatch_id:dispatchId,idempotency_key:idempotencyKey,asset_type:assetType,asset_strategy:assetStrategy,hard_mao_guardrail:true,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf340-controller",
+      "name": "WF-340 Dispatch & Re-engagement Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "dispatch",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "dispatch_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "reengage",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "reengagement_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "contract",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "contract_review_required",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf340-gate",
+      "name": "Dispatch / Re-engagement Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf340-crm",
+      "name": "Persist WF-340 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf340-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-340 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-340 Dispatch & Re-engagement Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-340 Dispatch & Re-engagement Controller": {
+      "main": [
+        [
+          {
+            "node": "Dispatch / Re-engagement Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch / Re-engagement Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-340 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-340 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-340 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf340-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

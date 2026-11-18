@@ -1,0 +1,184 @@
+{
+  "name": "WF-352 — Seller Response / Timeout → Follow-Up Decision & Re-engagement Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-352-seller-response-timeout-followup-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf352-webhook",
+      "name": "WF-352 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-352-seller-response-timeout-followup-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst dealId=input.deal_id??null; const leadId=input.lead_id??null; const propertyId=input.property_id??null;\nconst route=String(input.route??'').toLowerCase(); const sellerResponse=String(input.seller_response??input.inbound_message??'').trim();\nconst timeoutAt=input.timeout_at??null; const now=new Date(); const timeoutReached=timeoutAt?now.getTime()>=new Date(timeoutAt).getTime():false;\nconst attempts=Number(input.reengagement_attempts??input.attempts??0); const maxAttempts=Number(input.max_reengagement_attempts??3);\nconst dnc=Boolean(input.dnc??input.do_not_contact??false); const blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst idempotencyKey=String(input.idempotency_key??'').trim();\nlet status='needs_review'; let action='review'; let nextWorkflow='WF-351'; let reason='Follow-up decision requires review.';\nif(dnc){status='dnc_blocked';action='stop';nextWorkflow='WF-126';reason='DNC protection prevents follow-up.';}\nelse if(blockers.length){status='blocked';action='stop';nextWorkflow='WF-126';reason='Active blocker prevents follow-up.';}\nelse if(sellerResponse){status='seller_response_received';action='classify_response';nextWorkflow='WF-342';reason='Seller response received; classify before any follow-up.';}\nelse if(!dealId||!leadId||!propertyId||!idempotencyKey){status='incomplete';action='repair_data';nextWorkflow='WF-351';reason='Required deal identity or idempotency data is missing.';}\nelse if(route==='awaiting_response'&&timeoutReached){\n  if(attempts>=maxAttempts){status='max_attempts_reached';action='pause';nextWorkflow='WF-126';reason='Response timeout reached and maximum attempts are exhausted.';}\n  else{status='followup_due';action='schedule_followup';nextWorkflow='WF-345';reason='Response timeout reached; controlled seller re-engagement is due.';}\n}\nelse if(route==='awaiting_response'){status='still_waiting';action='wait';nextWorkflow='WF-351';reason='Response timeout has not been reached.';}\nelse{status='needs_review';action='review';nextWorkflow='WF-351';reason='Current route does not authorize autonomous follow-up.';}\nconst activity={activity_type:'seller_followup_decision_controller',subject:'WF-352 '+(dealId??'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,status,action,next_workflow:nextWorkflow,seller_response_received:Boolean(sellerResponse),timeout_at:timeoutAt,timeout_reached:timeoutReached,reengagement_attempts:attempts,max_reengagement_attempts:maxAttempts,idempotency_key:idempotencyKey,dnc,blockers,reason};\nreturn [{json:{...input,wf_id:'WF-352',status,action,next_workflow:nextWorkflow,timeout_reached:timeoutReached,reason,crm_activity:activity,evaluated_at:now.toISOString()}}];"
+      },
+      "id": "wf352-controller",
+      "name": "WF-352 Follow-Up Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "followup",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "followup_due",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "response",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "seller_response_received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf352-gate",
+      "name": "Follow-Up / Response Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf352-crm",
+      "name": "Persist WF-352 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf352-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-352 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-352 Follow-Up Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-352 Follow-Up Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "Follow-Up / Response Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-Up / Response Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-352 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-352 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-352 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf352-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

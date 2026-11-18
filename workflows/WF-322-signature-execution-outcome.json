@@ -1,0 +1,221 @@
+{
+  "name": "WF-322 — Signature Launch → Execution Tracking & Signature Outcome Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-322-signature-execution-outcome",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf322-webhook",
+      "name": "Webhook — Signature Launch / Outcome",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst status=String(input.status??'').toLowerCase();\nconst dealId=input.deal_id,leadId=input.lead_id,propertyId=input.property_id;\nconst contractPrice=Number(input.contract_price??input.proposed_contract_price??0);\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao??0);\nconst provider=String(input.signature_provider??'').trim();\nconst envelopeId=String(input.envelope_id??input.signature_envelope_id??'').trim();\nconst signatureStatus=String(input.signature_status??input.execution_status??'').toLowerCase();\nconst idempotencyKey=String(input.idempotency_key??'').trim()||['WF-322',dealId,contractPrice].join(':');\nconst dnc=input.dnc===true||status==='blocked_dnc';\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst identityReady=Boolean(dealId&&leadId&&propertyId);\nconst priceProtected=mao>0&&contractPrice>0&&contractPrice<=mao;\nlet outcome='needs_review',next='WF-126',reason='signature state requires review';\nif(dnc){outcome='blocked_dnc';next='WF-126';reason='DNC/contact restriction';}\nelse if(blockers.length){outcome='blocked';next='WF-126';reason='active blockers';}\nelse if(!identityReady){outcome='incomplete_identity';next='WF-126';reason='deal/lead/property identity missing';}\nelse if(!priceProtected){outcome='above_mao';next='WF-126';reason='contract price exceeds dynamic MAO';}\nelse if(!provider){outcome='signature_provider_required';next='WF-126';reason='signature provider not configured';}\nelse if(signatureStatus==='executed'||status==='executed'){outcome='executed';next='WF-323';reason='signature execution confirmed';}\nelse if(signatureStatus==='declined'||signatureStatus==='rejected'||status==='declined'){outcome='declined';next='WF-204';reason='seller declined signature';}\nelse if(signatureStatus==='expired'||status==='expired'){outcome='expired';next='WF-204';reason='signature request expired';}\nelse if(signatureStatus==='awaiting_signature'||status==='awaiting_signature'){outcome='awaiting_signature';next='WF-323';reason='signature request is active and awaiting execution';}\nelse if(!envelopeId){outcome='dispatch_ready';next='WF-323';reason='validated package ready for signature dispatch';}\nelse{outcome='awaiting_signature';next='WF-323';reason='signature envelope exists; awaiting provider outcome';}\nreturn [{json:{...input,workflow_id:'WF-322',workflow_name:'Signature Launch → Execution Tracking & Signature Outcome Controller',outcome,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,contract_price:contractPrice,dynamic_mao:mao,price_protected:priceProtected,signature_provider:provider,envelope_id:envelopeId||null,idempotency_key:idempotencyKey,next_workflow:next,human_review_required:['declined','expired','above_mao','blocked'].includes(outcome),crm_activity:{activity_type:'signature_execution',deal_id:dealId,lead_id:leadId,property_id:propertyId,status:outcome,contract_price:contractPrice,envelope_id:envelopeId||null,reason}}}];"
+      },
+      "id": "wf322-controller",
+      "name": "Controller — Signature Execution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "outcome-gate",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "blocked_dnc",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "price-gate",
+              "leftValue": "={{ $json.price_protected }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf322-gate",
+      "name": "IF — Signature Outcome Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "contract_price",
+              "value": "={{ $json.crm_activity.contract_price }}"
+            },
+            {
+              "name": "envelope_id",
+              "value": "={{ $json.crm_activity.envelope_id }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf322-crm",
+      "name": "InsulaCRM — Signature Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, outcome: $json.outcome, reason: $json.reason, contract_price: $json.contract_price, dynamic_mao: $json.dynamic_mao, price_protected: $json.price_protected, signature_provider: $json.signature_provider, envelope_id: $json.envelope_id, idempotency_key: $json.idempotency_key, next_workflow: $json.next_workflow, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf322-response",
+      "name": "Response — Signature Outcome Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Signature Launch / Outcome": {
+      "main": [
+        [
+          {
+            "node": "Controller — Signature Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Signature Execution": {
+      "main": [
+        [
+          {
+            "node": "IF — Signature Outcome Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Signature Outcome Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Signature Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Signature Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Signature Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Signature Outcome Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-322-v1",
+  "meta": {
+    "workflow_id": "WF-322",
+    "description": "Tracks signature dispatch, awaiting-signature, executed, declined, and expired states with deterministic idempotency and dynamic MAO protection.",
+    "safety": {
+      "dnc_protection": true,
+      "dynamic_mao_protection": true,
+      "provider_agnostic": true,
+      "credentials_runtime_only": true,
+      "idempotent_execution_tracking": true
+    }
+  }
+}

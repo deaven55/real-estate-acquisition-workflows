@@ -1,0 +1,184 @@
+{
+  "name": "WF-347 — Re-engagement Message Generation → Provider Dispatch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-347-reengagement-message-provider-dispatch-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf347-webhook",
+      "name": "WF-347 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-347-reengagement-message-provider-dispatch-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst dealId=input.deal_id??null; const leadId=input.lead_id??null; const propertyId=input.property_id??null;\nconst route=String(input.route??'').toLowerCase(); const mode=String(input.message_mode??'').toLowerCase();\nconst dnc=Boolean(input.dnc??input.do_not_contact??false); const blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst attempts=Number(input.reengagement_attempts??input.attempts??0); const nextAttempt=Number(input.next_reengagement_attempt??attempts+1);\nconst idempotencyKey=String(input.idempotency_key??'').trim();\nconst seller=input.seller??{}; const phone=String(seller.phone??input.recipient_phone??input.seller_phone??'').trim(); const email=String(seller.email??input.recipient_email??input.seller_email??'').trim();\nconst context=input.seller_context??input.motivation??input.conversation_context??null;\nlet status='needs_review'; let dispatchMode='none'; let nextWorkflow='WF-346'; let reason='Message generation requires review.';\nif(dnc){status='dnc_blocked';nextWorkflow='WF-126';reason='DNC protection prevents message generation or dispatch.';}\nelse if(blockers.length){status='blocked';nextWorkflow='WF-126';reason='Active blocker prevents outbound communication.';}\nelse if(!dealId||!leadId||!propertyId||(!phone&&!email)){status='incomplete';nextWorkflow='WF-346';reason='Required deal identity or seller contact is missing.';}\nelse if(!idempotencyKey){status='invalid_idempotency';nextWorkflow='WF-346';reason='Deterministic dispatch idempotency key is missing.';}\nelse if(route!=='message_ready'){status='not_authorized';nextWorkflow='WF-346';reason='Input is not authorized for autonomous message generation.';}\nelse if(attempts>=3){status='max_attempts_reached';nextWorkflow='WF-126';reason='Maximum re-engagement attempts reached.';}\nelse if(mode==='sms'&&phone){status='message_ready';dispatchMode='sms';nextWorkflow='WF-263';reason='SMS re-engagement message generation is authorized.';}\nelse if(mode==='email'&&email){status='message_ready';dispatchMode='email';nextWorkflow='WF-263';reason='Email re-engagement message generation is authorized.';}\nelse if(phone){status='message_ready';dispatchMode='sms';nextWorkflow='WF-263';reason='SMS is available as the preferred provider-agnostic channel.';}\nelse if(email){status='message_ready';dispatchMode='email';nextWorkflow='WF-263';reason='Email is available as the fallback channel.';}\nconst messageBrief={purpose:'seller_reengagement',channel:dispatchMode,tone:'concise, respectful, non-pressuring',seller_context:context,attempt_number:nextAttempt,do_not_contact:dnc,deal_id:dealId,lead_id:leadId,property_id:propertyId};\nconst activity={activity_type:'seller_reengagement_message_generation',subject:'WF-347 '+(dealId??'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,status,dispatch_mode:dispatchMode,attempt_number:nextAttempt,idempotency_key:idempotencyKey,recipient_phone:phone,recipient_email:email,message_brief:messageBrief,dnc,blockers,reason,next_workflow:nextWorkflow};\nreturn [{json:{...input,wf_id:'WF-347',status,dispatch_mode:dispatchMode,message_brief:messageBrief,next_workflow:nextWorkflow,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf347-controller",
+      "name": "WF-347 Message Generation Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "message_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "blocked",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "dnc_blocked",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf347-gate",
+      "name": "Message Generation / Safety Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf347-crm",
+      "name": "Persist WF-347 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf347-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-347 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-347 Message Generation Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-347 Message Generation Controller": {
+      "main": [
+        [
+          {
+            "node": "Message Generation / Safety Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message Generation / Safety Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-347 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-347 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-347 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf347-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

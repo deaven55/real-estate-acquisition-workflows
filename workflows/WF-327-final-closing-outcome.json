@@ -1,0 +1,215 @@
+{
+  "name": "WF-327 — Reconciled Closing Evidence → Final Closing Outcome & Completion Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-327-final-closing-outcome",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf327-webhook",
+      "name": "Webhook — Reconciled Closing Evidence",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst evidenceStatus=String(input.evidence_status??input.status??'').toLowerCase();\nconst dealId=input.deal_id,leadId=input.lead_id,propertyId=input.property_id;\nconst closingDate=String(input.closing_date??'').trim();\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst requiredEvidence=Array.isArray(input.required_evidence)?input.required_evidence:[];\nconst verifiedEvidence=Array.isArray(input.verified_evidence)?input.verified_evidence:[];\nconst failedEvidence=Array.isArray(input.failed_evidence)?input.failed_evidence:[];\nconst milestones=Array.isArray(input.milestones)?input.milestones:[];\nconst executionIdentity=String(input.execution_identity??input.executed_by??'').trim();\nconst executed=Boolean(input.executed_agreement===true||input.agreement_executed===true||String(input.agreement_status??'').toLowerCase()==='executed');\nconst signed=Boolean(input.signed_evidence===true||input.signature_status&&String(input.signature_status).toLowerCase()==='executed'||String(input.signature_status).toLowerCase()==='signed');\nconst evidenceComplete=requiredEvidence.length===0||requiredEvidence.every(req=>verifiedEvidence.some(v=>String(v.id??v.type??v).toLowerCase()===String(req.id??req.type??req).toLowerCase()));\nconst milestonesComplete=milestones.length===0||milestones.every(m=>['completed','verified'].includes(String(m.status??'').toLowerCase()));\nlet outcome_status='needs_review',next='WF-126',reason='final closing outcome requires review';\nif(input.dnc===true){outcome_status='blocked_dnc';reason='DNC/contact restriction';}\nelse if(blockers.length){outcome_status='blocked';reason='active closing blockers';}\nelse if(!dealId||!leadId||!propertyId){outcome_status='incomplete_identity';reason='deal/property/lead identity incomplete';}\nelse if(!closingDate){outcome_status='closing_date_missing';reason='closing date missing';}\nelse if(evidenceStatus==='evidence_failed'||failedEvidence.length){outcome_status='evidence_failed';next='WF-326';reason='failed closing evidence requires reconciliation';}\nelse if(!evidenceComplete||evidenceStatus==='evidence_gap'){outcome_status='evidence_incomplete';next='WF-326';reason='required closing evidence is not fully verified';}\nelse if(!milestonesComplete){outcome_status='completion_incomplete';next='WF-325';reason='closing milestones are not fully completed';}\nelse if(!executed||!signed){outcome_status='execution_evidence_missing';next='WF-322';reason='executed agreement or signature evidence is missing';}\nelse if(!executionIdentity){outcome_status='execution_identity_missing';next='WF-126';reason='execution identity is missing';}\nelse{outcome_status='closing_outcome_ready';next='WF-328';reason='closing evidence, milestones, execution and signature evidence reconcile successfully';}\nreturn [{json:{...input,workflow_id:'WF-327',workflow_name:'Reconciled Closing Evidence → Final Closing Outcome & Completion Controller',outcome_status,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,closing_date:closingDate||null,evidence_complete:evidenceComplete,milestones_complete:milestonesComplete,executed_agreement:executed,signed_evidence:signed,execution_identity:executionIdentity||null,next_workflow:next,human_review_required:!['closing_outcome_ready','evidence_incomplete','evidence_failed','completion_incomplete'].includes(outcome_status),crm_activity:{activity_type:'final_closing_outcome',deal_id:dealId,lead_id:leadId,property_id:propertyId,status:outcome_status,closing_date:closingDate||null,reason}}}];"
+      },
+      "id": "wf327-controller",
+      "name": "Controller — Final Closing Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "outcome-gate",
+              "leftValue": "={{ $json.outcome_status }}",
+              "rightValue": "closing_outcome_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "identity-gate",
+              "leftValue": "={{ $json.deal_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf327-gate",
+      "name": "IF — Final Closing Outcome Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "closing_date",
+              "value": "={{ $json.crm_activity.closing_date }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf327-crm",
+      "name": "InsulaCRM — Final Closing Outcome Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, outcome_status: $json.outcome_status, reason: $json.reason, evidence_complete: $json.evidence_complete, milestones_complete: $json.milestones_complete, executed_agreement: $json.executed_agreement, signed_evidence: $json.signed_evidence, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf327-response",
+      "name": "Response — Final Closing Outcome Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Reconciled Closing Evidence": {
+      "main": [
+        [
+          {
+            "node": "Controller — Final Closing Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Final Closing Outcome": {
+      "main": [
+        [
+          {
+            "node": "IF — Final Closing Outcome Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Final Closing Outcome Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Final Closing Outcome Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Final Closing Outcome Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Final Closing Outcome Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Final Closing Outcome Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-327-v1",
+  "meta": {
+    "workflow_id": "WF-327",
+    "description": "Validates reconciled closing evidence, milestone completion, executed agreement and signature evidence before final closing outcome.",
+    "safety": {
+      "dnc_protection": true,
+      "execution_evidence_required": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

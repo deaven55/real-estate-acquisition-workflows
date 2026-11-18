@@ -1,0 +1,184 @@
+{
+  "name": "WF-351 — Delivered Message → Seller Response Timeout & Cadence Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-351-delivered-message-response-timeout-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf351-webhook",
+      "name": "WF-351 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-351-delivered-message-response-timeout-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst dealId=input.deal_id??null; const leadId=input.lead_id??null; const propertyId=input.property_id??null;\nconst status=String(input.status??'').toLowerCase(); const deliveryStatus=String(input.delivery_status??'').toLowerCase();\nconst sellerResponse=String(input.seller_response??input.inbound_message??'').trim();\nconst dnc=Boolean(input.dnc??input.do_not_contact??false); const blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst attempts=Number(input.reengagement_attempts??input.attempts??0); const maxAttempts=Number(input.max_reengagement_attempts??3);\nconst sentAt=input.sent_at??input.delivered_at??input.last_outbound_at??null; const timeoutHours=Number(input.response_timeout_hours??24);\nconst idempotencyKey=String(input.idempotency_key??'').trim();\nlet route='needs_review'; let action='review'; let nextWorkflow='WF-349'; let reason='Response timeout state requires review.';\nif(dnc){route='blocked';action='stop';nextWorkflow='WF-126';reason='DNC protection prevents timeout follow-up.';}\nelse if(blockers.length){route='blocked';action='stop';nextWorkflow='WF-126';reason='Active blocker prevents timeout follow-up.';}\nelse if(sellerResponse){route='seller_response_received';action='classify_response';nextWorkflow='WF-342';reason='Seller response received before timeout; route to classification.';}\nelse if(!dealId||!leadId||!propertyId||!idempotencyKey){route='incomplete';action='repair_data';nextWorkflow='WF-349';reason='Required identity or idempotency data is missing.';}\nelse if(status==='awaiting_response'||deliveryStatus==='delivered'||deliveryStatus==='delivery_success'||deliveryStatus==='sent'){route='awaiting_response';action='wait_or_timeout';nextWorkflow='WF-351';reason='Outbound message is delivered/accepted; response timeout must be evaluated before follow-up.';}\nelse if(attempts>=maxAttempts){route='max_attempts_reached';action='pause';nextWorkflow='WF-126';reason='Maximum outreach attempts reached; human review required.';}\nelse{route='needs_review';action='review';nextWorkflow='WF-349';reason='Current state does not authorize timeout follow-up.';}\nconst timeoutAt=sentAt?new Date(new Date(sentAt).getTime()+timeoutHours*3600000).toISOString():null;\nconst activity={activity_type:'seller_response_timeout_controller',subject:'WF-351 '+(dealId??'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,route,action,next_workflow:nextWorkflow,sent_at:sentAt,timeout_hours:timeoutHours,timeout_at:timeoutAt,reengagement_attempts:attempts,max_reengagement_attempts:maxAttempts,idempotency_key:idempotencyKey,dnc,blockers,reason};\nreturn [{json:{...input,wf_id:'WF-351',route,action,next_workflow:nextWorkflow,timeout_hours:timeoutHours,timeout_at:timeoutAt,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf351-controller",
+      "name": "WF-351 Timeout & Cadence Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "response",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "seller_response_received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "wait",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "awaiting_response",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf351-gate",
+      "name": "Response / Timeout Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf351-crm",
+      "name": "Persist WF-351 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf351-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-351 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-351 Timeout & Cadence Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-351 Timeout & Cadence Controller": {
+      "main": [
+        [
+          {
+            "node": "Response / Timeout Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Response / Timeout Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-351 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-351 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-351 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf351-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

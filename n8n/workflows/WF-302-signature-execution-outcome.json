@@ -1,0 +1,158 @@
+{
+  "name": "WF-302 — Signature Launch → Execution Tracking & Signature Outcome Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-302-signature-launch-execution-outcome",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf302-webhook",
+      "name": "WF-302 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-302-signature-launch-execution-outcome"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst dnc=Boolean(input.dnc||input.do_not_contact);\nconst leadId=input.lead_id, dealId=input.deal_id, propertyId=input.property_id;\nconst contractPrice=Number(input.contract_price??input.offer_price??input.accepted_price);\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao);\nconst signatureStatus=String(input.signature_status??input.status??\"\").toLowerCase();\nconst provider=String(input.signature_provider??input.provider??\"\").trim();\nconst providerEnvelopeId=String(input.provider_envelope_id??input.envelope_id??\"\").trim();\nconst identityReady=Boolean(leadId&&dealId&&propertyId);\nconst priceProtected=Number.isFinite(contractPrice)&&Number.isFinite(mao)&&contractPrice>0&&mao>0&&contractPrice<=mao;\nlet state=\"blocked\",nextWorkflow=\"WF-126\",human=true,reason=\"\";\nif(dnc){reason=\"DNC protection blocks signature execution\";}\nelse if(blockers.length){reason=\"active blockers prevent signature execution\";}\nelse if(!identityReady){reason=\"lead/deal/property identity is incomplete\";}\nelse if(!priceProtected){reason=\"contract price is invalid or exceeds protected dynamic MAO\";}\nelse if(!provider){reason=\"signature provider is missing\";}\nelse if(!signatureStatus){state=\"dispatch_ready\";nextWorkflow=\"WF-303\";reason=\"validated contract is ready for signature dispatch\";}\nelse if([\"sent\",\"dispatched\",\"awaiting_signature\",\"pending\"].includes(signatureStatus)){state=\"awaiting_signature\";nextWorkflow=\"WF-303\";reason=\"signature envelope is active and awaiting execution\";}\nelse if([\"signed\",\"executed\",\"completed\"].includes(signatureStatus)){state=\"executed\";nextWorkflow=\"WF-303\";reason=\"signature execution reported complete; transaction readiness can proceed\";}\nelse if([\"declined\",\"rejected\"].includes(signatureStatus)){state=\"declined\";nextWorkflow=\"WF-204\";human=true;reason=\"seller declined signature; route to recovery/disposition handling\";}\nelse if([\"expired\",\"void\",\"canceled\",\"cancelled\"].includes(signatureStatus)){state=\"expired\";nextWorkflow=\"WF-204\";human=true;reason=\"signature request expired or was voided\";}\nelse{state=\"unknown_signature_state\";nextWorkflow=\"WF-126\";reason=\"unrecognized signature provider status requires review\";}\nconst idempotencyKey=input.idempotency_key||`wf-302:${dealId||\"unknown\"}:${providerEnvelopeId||input.contract_version||input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-302\",workflow_name:\"Signature Launch → Execution Tracking & Signature Outcome Controller\",status:state,signature_execution:{state,signature_provider:provider||null,provider_envelope_id:providerEnvelopeId||null,contract_price:Number.isFinite(contractPrice)?contractPrice:null,dynamic_mao:Number.isFinite(mao)?mao:null,price_protected:priceProtected,identity_ready:identityReady},next_workflow:nextWorkflow,human_review_required:human,audit:{event_type:\"signature_execution_outcome\",idempotency_key:idempotencyKey,reason}}}];"
+      },
+      "id": "wf302-controller",
+      "name": "WF-302 Signature Execution Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['dispatch_ready','awaiting_signature','executed'].includes($json.status)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf302-if",
+      "name": "WF-302 Signature Outcome Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-302 signature execution outcome',description:$json.audit.reason,metadata:{workflow:'WF-302',status:$json.status,signature_execution:$json.signature_execution,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf302-crm",
+      "name": "WF-302 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,signature_execution:$json.signature_execution,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf302-response",
+      "name": "WF-302 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-302 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-302 Signature Execution Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-302 Signature Execution Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-302 Signature Outcome Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-302 Signature Outcome Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-302 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-302 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-302 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-302 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-302-v1"
+}

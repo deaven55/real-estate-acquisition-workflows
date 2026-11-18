@@ -1,0 +1,231 @@
+{
+  "name": "WF-330 — Final CRM Closeout → Portfolio Performance Record & Underwriting Feedback Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-330-portfolio-performance",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf330-webhook",
+      "name": "Webhook — Final CRM Closeout",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst closeout=String(input.closeout_status??input.status??'').toLowerCase();\nconst dealId=input.deal_id,leadId=input.lead_id,propertyId=input.property_id;\nconst gross=Number(input.gross_profit??0),costs=Number(input.closing_costs??0),net=Number(input.net_profit??0);\nconst sampleSize=Number(input.historical_sample_size??input.sample_size??0);\nconst exitStrategy=String(input.exit_strategy??'assignment').trim();\nconst margin=gross?net/gross:null;\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nlet performance_status='needs_review',next='WF-126',reason='portfolio performance record requires review';\nif(input.dnc===true){performance_status='blocked_dnc';reason='DNC/contact restriction';}\nelse if(blockers.length){performance_status='blocked';reason='active performance blockers';}\nelse if(closeout!=='closeout_ready'&&closeout!=='negative_profit_review'){performance_status='closeout_not_ready';next='WF-329';reason='final CRM closeout is not confirmed';}\nelse if(!dealId||!leadId||!propertyId){performance_status='incomplete_identity';reason='deal/property/lead identity incomplete';}\nelse if(!Number.isFinite(gross)||!Number.isFinite(costs)||!Number.isFinite(net)){performance_status='profit_inputs_invalid';reason='profit inputs are invalid';}\nelse{performance_status='performance_record_ready';next='WF-331';reason='verified closeout profit data is ready for portfolio performance and underwriting feedback';}\nconst signal=net>0?'positive':net<0?'negative':'neutral';\nconst feedback={net_profit:net,profit_margin:margin,exit_strategy:exitStrategy,historical_sample_size:sampleSize,performance_signal:signal,underwriting_feedback_signal:net>0?'consider_positive_calibration':net<0?'consider_downward_calibration':'hold_calibration'};\nreturn [{json:{...input,workflow_id:'WF-330',workflow_name:'Final CRM Closeout → Portfolio Performance Record & Underwriting Feedback Controller',performance_status,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,gross_profit:gross,closing_costs:costs,net_profit:net,profit_margin:margin,historical_sample_size:sampleSize,performance_signal:signal,underwriting_feedback:feedback,next_workflow:next,human_review_required:performance_status!=='performance_record_ready',crm_activity:{activity_type:'portfolio_performance_record',deal_id:dealId,lead_id:leadId,property_id:propertyId,status:performance_status,gross_profit:gross,closing_costs:costs,net_profit:net,profit_margin:margin,historical_sample_size:sampleSize,reason}}}];"
+      },
+      "id": "wf330-controller",
+      "name": "Controller — Portfolio Performance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "performance-gate",
+              "leftValue": "={{ $json.performance_status }}",
+              "rightValue": "performance_record_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "identity-gate",
+              "leftValue": "={{ $json.deal_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf330-gate",
+      "name": "IF — Performance Record Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "gross_profit",
+              "value": "={{ $json.crm_activity.gross_profit }}"
+            },
+            {
+              "name": "closing_costs",
+              "value": "={{ $json.crm_activity.closing_costs }}"
+            },
+            {
+              "name": "net_profit",
+              "value": "={{ $json.crm_activity.net_profit }}"
+            },
+            {
+              "name": "profit_margin",
+              "value": "={{ $json.crm_activity.profit_margin }}"
+            },
+            {
+              "name": "historical_sample_size",
+              "value": "={{ $json.crm_activity.historical_sample_size }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf330-crm",
+      "name": "InsulaCRM — Portfolio Performance Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, performance_status: $json.performance_status, reason: $json.reason, gross_profit: $json.gross_profit, closing_costs: $json.closing_costs, net_profit: $json.net_profit, profit_margin: $json.profit_margin, historical_sample_size: $json.historical_sample_size, performance_signal: $json.performance_signal, underwriting_feedback: $json.underwriting_feedback, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf330-response",
+      "name": "Response — Portfolio Performance Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Final CRM Closeout": {
+      "main": [
+        [
+          {
+            "node": "Controller — Portfolio Performance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Portfolio Performance": {
+      "main": [
+        [
+          {
+            "node": "IF — Performance Record Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Performance Record Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Portfolio Performance Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Portfolio Performance Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Portfolio Performance Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Portfolio Performance Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-330-v1",
+  "meta": {
+    "workflow_id": "WF-330",
+    "description": "Builds portfolio performance feedback from verified closeout profit data and prepares underwriting calibration.",
+    "safety": {
+      "dnc_protection": true,
+      "profit_validation": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

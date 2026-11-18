@@ -1,0 +1,219 @@
+{
+  "name": "WF-325 — Closing Coordination → Critical Dates & Milestone Monitoring Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-325-milestone-monitoring",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf325-webhook",
+      "name": "Webhook — Closing Coordination",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst status=String(input.coordination_status??input.status??'').toLowerCase();\nconst dealId=input.deal_id,leadId=input.lead_id,propertyId=input.property_id;\nconst closingDate=String(input.closing_date??'').trim();\nconst roles=input.coordination_roles??{};\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst milestones=Array.isArray(input.milestones)?input.milestones:[];\nconst identityReady=Boolean(dealId&&leadId&&propertyId);\nconst rolesReady=Boolean(roles.title&&roles.attorney&&roles.funding&&roles.broker);\nlet daysRemaining=null;\nif(closingDate){const d=new Date(closingDate);if(!Number.isNaN(d.getTime()))daysRemaining=Math.ceil((d.getTime()-Date.now())/86400000);}\nlet milestone_status='needs_review',next='WF-126',reason='closing milestone monitoring requires review';\nif(input.dnc===true){milestone_status='blocked_dnc';reason='DNC/contact restriction';}\nelse if(blockers.length){milestone_status='blocked';reason='active closing blockers';}\nelse if(status!=='coordination_ready'){milestone_status='coordination_not_ready';next='WF-324';reason='closing coordination is not confirmed';}\nelse if(!identityReady||!closingDate){milestone_status='incomplete';reason='deal/property/lead identity or closing date missing';}\nelse if(!rolesReady){milestone_status='coordination_incomplete';next='WF-324';reason='required closing coordination roles are incomplete';}\nelse if(daysRemaining!==null&&daysRemaining<0){milestone_status='overdue';next='WF-326';reason='closing date has passed and requires exception handling';}\nelse if(daysRemaining!==null&&daysRemaining<=3){milestone_status='critical_due_soon';next='WF-326';reason='closing is within 3 days';}\nelse if(milestones.length&&milestones.every(m=>String(m.status??'').toLowerCase()==='completed')){milestone_status='milestones_completed';next='WF-326';reason='all supplied closing milestones are completed';}\nelse{milestone_status='on_track';next='WF-326';reason='closing coordination validated and milestone monitoring is active';}\nreturn [{json:{...input,workflow_id:'WF-325',workflow_name:'Closing Coordination → Critical Dates & Milestone Monitoring Controller',milestone_status,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,closing_date:closingDate||null,days_remaining:daysRemaining,coordination_roles:roles,milestones,next_workflow:next,human_review_required:['blocked_dnc','blocked','incomplete','coordination_incomplete','overdue'].includes(milestone_status),crm_activity:{activity_type:'closing_milestone_monitoring',deal_id:dealId,lead_id:leadId,property_id:propertyId,status:milestone_status,closing_date:closingDate||null,days_remaining:daysRemaining,reason}}}];"
+      },
+      "id": "wf325-controller",
+      "name": "Controller — Critical Dates & Milestones",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "status-gate",
+              "leftValue": "={{ $json.milestone_status }}",
+              "rightValue": "on_track",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "identity-gate",
+              "leftValue": "={{ $json.deal_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf325-gate",
+      "name": "IF — Milestone Monitoring Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "closing_date",
+              "value": "={{ $json.crm_activity.closing_date }}"
+            },
+            {
+              "name": "days_remaining",
+              "value": "={{ $json.crm_activity.days_remaining }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf325-crm",
+      "name": "InsulaCRM — Milestone Monitoring Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, milestone_status: $json.milestone_status, reason: $json.reason, closing_date: $json.closing_date, days_remaining: $json.days_remaining, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf325-response",
+      "name": "Response — Milestone Monitoring Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Closing Coordination": {
+      "main": [
+        [
+          {
+            "node": "Controller — Critical Dates & Milestones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Critical Dates & Milestones": {
+      "main": [
+        [
+          {
+            "node": "IF — Milestone Monitoring Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Milestone Monitoring Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Milestone Monitoring Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Milestone Monitoring Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Milestone Monitoring Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Milestone Monitoring Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-325-v1",
+  "meta": {
+    "workflow_id": "WF-325",
+    "description": "Monitors closing date, days remaining, milestone completion and critical timing after closing coordination is ready.",
+    "safety": {
+      "dnc_protection": true,
+      "overdue_escalation": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

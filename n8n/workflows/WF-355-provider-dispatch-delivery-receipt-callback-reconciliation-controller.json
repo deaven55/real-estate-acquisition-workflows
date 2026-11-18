@@ -1,0 +1,169 @@
+{
+  "name": "WF-355 — Provider Dispatch → Delivery Receipt / Callback Reconciliation Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-355-provider-dispatch-reconciliation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf355-webhook",
+      "name": "Webhook — Provider Dispatch / Callback",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{}; const event=input.event??input;\nconst dealId=event.deal_id??event.dealId, leadId=event.lead_id??event.leadId, propertyId=event.property_id??event.propertyId;\nconst provider=String(event.provider??event.provider_name??'').trim();\nconst providerMessageId=String(event.provider_message_id??event.message_id??'').trim();\nconst status=String(event.status??event.delivery_status??'').toLowerCase();\nconst channel=String(event.channel??'sms').toLowerCase();\nconst dnc=Boolean(event.dnc??event.do_not_contact), blockers=Array.isArray(event.blockers)?event.blockers:[];\nconst baseKey=event.idempotency_key??[dealId,leadId,propertyId,'seller-followup'].filter(Boolean).join(':');\nconst callbackKey=String(event.callback_idempotency_key??(baseKey+':callback:'+providerMessageId)).trim();\nlet route='WF-349', decision='callback_received';\nif(dnc){route='WF-126';decision='dnc_hard_stop';}\nelse if(blockers.length){route='WF-126';decision='blocked';}\nelse if(!dealId||!leadId||!propertyId||!baseKey){route='WF-354';decision='identity_or_idempotency_missing';}\nelse if(!provider||!providerMessageId){route='WF-348';decision='provider_receipt_identity_missing';}\nelse if(!callbackKey){route='WF-348';decision='callback_idempotency_missing';}\nelse if(['delivered','sent','accepted'].includes(status)){route='WF-349';decision='delivery_success';}\nelse if(['failed','bounced','rejected','undeliverable'].includes(status)){route='WF-350';decision='delivery_failure';}\nelse if(['inbound','reply','seller_response','received'].includes(status)||event.inbound_response){route='WF-342';decision='seller_response';}\nelse {route='WF-349';decision='callback_pending_classification';}\nreturn [{json:{...event,workflow:'WF-355',decision,route,deal_id:dealId,lead_id:leadId,property_id:propertyId,provider,provider_message_id:providerMessageId,status,channel,idempotency_key:baseKey,callback_idempotency_key:callbackKey,audit_event:'provider_dispatch_delivery_receipt_reconciliation'}}];"
+      },
+      "id": "wf355-controller",
+      "name": "Controller — Receipt / Callback Reconciliation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchers": [],
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "callback_received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf355-gate",
+      "name": "IF — Callback Reconciliation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY || '' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({lead_id:$json.lead_id,deal_id:$json.deal_id,property_id:$json.property_id,activity_type:'provider_delivery_receipt_reconciliation',status:$json.decision,route:$json.route,provider:$json.provider,provider_message_id:$json.provider_message_id,delivery_status:$json.status,channel:$json.channel,idempotency_key:$json.callback_idempotency_key,created_by:'WF-355'}) }}",
+        "options": {}
+      },
+      "id": "wf355-crm",
+      "name": "InsulaCRM — Audit Receipt / Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ok:true,workflow:'WF-355',decision:$json.decision,route:$json.route,provider:$json.provider,status:$json.status,provider_message_id:$json.provider_message_id,idempotency_key:$json.callback_idempotency_key,next_action:$json.route}) }}",
+        "options": {}
+      },
+      "id": "wf355-response",
+      "name": "Respond — Receipt / Callback Routing",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Provider Dispatch / Callback": {
+      "main": [
+        [
+          {
+            "node": "Controller — Receipt / Callback Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Receipt / Callback Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "IF — Callback Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Callback Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Audit Receipt / Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Audit Receipt / Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Audit Receipt / Callback": {
+      "main": [
+        [
+          {
+            "node": "Respond — Receipt / Callback Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-355-v1"
+}

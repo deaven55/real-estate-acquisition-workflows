@@ -1,0 +1,184 @@
+{
+  "name": "WF-346 — Re-engagement Cadence → Message Generation & Dispatch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-346-reengagement-message-dispatch-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf346-webhook",
+      "name": "WF-346 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-346-reengagement-message-dispatch-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst dealId=input.deal_id??null; const leadId=input.lead_id??null; const propertyId=input.property_id??null;\nconst status=String(input.status??'').toLowerCase(); const action=String(input.action??'').toLowerCase();\nconst dnc=Boolean(input.dnc??input.do_not_contact??false); const blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst attempts=Number(input.reengagement_attempts??input.attempts??0); const maxAttempts=Number(input.max_reengagement_attempts??3);\nconst seller=input.seller??{}; const phone=String(seller.phone??input.seller_phone??'').trim(); const email=String(seller.email??input.seller_email??'').trim();\nconst cadence=String(input.cadence??(attempts<=0?'24h':attempts===1?'72h':'7d'));\nconst context=input.seller_context??input.motivation??input.conversation_context??null;\nlet route='human_review'; let messageMode='none'; let reason='Re-engagement message requires review.'; let nextWorkflow='WF-126';\nif(dnc){route='blocked';reason='DNC protection prevents outbound communication.';nextWorkflow='WF-126';}\nelse if(blockers.length){route='blocked';reason='Active blocker prevents outbound communication.';nextWorkflow='WF-126';}\nelse if(!dealId||!leadId||!propertyId||(!phone&&!email)){route='incomplete';reason='Deal identity or seller contact is missing.';nextWorkflow='WF-345';}\nelse if(attempts>=maxAttempts){route='human_review';reason='Maximum re-engagement attempts reached.';nextWorkflow='WF-126';}\nelse if(status==='reengagement_ready'||action==='schedule_reengagement'){route='message_ready';messageMode=phone?'sms': 'email';reason='Controlled re-engagement message may be generated and dispatched.';nextWorkflow='WF-262';}\nelse{route='human_review';reason='WF-346 received an outcome not authorized for autonomous re-engagement.';nextWorkflow='WF-345';}\nconst idempotencyKey='WF-346:'+String(dealId??'unknown')+':reengagement:'+String(attempts+1)+':'+cadence;\nconst activity={activity_type:'seller_reengagement_message_controller',subject:'WF-346 '+(dealId??'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,status,action,route,message_mode:messageMode,cadence,reengagement_attempts:attempts,next_attempt:attempts+1,max_reengagement_attempts:maxAttempts,recipient_phone:phone,recipient_email:email,seller_context:context,dnc,blockers,idempotency_key:idempotencyKey,reason,next_workflow:nextWorkflow};\nreturn [{json:{...input,wf_id:'WF-346',route,message_mode:messageMode,cadence,reengagement_attempts:attempts,next_reengagement_attempt:attempts+1,idempotency_key:idempotencyKey,next_workflow:nextWorkflow,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf346-controller",
+      "name": "WF-346 Message Dispatch Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "message_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "blocked",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "blocked",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf346-gate",
+      "name": "Message / Safety Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf346-crm",
+      "name": "Persist WF-346 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf346-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-346 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-346 Message Dispatch Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-346 Message Dispatch Controller": {
+      "main": [
+        [
+          {
+            "node": "Message / Safety Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message / Safety Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-346 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-346 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-346 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf346-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

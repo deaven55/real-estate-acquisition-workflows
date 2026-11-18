@@ -1,0 +1,158 @@
+{
+  "name": "WF-305 — Closing Coordination → Critical Dates & Milestone Monitoring Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-305-closing-milestone-monitoring",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf305-webhook",
+      "name": "WF-305 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-305-closing-milestone-monitoring"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst milestones=Array.isArray(input.milestones)?input.milestones:[];\nconst closingDate=String(input.closing_date??\"\").trim();\nconst now=new Date();\nconst close=new Date(closingDate);\nconst daysRemaining=closingDate&&!Number.isNaN(close.getTime())?Math.ceil((close-now)/86400000):null;\nconst overdue=milestones.filter(m=>m.status===\"overdue\"||m.overdue===true);\nconst critical=milestones.filter(m=>m.critical===true&&(m.status===\"overdue\"||m.overdue===true));\nconst incomplete=milestones.filter(m=>![\"completed\",\"complete\",\"done\"].includes(String(m.status||\"\").toLowerCase()));\nconst completed=incomplete.length===0&&milestones.length>0;\nlet status=\"blocked\",nextWorkflow=\"WF-126\",reason=\"\";\nif(blockers.length){status=\"blocked\";reason=\"active closing blockers detected\";}\nelse if(!closingDate||Number.isNaN(close.getTime())){status=\"milestone_data_incomplete\";reason=\"valid closing date is missing\";}\nelse if(critical.length){status=\"critical_overdue\";nextWorkflow=\"WF-306\";reason=\"critical closing milestone is overdue\";}\nelse if(overdue.length){status=\"attention_required\";nextWorkflow=\"WF-306\";reason=\"one or more closing milestones are overdue\";}\nelse if(completed){status=\"milestones_completed\";nextWorkflow=\"WF-307\";reason=\"all supplied closing milestones are complete\";}\nelse if(daysRemaining!==null&&daysRemaining<=3){status=\"closing_due_soon\";nextWorkflow=\"WF-306\";reason=\"closing is within three days and milestones require monitoring\";}\nelse{status=\"on_track\";nextWorkflow=\"WF-306\";reason=\"closing milestones are on track\";}\nconst idempotencyKey=input.idempotency_key||`wf-305:${input.deal_id||\"unknown\"}:${input.milestone_version||input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-305\",workflow_name:\"Closing Coordination → Critical Dates & Milestone Monitoring Controller\",status,closing_monitor:{closing_date:closingDate||null,days_remaining:daysRemaining,milestone_count:milestones.length,incomplete_count:incomplete.length,overdue_count:overdue.length,critical_overdue_count:critical.length,completed,blockers},next_workflow:nextWorkflow,human_review_required:status!==\"on_track\",audit:{event_type:\"closing_milestone_monitoring\",idempotency_key:idempotencyKey,reason}}}];"
+      },
+      "id": "wf305-controller",
+      "name": "WF-305 Milestone Monitoring Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['on_track','closing_due_soon','milestones_completed'].includes($json.status)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf305-if",
+      "name": "WF-305 Milestone Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-305 closing milestone monitoring',description:$json.audit.reason,metadata:{workflow:'WF-305',status:$json.status,closing_monitor:$json.closing_monitor,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf305-crm",
+      "name": "WF-305 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,closing_monitor:$json.closing_monitor,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf305-response",
+      "name": "WF-305 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-305 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-305 Milestone Monitoring Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-305 Milestone Monitoring Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-305 Milestone Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-305 Milestone Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-305 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-305 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-305 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-305 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-305-v1"
+}

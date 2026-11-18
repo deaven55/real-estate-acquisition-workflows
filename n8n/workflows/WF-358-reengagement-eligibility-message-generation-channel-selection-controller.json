@@ -1,0 +1,169 @@
+{
+  "name": "WF-358 — Re-engagement Eligibility → Message Generation / Channel Selection Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-358-reengagement-message-channel",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf358-webhook",
+      "name": "Webhook — Re-engagement Eligibility",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{}; const event=input.event??input;\nconst dealId=event.deal_id??event.dealId, leadId=event.lead_id??event.leadId, propertyId=event.property_id??event.propertyId;\nconst dnc=Boolean(event.dnc??event.do_not_contact), blockers=Array.isArray(event.blockers)?event.blockers:[];\nconst eligible=event.reengagement_eligible===true||String(event.decision??'').toLowerCase()==='reengagement_eligible';\nconst phone=event.phone??event.seller?.phone, email=event.email??event.seller?.email;\nconst preferred=String(event.preferred_channel??event.channel??'').toLowerCase();\nconst attempts=Number(event.attempts??0), maxAttempts=Number(event.max_attempts??3);\nconst baseKey=event.idempotency_key??[dealId,leadId,propertyId,'seller-followup'].filter(Boolean).join(':');\nconst generationKey=baseKey+':message-generation:'+attempts;\nlet route='WF-357',decision='not_eligible',channel=null;\nif(dnc){route='WF-126';decision='dnc_hard_stop';}\nelse if(blockers.length){route='WF-126';decision='blocked';}\nelse if(!dealId||!leadId||!propertyId||!baseKey){route='WF-357';decision='identity_or_idempotency_missing';}\nelse if(!eligible){route='WF-357';decision='reengagement_not_eligible';}\nelse if(attempts>=maxAttempts){route='WF-126';decision='human_review_max_attempts';}\nelse {\n  channel=preferred==='email'&&email?'email':preferred==='sms'&&phone?'sms':phone?'sms':email?'email':null;\n  if(!channel){route='WF-352';decision='seller_contact_missing';}\n  else {route='WF-346';decision='message_generation_ready';}\n}\nreturn [{json:{...event,workflow:'WF-358',decision,route,channel,deal_id:dealId,lead_id:leadId,property_id:propertyId,phone,email,attempts,max_attempts:maxAttempts,generation_idempotency_key:generationKey,message_generation_brief:{objective:'re-engage seller without over-contacting',channel,attempt:attempts+1,include_property_context:Boolean(event.property_context),include_offer_context:Boolean(event.offer_context)},audit_event:'reengagement_message_generation_channel_selection'}}];"
+      },
+      "id": "wf358-controller",
+      "name": "Controller — Message Generation & Channel Selection",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchers": [],
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "message_generation_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf358-gate",
+      "name": "IF — Message Generation Ready",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY || '' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({lead_id:$json.lead_id,deal_id:$json.deal_id,property_id:$json.property_id,activity_type:'reengagement_message_generation_channel_selection',status:$json.decision,route:$json.route,channel:$json.channel,attempts:$json.attempts,idempotency_key:$json.generation_idempotency_key,created_by:'WF-358'}) }}",
+        "options": {}
+      },
+      "id": "wf358-crm",
+      "name": "InsulaCRM — Audit Message Generation Decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ok:true,workflow:'WF-358',decision:$json.decision,route:$json.route,channel:$json.channel,attempts:$json.attempts,idempotency_key:$json.generation_idempotency_key,next_action:$json.route}) }}",
+        "options": {}
+      },
+      "id": "wf358-response",
+      "name": "Respond — Message Generation Routing",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Re-engagement Eligibility": {
+      "main": [
+        [
+          {
+            "node": "Controller — Message Generation & Channel Selection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Message Generation & Channel Selection": {
+      "main": [
+        [
+          {
+            "node": "IF — Message Generation Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Message Generation Ready": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Audit Message Generation Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Audit Message Generation Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Audit Message Generation Decision": {
+      "main": [
+        [
+          {
+            "node": "Respond — Message Generation Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-358-v1"
+}

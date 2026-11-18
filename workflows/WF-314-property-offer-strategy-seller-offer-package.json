@@ -1,0 +1,203 @@
+{
+  "name": "WF-314 — Property-Level Offer Strategy → Seller Offer Package & Negotiation Launch",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-314-property-offer-strategy-seller-offer-package",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf314-webhook",
+      "name": "Webhook — Acquisition Decision",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const strategy=input.offer_strategy??deal.offer_strategy??{}; const decision=String(deal.acquisition_decision??strategy.decision??'').toLowerCase(); const mao=Number(strategy.dynamic_mao??deal.adjusted_mao??deal.dynamic_mao); const asking=Number(strategy.asking_price??deal.asking_price??deal.list_price); const projectedProfit=Number(strategy.projected_assignment_profit??deal.projected_assignment_profit??0); const motivation=String(strategy.motivation??deal.motivation_level??'unknown').toLowerCase(); const blockers=Array.isArray(deal.blockers)?deal.blockers:[]; const leadId=deal.lead_id; const dealId=deal.deal_id??deal.id; const propertyId=deal.property_id; const sellerName=deal.seller_name??deal.owner_name??'Seller'; const channel=deal.preferred_channel??deal.channel??'sms'; const evidenceReady=deal.evidence_complete!==false; const valid=Boolean(dealId&&leadId&&propertyId&&Number.isFinite(mao)&&mao>0&&Number.isFinite(asking)&&Number.isFinite(projectedProfit)); if(blockers.length)return [{json:{...deal,workflow_id:'WF-314',status:'blocked',reason:'active blockers',next_workflow:'WF-126'}}]; if(!evidenceReady||!valid)return [{json:{...deal,workflow_id:'WF-314',status:'incomplete',reason:!evidenceReady?'underwriting evidence incomplete':'required offer inputs missing or invalid',next_workflow:'WF-313'}}]; if(!['pursue','negotiate'].includes(decision))return [{json:{...deal,workflow_id:'WF-314',status:'not_offerable',reason:'acquisition decision does not authorize an offer',next_workflow:'WF-313'}}]; const opening=Math.max(0,Math.min(mao,decision==='pursue'?Math.min(asking,mao*0.90):Math.min(asking,mao*0.85))); const target=Math.max(opening,Math.min(mao,asking)); const negotiationRoom=Math.max(0,target-opening); const message='Hi '+sellerName+', I’m reaching out about the property. Based on what we reviewed, we’d like to discuss an offer of $'+Math.round(opening).toLocaleString()+' and see if we can work something out. Are you open to discussing the price?'; const offerPackage={deal_id:dealId,lead_id:leadId,property_id:propertyId,decision,opening_offer:Math.round(opening),negotiation_target:Math.round(target),dynamic_mao:Math.round(mao),negotiation_room:Math.round(negotiationRoom),projected_assignment_profit:projectedProfit,motivation,preferred_channel:channel,message,seller_review_required:true,ma_rule:'secondary_reference_only'}; return [{json:{...deal,workflow_id:'WF-314',workflow_name:'Property-Level Offer Strategy → Seller Offer Package & Negotiation Launch',status:'offer_package_ready',offer_package:offerPackage,next_workflow:'WF-315',crm_activity:{activity_type:'seller_offer_package_ready',deal_id:dealId,lead_id:leadId,property_id:propertyId,status:'offer_package_ready',offer_package:offerPackage}}}];"
+      },
+      "id": "wf314-controller",
+      "name": "Controller — Seller Offer Package",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "offer-ready",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "offer_package_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf314-gate",
+      "name": "IF — Offer Package Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "offer_package",
+              "value": "={{ JSON.stringify($json.crm_activity.offer_package) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf314-crm",
+      "name": "InsulaCRM — Seller Offer Package Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, status: $json.status, next_workflow: $json.next_workflow, offer_package: $json.offer_package, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf314-response",
+      "name": "Response — Offer Package",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Acquisition Decision": {
+      "main": [
+        [
+          {
+            "node": "Controller — Seller Offer Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Seller Offer Package": {
+      "main": [
+        [
+          {
+            "node": "IF — Offer Package Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Offer Package Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Seller Offer Package Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Seller Offer Package Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Seller Offer Package Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Offer Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-314-v1",
+  "meta": {
+    "workflow_id": "WF-314",
+    "description": "Builds a seller-facing offer package from the acquisition decision, including opening offer, negotiation target, message, and hard dynamic-MAO protection.",
+    "safety": {
+      "seller_review_required": true,
+      "hard_mao_ceiling": true,
+      "ma_rule_secondary_reference_only": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

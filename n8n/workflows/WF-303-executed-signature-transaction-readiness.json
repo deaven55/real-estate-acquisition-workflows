@@ -1,0 +1,158 @@
+{
+  "name": "WF-303 — Executed Signature → Transaction Readiness & Closing Launch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-303-executed-signature-transaction-readiness",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf303-webhook",
+      "name": "WF-303 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-303-executed-signature-transaction-readiness"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst leadId=input.lead_id, dealId=input.deal_id, propertyId=input.property_id;\nconst signatureStatus=String(input.signature_status??input.execution_status??\"\").toLowerCase();\nconst executedAt=String(input.executed_at??input.signature_executed_at??\"\").trim();\nconst contractPrice=Number(input.contract_price??input.accepted_price??input.offer_price);\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao);\nconst closingDate=String(input.closing_date??\"\").trim();\nconst sellerReady=Boolean(input.seller_id||input.seller_name||input.seller_phone||input.seller_email);\nconst buyerReady=Boolean(input.buyer_id||input.buyer_name||input.buyer_email);\nconst executionReady=[\"signed\",\"executed\",\"completed\"].includes(signatureStatus)||Boolean(input.executed_agreement||input.signature_executed===true);\nconst identityReady=Boolean(leadId&&dealId&&propertyId);\nconst priceProtected=Number.isFinite(contractPrice)&&Number.isFinite(mao)&&contractPrice>0&&mao>0&&contractPrice<=mao;\nconst closingDateReady=Boolean(closingDate);\nlet status=\"blocked\",nextWorkflow=\"WF-126\",human=true,reason=\"\";\nif(blockers.length){reason=\"active transaction blockers remain\";}\nelse if(!identityReady){reason=\"lead/deal/property identity is incomplete\";}\nelse if(!executionReady){reason=\"executed signature evidence is missing\";}\nelse if(!executedAt&&!input.executed_agreement){reason=\"signature execution timestamp/evidence is incomplete\";}\nelse if(!priceProtected){reason=\"contract price is invalid or exceeds protected dynamic MAO\";}\nelse if(!sellerReady){reason=\"seller identity/evidence is incomplete\";}\nelse if(!closingDateReady){reason=\"closing date is missing\";}\nelse{status=\"transaction_ready\";nextWorkflow=\"WF-304\";human=true;reason=\"executed agreement validated and transaction is ready for closing coordination\";}\nconst idempotencyKey=input.idempotency_key||`wf-303:${dealId||\"unknown\"}:${executedAt||input.signature_event_id||input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-303\",workflow_name:\"Executed Signature → Transaction Readiness & Closing Launch Controller\",status,transaction_readiness:{execution_ready:executionReady,identity_ready:identityReady,price_protected:priceProtected,seller_ready:sellerReady,buyer_ready:buyerReady,closing_date_ready:closingDateReady,contract_price:Number.isFinite(contractPrice)?contractPrice:null,dynamic_mao:Number.isFinite(mao)?mao:null,closing_date:closingDate||null,executed_at:executedAt||null},next_workflow:nextWorkflow,human_review_required:human,audit:{event_type:\"transaction_readiness\",idempotency_key:idempotencyKey,reason}}}];"
+      },
+      "id": "wf303-controller",
+      "name": "WF-303 Transaction Readiness Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'transaction_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf303-if",
+      "name": "WF-303 Closing Launch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-303 transaction readiness',description:$json.audit.reason,metadata:{workflow:'WF-303',status:$json.status,transaction_readiness:$json.transaction_readiness,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf303-crm",
+      "name": "WF-303 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,transaction_readiness:$json.transaction_readiness,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf303-response",
+      "name": "WF-303 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-303 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-303 Transaction Readiness Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-303 Transaction Readiness Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-303 Closing Launch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-303 Closing Launch Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-303 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-303 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-303 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-303 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-303-v1"
+}

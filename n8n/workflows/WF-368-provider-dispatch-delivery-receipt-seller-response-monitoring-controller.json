@@ -1,0 +1,184 @@
+{
+  "name": "WF-368 — Provider Dispatch → Delivery Receipt / Seller Response Monitoring Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-368-provider-delivery-response-monitoring",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst dealId = input.deal_id ?? input.dealId;\nconst leadId = input.lead_id ?? input.leadId;\nconst propertyId = input.property_id ?? input.propertyId;\nconst providerMessageId = input.provider_message_id ?? input.providerMessageId;\nconst dispatchKey = input.provider_dispatch_idempotency_key ?? input.dispatch_idempotency_key ?? input.idempotency_key;\nconst status = String(input.provider_status ?? input.delivery_status ?? input.status ?? '').toLowerCase();\nconst channel = String(input.channel ?? '').toLowerCase();\nconst hasInboundResponse = Boolean(input.inbound_seller_response || input.seller_response || input.inbound_message);\nconst dnc = Boolean(input.dnc || input.do_not_contact || input.opted_out);\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\nconst attempts = Number(input.attempts ?? 0);\nconst maxAttempts = Number(input.max_attempts ?? 5);\nconst identityValid = Boolean(dealId && leadId && propertyId && providerMessageId && dispatchKey && channel);\nconst terminalFailure = ['failed','bounced','rejected','undeliverable'].includes(status);\nconst acceptedDelivery = ['accepted','sent','delivered'].includes(status);\nconst duplicateKey = dispatchKey && providerMessageId && status\n  ? `${dispatchKey}:delivery:${providerMessageId}:${status}`\n  : null;\nlet decision = 'monitor';\nlet route = 'WF-361';\nlet reason = 'Delivery receipt is valid and seller response monitoring should remain active.';\nif (dnc) { decision='hard_stop'; route='WF-126'; reason='DNC/opt-out is active; no further outbound communication is permitted.'; }\nelse if (blockers.length) { decision='blocked'; route='WF-126'; reason='Operational blockers prevent automated communication continuation.'; }\nelse if (!identityValid) { decision='reconcile'; route='WF-360'; reason='Required provider dispatch identity is missing; reconcile the dispatch record before proceeding.'; }\nelse if (hasInboundResponse) { decision='seller_response'; route='WF-342'; reason='Inbound seller response detected; route to AI response classification.'; }\nelse if (terminalFailure) { decision='delivery_failure'; route='WF-350'; reason='Provider delivery failed; route to controlled retry/re-engagement.'; }\nelse if (acceptedDelivery) { decision='monitor'; route='WF-361'; reason='Provider accepted/sent/delivered the message; activate seller response monitoring.'; }\nelse { decision='unknown_status'; route='WF-360'; reason='Provider status is not recognized; reconcile provider state before automated continuation.'; }\nconst result = {workflow:'WF-368',decision,route,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,provider_message_id:providerMessageId,provider_status:status,channel,attempts,max_attempts:maxAttempts,dnc,blockers,dispatch_idempotency_key:dispatchKey,delivery_idempotency_key:duplicateKey,duplicate_safe:Boolean(duplicateKey),identity_valid:identityValid,has_inbound_seller_response:hasInboundResponse,next_action:route==='WF-361'?'monitor_seller_response':route==='WF-342'?'classify_seller_response':route==='WF-350'?'controlled_retry_or_reengagement':route==='WF-126'?'human_control':'reconcile_provider_state',audit_event:'provider_delivery_receipt_seller_response_monitoring'};\nreturn [{json:result}];"
+      },
+      "name": "Delivery Receipt Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchWholeWord": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.decision}}",
+              "rightValue": "hard_stop",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "leftValue": "={{$json.decision}}",
+              "rightValue": "blocked",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Automation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({activity_type:'communication_delivery_receipt',deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,channel:$json.channel,provider_message_id:$json.provider_message_id,status:$json.provider_status,decision:$json.decision,route:$json.route,idempotency_key:$json.delivery_idempotency_key,metadata:{workflow:'WF-368',reason:$json.reason,attempts:$json.attempts,max_attempts:$json.max_attempts}})}}",
+        "options": {}
+      },
+      "name": "InsulaCRM Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({ok:true,workflow:'WF-368',decision:$json.decision,route:$json.route,reason:$json.reason,delivery_idempotency_key:$json.delivery_idempotency_key})}}",
+        "options": {}
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Delivery Receipt Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delivery Receipt Controller": {
+      "main": [
+        [
+          {
+            "node": "Automation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Automation Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM Audit": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-368-v1",
+  "meta": {
+    "workflow_id": "WF-368",
+    "purpose": "Provider dispatch delivery receipt and seller response monitoring controller",
+    "routes": {
+      "delivery_success": "WF-361",
+      "seller_response": "WF-342",
+      "delivery_failure": "WF-350",
+      "reconciliation": "WF-360",
+      "hard_stop_or_blocked": "WF-126"
+    },
+    "provider_agnostic": true,
+    "secrets_source": "n8n environment variables only"
+  }
+}

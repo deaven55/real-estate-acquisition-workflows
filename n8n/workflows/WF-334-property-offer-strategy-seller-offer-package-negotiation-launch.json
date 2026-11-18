@@ -1,0 +1,175 @@
+{
+  "name": "WF-334 — Property-Level Offer Strategy → Seller Offer Package & Negotiation Launch",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-334-seller-offer-package-negotiation-launch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf334-webhook",
+      "name": "Webhook — Acquisition Decision Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-334-seller-offer-package-negotiation-launch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };\n\nconst dealId = input.deal_id;\nconst leadId = input.lead_id;\nconst propertyId = input.property_id;\nconst decision = String(input.acquisition_decision ?? input.controller_status ?? \"\").toLowerCase();\nconst askingPrice = num(input.asking_price);\nconst adjustedMao = num(input.adjusted_mao ?? input.dynamic_mao);\nconst projectedProfit = num(input.projected_assignment_profit ?? input.projected_profit);\nconst motivation = String(input.motivation ?? \"\").toLowerCase();\nconst assetClass = String(input.asset_class ?? input.asset_type ?? \"residential_wholesale\").toLowerCase();\nconst preferredChannel = String(input.preferred_channel ?? input.channel ?? \"sms\").toLowerCase();\nconst sellerName = String(input.seller_name ?? input.first_name ?? \"there\").trim();\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\nconst dnc = input.dnc === true || input.do_not_contact === true;\n\nconst identityReady = Boolean(dealId && leadId && propertyId);\nconst validMao = adjustedMao !== null && adjustedMao >= 0;\nconst validAsking = askingPrice !== null && askingPrice >= 0;\nconst validProfit = projectedProfit !== null && projectedProfit > 0;\nconst decisionReady = decision === \"pursue\" || decision === \"negotiate\";\n\nlet openingOffer = null;\nlet negotiationTarget = null;\nlet strategy = \"standard_value_based\";\nif (motivation.includes(\"urgent\") || motivation.includes(\"distress\") || motivation.includes(\"high\")) strategy = \"speed_and_certainty\";\nif (assetClass.includes(\"land\")) strategy = \"land_exit_and_development_economics\";\nif (assetClass.includes(\"multi\") || assetClass.includes(\"apartment\")) strategy = \"cashflow_and_exit_economics\";\n\nif (validMao && validAsking && validProfit) {\n  if (decision === \"pursue\") {\n    openingOffer = Math.min(adjustedMao, askingPrice);\n    negotiationTarget = openingOffer;\n  } else {\n    const discountFactor = strategy === \"speed_and_certainty\" ? 0.93 : 0.90;\n    openingOffer = Math.min(adjustedMao, askingPrice * discountFactor);\n    negotiationTarget = Math.min(adjustedMao, Math.max(openingOffer, askingPrice * 0.97));\n  }\n  openingOffer = Math.round(openingOffer * 100) / 100;\n  negotiationTarget = Math.round(negotiationTarget * 100) / 100;\n}\n\nconst validOffer = openingOffer !== null && negotiationTarget !== null && openingOffer >= 0 && negotiationTarget >= openingOffer && negotiationTarget <= adjustedMao;\n\nlet status = \"offer_package_ready\";\nlet nextWorkflow = \"WF-335\";\nlet reason = \"Acquisition decision is supported and the seller offer package is within the dynamic MAO ceiling.\";\n\nif (!identityReady || !decisionReady || !validMao || !validAsking || !validProfit || !validOffer) {\n  status = \"incomplete\";\n  nextWorkflow = \"WF-333\";\n  reason = \"Acquisition decision, identity, economics, or offer inputs are incomplete/invalid.\";\n} else if (dnc || blockers.length > 0) {\n  status = \"blocked\";\n  nextWorkflow = \"WF-126\";\n  reason = \"DNC or active blockers prevent seller outreach.\";\n}\n\nconst sellerMessage = status === \"offer_package_ready\"\n  ? \\`Hi \\${sellerName}, I’m reviewing the property and would like to discuss an offer. I’m looking at around $\\${openingOffer.toLocaleString()} based on the property and current numbers. If that works for you, I can move quickly. Would you be open to talking about it?\\`\n  : \"\";\n\nreturn [{\n  json: {\n    ...input,\n    workflow_id: \"WF-334\",\n    controller_status: status,\n    offer_package_status: status,\n    deal_id: dealId,\n    lead_id: leadId,\n    property_id: propertyId,\n    acquisition_decision: decision,\n    asset_class: assetClass,\n    negotiation_strategy: strategy,\n    asking_price: askingPrice,\n    adjusted_mao: adjustedMao,\n    opening_offer: openingOffer,\n    negotiation_target: negotiationTarget,\n    projected_assignment_profit: projectedProfit,\n    preferred_channel: preferredChannel === \"email\" ? \"email\" : \"sms\",\n    seller_message: sellerMessage,\n    seller_review_required: true,\n    hard_mao_guardrail: true,\n    rule_70_percent: \"secondary_reference_only\",\n    reason,\n    next_workflow: nextWorkflow,\n    requires_human_review: status === \"offer_package_ready\" || status === \"blocked\",\n    idempotency_key: input.idempotency_key ?? \\`wf-334:\\${dealId ?? \"unknown\"}:\\${propertyId ?? \"unknown\"}:\\${openingOffer ?? \"unknown\"}\\`\n  }\n}];"
+      },
+      "id": "wf334-controller",
+      "name": "Code — Seller Offer Package Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.controller_status }}",
+              "rightValue": "offer_package_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf334-gate",
+      "name": "IF — Offer Package Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL }}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({ activity_type: 'seller_offer_package', lead_id: $json.lead_id, property_id: $json.property_id, deal_id: $json.deal_id, status: $json.controller_status, acquisition_decision: $json.acquisition_decision, asset_class: $json.asset_class, negotiation_strategy: $json.negotiation_strategy, asking_price: $json.asking_price, adjusted_mao: $json.adjusted_mao, opening_offer: $json.opening_offer, negotiation_target: $json.negotiation_target, projected_assignment_profit: $json.projected_assignment_profit, preferred_channel: $json.preferred_channel, seller_message: $json.seller_message, seller_review_required: $json.seller_review_required, hard_mao_guardrail: $json.hard_mao_guardrail, rule_70_percent: $json.rule_70_percent, reason: $json.reason, idempotency_key: $json.idempotency_key }) }}",
+        "options": {}
+      },
+      "id": "wf334-crm",
+      "name": "HTTP — InsulaCRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ workflow_id: 'WF-334', status: $json.controller_status ?? 'incomplete', next_workflow: $json.next_workflow ?? 'WF-333', deal_id: $json.deal_id, lead_id: $json.lead_id, property_id: $json.property_id, opening_offer: $json.opening_offer, negotiation_target: $json.negotiation_target, adjusted_mao: $json.adjusted_mao, preferred_channel: $json.preferred_channel, seller_review_required: $json.seller_review_required === true, requires_human_review: $json.requires_human_review === true, crm_activity_persisted: true }) }}",
+        "options": {}
+      },
+      "id": "wf334-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Acquisition Decision Input": {
+      "main": [
+        [
+          {
+            "node": "Code — Seller Offer Package Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Seller Offer Package Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Offer Package Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Offer Package Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — InsulaCRM Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-334-v1",
+  "meta": {
+    "workflow_id": "WF-334",
+    "safety": "seller review required before outreach; opening offer and negotiation target cannot exceed dynamic MAO; 70% rule secondary"
+  }
+}

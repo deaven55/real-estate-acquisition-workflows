@@ -1,0 +1,216 @@
+{
+  "name": "WF-320 — Negotiation Outcome → Contract Trigger / Rejection / Re-engagement Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-320-contract-trigger-reengagement",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf320-webhook",
+      "name": "Webhook — Negotiation Outcome",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst outcome=String(input.outcome??input.negotiation_outcome??input.status??'').toLowerCase();\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao??0);\nconst amount=Number(input.counteroffer_amount??input.contract_price??input.offer_price??0);\nconst dnc=input.dnc===true||outcome==='blocked_dnc';\nconst within=mao>0&&amount>0&&amount<=mao;\nlet route='needs_review',next='WF-126',reason='negotiation outcome requires review';\nif(dnc){route='blocked_dnc';next='WF-126';reason='DNC/contact restriction';}\nelse if(outcome==='contract_decision_ready'||outcome==='accept_counteroffer'||outcome==='accept_offer'){\n  if(mao>0&&amount>mao){route='blocked_above_mao';next='WF-126';reason='contract price exceeds protected dynamic MAO';}\n  else {route='contract_trigger';next='WF-321';reason='seller agreement is contract-ready within protected MAO';}\n}\nelse if(outcome==='revised_offer'){route='revised_offer_followup';next='WF-315';reason='controlled revised offer required';}\nelse if(outcome==='walk_away_or_reengage'||outcome==='reengage'||outcome==='rejected'||outcome==='timeout_followup'){route='rejection_reengagement';next='WF-321';reason='seller is not currently contract-ready';}\nelse if(outcome==='clarification_response'){route='clarification_followup';next='WF-315';reason='seller clarification required before final decision';}\nreturn [{json:{...input,workflow_id:'WF-320',workflow_name:'Negotiation Outcome → Contract Trigger / Rejection / Re-engagement Controller',route,reason,dynamic_mao:mao,proposed_contract_price:amount||null,mao_protected:mao>0,within_mao:within,next_workflow:next,human_review_required:['contract_trigger','blocked_above_mao','rejection_reengagement'].includes(route),crm_activity:{activity_type:'negotiation_route',deal_id:input.deal_id,lead_id:input.lead_id,property_id:input.property_id,status:route,contract_price:amount||null,reason}}}];"
+      },
+      "id": "wf320-controller",
+      "name": "Controller — Contract / Re-engagement Route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "dnc-gate",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "blocked_dnc",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "identity-gate",
+              "leftValue": "={{ $json.deal_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf320-gate",
+      "name": "IF — Contract / Re-engagement Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "contract_price",
+              "value": "={{ $json.crm_activity.contract_price }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf320-crm",
+      "name": "InsulaCRM — Negotiation Route Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, route: $json.route, reason: $json.reason, dynamic_mao: $json.dynamic_mao, proposed_contract_price: $json.proposed_contract_price, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf320-response",
+      "name": "Response — Contract / Re-engagement Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Negotiation Outcome": {
+      "main": [
+        [
+          {
+            "node": "Controller — Contract / Re-engagement Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Contract / Re-engagement Route": {
+      "main": [
+        [
+          {
+            "node": "IF — Contract / Re-engagement Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Contract / Re-engagement Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Negotiation Route Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Negotiation Route Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Negotiation Route Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Contract / Re-engagement Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-320-v1",
+  "meta": {
+    "workflow_id": "WF-320",
+    "description": "Converts negotiation outcomes into contract triggers, revised-offer follow-up, rejection/re-engagement, or controlled escalation while enforcing dynamic MAO protection.",
+    "safety": {
+      "dnc_protection": true,
+      "dynamic_mao_protection": true,
+      "human_review_for_contract_and_reengagement": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

@@ -1,0 +1,184 @@
+{
+  "name": "WF-350 — Delivery Failure / No Response → Controlled Retry & Re-engagement Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-350-delivery-failure-retry-reengagement-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf350-webhook",
+      "name": "WF-350 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-350-delivery-failure-retry-reengagement-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst dealId=input.deal_id??null; const leadId=input.lead_id??null; const propertyId=input.property_id??null;\nconst route=String(input.route??'').toLowerCase(); const deliveryStatus=String(input.delivery_status??input.status??'').toLowerCase();\nconst attempts=Number(input.reengagement_attempts??input.attempts??0); const maxAttempts=Number(input.max_reengagement_attempts??3);\nconst dnc=Boolean(input.dnc??input.do_not_contact??false); const blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst idempotencyKey=String(input.idempotency_key??'').trim(); const providerMessageId=String(input.provider_message_id??'').trim();\nconst phone=String(input.recipient_phone??input.seller_phone??'').trim(); const email=String(input.recipient_email??input.seller_email??'').trim();\nconst sellerResponse=String(input.seller_response??input.inbound_message??'').trim();\nlet status='needs_review'; let action='review'; let nextWorkflow='WF-349'; let retryChannel=''; let reason='Delivery outcome requires review.';\nif(dnc){status='dnc_blocked';action='stop';nextWorkflow='WF-126';reason='DNC protection prevents retry or re-engagement.';}\nelse if(blockers.length){status='blocked';action='stop';nextWorkflow='WF-126';reason='Active blocker prevents retry or re-engagement.';}\nelse if(sellerResponse){status='seller_response_received';action='route_response';nextWorkflow='WF-342';reason='Seller response takes priority over retry logic.';}\nelse if(!dealId||!leadId||!propertyId||!idempotencyKey){status='incomplete';action='repair_data';nextWorkflow='WF-349';reason='Required deal identity or idempotency data is missing.';}\nelse if(['failed','undelivered','rejected','bounced'].includes(deliveryStatus)){\n  if(attempts>=maxAttempts){status='max_attempts_reached';action='pause';nextWorkflow='WF-126';reason='Maximum provider retry/re-engagement attempts reached.';}\n  else if(phone){status='retry_ready';action='retry';retryChannel='sms';nextWorkflow='WF-347';reason='Delivery failure permits one controlled retry using the available SMS channel.';}\n  else if(email){status='retry_ready';action='retry';retryChannel='email';nextWorkflow='WF-347';reason='Delivery failure permits one controlled retry using the available email channel.';}\n  else{status='recipient_unavailable';action='human_review';nextWorkflow='WF-126';reason='No usable seller contact channel remains.';}\n}\nelse if(route==='delivered_waiting_response'){status='awaiting_response';action='wait';nextWorkflow='WF-351';reason='Delivery succeeded; do not send duplicate outreach before timeout/cadence gate.';}\nelse{status='needs_review';action='review';nextWorkflow='WF-349';reason='Delivery event does not authorize autonomous retry.';}\nconst retryIdempotencyKey=idempotencyKey? idempotencyKey+':retry:'+String(attempts+1):null;\nconst activity={activity_type:'delivery_failure_retry_controller',subject:'WF-350 '+(dealId??'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,status,action,retry_channel:retryChannel,reengagement_attempts:attempts,max_reengagement_attempts:maxAttempts,provider_message_id:providerMessageId,idempotency_key:idempotencyKey,retry_idempotency_key:retryIdempotencyKey,delivery_status:deliveryStatus,dnc,blockers,reason,next_workflow:nextWorkflow};\nreturn [{json:{...input,wf_id:'WF-350',status,action,retry_channel:retryChannel,retry_idempotency_key:retryIdempotencyKey,next_workflow:nextWorkflow,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf350-controller",
+      "name": "WF-350 Retry & Re-engagement Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "retry",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "retry_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "response",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "seller_response_received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf350-gate",
+      "name": "Retry / Response Safety Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf350-crm",
+      "name": "Persist WF-350 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf350-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-350 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-350 Retry & Re-engagement Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-350 Retry & Re-engagement Controller": {
+      "main": [
+        [
+          {
+            "node": "Retry / Response Safety Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry / Response Safety Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-350 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-350 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-350 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf350-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

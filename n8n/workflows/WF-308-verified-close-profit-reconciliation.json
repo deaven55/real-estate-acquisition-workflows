@@ -1,0 +1,158 @@
+{
+  "name": "WF-308 — Final Closing Outcome → Verified Close & Profit Reconciliation Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-308-verified-close-profit-reconciliation",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf308-webhook",
+      "name": "WF-308 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-308-verified-close-profit-reconciliation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst closingStatus=String(input.closing_status??input.close_status??\"\").toLowerCase();\nconst fundingStatus=String(input.funding_status??\"\").toLowerCase();\nconst titleStatus=String(input.title_status??\"\").toLowerCase();\nconst closeDate=String(input.actual_closing_date??input.closing_date??\"\").trim();\nconst gross=Number(input.gross_profit??input.assignment_fee??input.gross_assignment_profit);\nconst costs=Number(input.closing_costs??input.total_closing_costs??0);\nconst net=Number(input.net_profit??(Number.isFinite(gross)&&Number.isFinite(costs)?gross-costs:NaN));\nconst identityReady=Boolean(input.deal_id&&input.lead_id&&input.property_id);\nconst closed=Boolean([\"closed\",\"funded\",\"completed\"].includes(closingStatus)||input.closed===true||input.verified_close===true);\nconst fundingReady=[\"funded\",\"complete\",\"completed\",\"cleared\"].includes(fundingStatus)||input.funding_verified===true;\nconst titleReady=[\"cleared\",\"complete\",\"completed\"].includes(titleStatus)||input.title_verified===true;\nconst profitValid=Number.isFinite(gross)&&Number.isFinite(costs)&&Number.isFinite(net);\nlet status=\"blocked\",nextWorkflow=\"WF-126\",reason=\"\";\nif(blockers.length){reason=\"active closing blockers remain\";}\nelse if(!identityReady){status=\"identity_incomplete\";reason=\"deal/lead/property identity is incomplete\";}\nelse if(!closed){status=\"close_not_verified\";nextWorkflow=\"WF-307\";reason=\"closing outcome is not yet verified\";}\nelse if(!closeDate){status=\"closing_date_missing\";nextWorkflow=\"WF-307\";reason=\"actual closing date is missing\";}\nelse if(!fundingReady||!titleReady){status=\"closing_evidence_incomplete\";nextWorkflow=\"WF-307\";reason=\"funding and/or title verification is incomplete\";}\nelse if(!profitValid){status=\"profit_inputs_invalid\";reason=\"gross profit, closing costs, or net profit inputs are invalid\";}\nelse{status=\"verified_close\";nextWorkflow=\"WF-309\";reason=\"close, title, funding, and profit inputs are verified\";}\nconst idempotencyKey=input.idempotency_key||`wf-308:${input.deal_id||\"unknown\"}:${closeDate||input.close_event_id||input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-308\",workflow_name:\"Final Closing Outcome → Verified Close & Profit Reconciliation Controller\",status,verified_close:{identity_ready:identityReady,close_verified:closed,actual_closing_date:closeDate||null,funding_verified:fundingReady,title_verified:titleReady,gross_profit:Number.isFinite(gross)?gross:null,closing_costs:Number.isFinite(costs)?costs:null,net_profit:Number.isFinite(net)?net:null,profit_valid:profitValid,blockers},next_workflow:nextWorkflow,human_review_required:status!==\"verified_close\",audit:{event_type:\"verified_close_profit_reconciliation\",idempotency_key:idempotencyKey,reason}}}];"
+      },
+      "id": "wf308-controller",
+      "name": "WF-308 Verified Close Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'verified_close'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf308-if",
+      "name": "WF-308 Verified Close Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-308 verified close and profit reconciliation',description:$json.audit.reason,metadata:{workflow:'WF-308',status:$json.status,verified_close:$json.verified_close,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf308-crm",
+      "name": "WF-308 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,verified_close:$json.verified_close,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf308-response",
+      "name": "WF-308 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-308 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-308 Verified Close Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-308 Verified Close Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-308 Verified Close Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-308 Verified Close Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-308 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-308 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-308 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-308 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-308-v1"
+}

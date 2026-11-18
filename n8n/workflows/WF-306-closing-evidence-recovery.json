@@ -1,0 +1,158 @@
+{
+  "name": "WF-306 — Milestone Exception → Closing Evidence/Reconciliation & Recovery Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-306-closing-evidence-recovery",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf306-webhook",
+      "name": "WF-306 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-306-closing-evidence-recovery"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst required=Array.isArray(input.required_evidence)?input.required_evidence:[];\nconst verified=Array.isArray(input.verified_evidence)?input.verified_evidence:[];\nconst failed=Array.isArray(input.failed_evidence)?input.failed_evidence:[];\nconst milestones=Array.isArray(input.milestones)?input.milestones:[];\nconst verifiedSet=new Set(verified.map(v=>String(typeof v===\"string\"?v:v.type||v.name||\"\").toLowerCase()).filter(Boolean));\nconst missing=required.filter(v=>!verifiedSet.has(String(typeof v===\"string\"?v:v.type||v.name||\"\").toLowerCase()));\nconst incomplete=milestones.filter(m=>![\"completed\",\"complete\",\"done\"].includes(String(m.status||\"\").toLowerCase()));\nconst criticalOverdue=milestones.filter(m=>m.critical===true&&(m.status===\"overdue\"||m.overdue===true));\nlet status=\"blocked\",nextWorkflow=\"WF-126\",reason=\"\";\nif(blockers.length){status=\"blocked\";reason=\"active closing blockers remain\";}\nelse if(failed.length){status=\"recovery_required\";nextWorkflow=\"WF-307\";reason=\"closing evidence has failed items requiring recovery\";}\nelse if(criticalOverdue.length){status=\"recovery_required\";nextWorkflow=\"WF-307\";reason=\"critical milestone exception requires recovery routing\";}\nelse if(missing.length){status=\"evidence_gap\";nextWorkflow=\"WF-307\";reason=\"required closing evidence is missing\";}\nelse if(incomplete.length){status=\"incomplete\";nextWorkflow=\"WF-305\";reason=\"closing milestones remain incomplete\";}\nelse{status=\"reconciled\";nextWorkflow=\"WF-307\";reason=\"required evidence and closing milestones reconcile successfully\";}\nconst idempotencyKey=input.idempotency_key||`wf-306:${input.deal_id||\"unknown\"}:${input.evidence_version||input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-306\",workflow_name:\"Milestone Exception → Closing Evidence/Reconciliation & Recovery Controller\",status,closing_evidence:{required_count:required.length,verified_count:verified.length,missing,failed_count:failed.length,incomplete_milestone_count:incomplete.length,critical_overdue_count:criticalOverdue.length,blockers},next_workflow:nextWorkflow,human_review_required:status!==\"reconciled\",audit:{event_type:\"closing_evidence_reconciliation\",idempotency_key:idempotencyKey,reason}}}];"
+      },
+      "id": "wf306-controller",
+      "name": "WF-306 Evidence Recovery Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['reconciled','recovery_required','evidence_gap'].includes($json.status)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf306-if",
+      "name": "WF-306 Evidence Recovery Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-306 closing evidence reconciliation',description:$json.audit.reason,metadata:{workflow:'WF-306',status:$json.status,closing_evidence:$json.closing_evidence,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf306-crm",
+      "name": "WF-306 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,closing_evidence:$json.closing_evidence,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf306-response",
+      "name": "WF-306 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-306 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-306 Evidence Recovery Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-306 Evidence Recovery Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-306 Evidence Recovery Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-306 Evidence Recovery Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-306 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-306 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-306 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-306 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-306-v1"
+}

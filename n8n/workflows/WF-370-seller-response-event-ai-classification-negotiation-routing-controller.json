@@ -1,0 +1,177 @@
+{
+  "name": "WF-370 — Seller Response Event → AI Classification & Negotiation Routing Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-370-seller-response-ai-classification-routing",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst dealId=input.deal_id??input.dealId,leadId=input.lead_id??input.leadId,propertyId=input.property_id??input.propertyId;\nconst response=String(input.response_text??input.seller_response??input.inbound_seller_response??input.inbound_message??'').trim();\nconst dnc=Boolean(input.dnc||input.do_not_contact||input.opted_out);\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst classificationKey=input.event_idempotency_key??input.classification_idempotency_key??input.idempotency_key;\nconst lower=response.toLowerCase();\nlet classification='neutral',route='WF-343',reason='Seller response requires normal negotiation handling.';\nif(!response){classification='missing_response';route='WF-360';reason='No seller response text was supplied; reconcile the inbound event.'}\nelse if(/stop|remove me|do not contact|dont contact|don't contact|unsubscribe|wrong number/i.test(lower)){classification='opt_out';route='WF-126';reason='Seller explicitly requested no further contact.'}\nelse if(/yes|interested|sounds good|deal|let'?s do it|accept|accepted|okay with that/i.test(lower)){classification='positive';route='WF-343';reason='Positive seller response; continue negotiation decision flow.'}\nelse if(/\\$\\s?\\d|price|offer|counter|would take|need to get/i.test(lower)){classification='counteroffer';route='WF-343';reason='Price/offer language detected; route to negotiation decision.'}\nelse if(/call me|call|phone|talk/i.test(lower)){classification='call_request';route='WF-343';reason='Seller requested a call; negotiation flow should prepare the next action.'}\nelse if(/no|not interested|pass|decline|declined|too low/i.test(lower)){classification='rejection';route='WF-345';reason='Seller rejection detected; route to controlled re-engagement.'}\nelse if(/how|what|when|where|why|can you|tell me/i.test(lower)){classification='question';route='WF-343';reason='Seller question detected; route to negotiation response handling.'}\nif(dnc){classification='opt_out';route='WF-126';reason='DNC/opt-out state overrides automated negotiation.'}\nelse if(blockers.length){classification='blocked';route='WF-126';reason='Operational blockers require controlled human handling.'}\nconst valid=Boolean(dealId&&leadId&&propertyId&&classificationKey);\nconst eventKey=classificationKey?\\`${classificationKey}:ai-classification:${classification}\\`:null;\nif(!valid&&classification!=='opt_out'&&classification!=='blocked'){classification='reconcile';route='WF-360';reason='Required identity/idempotency fields are missing.'}\nreturn [{json:{workflow:'WF-370',classification,route,reason,response_text:response,deal_id:dealId,lead_id:leadId,property_id:propertyId,classification_idempotency_key:eventKey,source_event_idempotency_key:classificationKey,dnc,blockers,identity_valid:valid,next_action:route==='WF-343'?'negotiation_decision':route==='WF-345'?'controlled_reengagement':route==='WF-126'?'human_control':'reconcile_inbound_event',audit_event:'ai_seller_response_classification'}}];"
+      },
+      "name": "AI Classification Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchWholeWord": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.decision ?? $json.classification}}",
+              "rightValue": "blocked",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "leftValue": "={{$json.classification}}",
+              "rightValue": "opt_out",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Automation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({activity_type:'ai_seller_response_classification',deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,classification:$json.classification,response_text:$json.response_text,route:$json.route,idempotency_key:$json.classification_idempotency_key,metadata:{workflow:'WF-370',reason:$json.reason}})}}",
+        "options": {}
+      },
+      "name": "InsulaCRM Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({ok:true,workflow:'WF-370',classification:$json.classification,route:$json.route,reason:$json.reason,classification_idempotency_key:$json.classification_idempotency_key})}}",
+        "options": {}
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Classification Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Classification Controller": {
+      "main": [
+        [
+          {
+            "node": "Automation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Automation Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM Audit": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-370-v1",
+  "meta": {
+    "workflow_id": "WF-370",
+    "purpose": "Classify inbound seller response and route negotiation/re-engagement safely",
+    "provider_agnostic": true,
+    "secrets_source": "n8n environment variables only"
+  }
+}

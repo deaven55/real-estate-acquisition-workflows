@@ -1,0 +1,194 @@
+{
+  "name": "WF-339 — Negotiation Decision → Revised Offer / Contract Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-339-negotiation-decision-contract-decision",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf339-webhook",
+      "name": "WF-339 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-339-negotiation-decision-contract-decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json ?? {};\nconst negotiationDecision = String(input.negotiation_decision ?? input.decision ?? '').toLowerCase();\nconst controllerStatus = String(input.controller_status ?? input.status ?? '').toLowerCase();\nconst dealId = input.deal_id ?? null;\nconst leadId = input.lead_id ?? null;\nconst propertyId = input.property_id ?? null;\nconst dynamicMao = Number(input.dynamic_mao ?? input.adjusted_mao ?? input.mao);\nconst counteroffer = input.counteroffer_amount == null ? null : Number(input.counteroffer_amount);\nconst seller = input.seller ?? {};\nconst dnc = Boolean(input.dnc ?? input.do_not_contact ?? false);\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\nconst assetType = String(input.asset_type ?? input.property_type ?? 'residential').toLowerCase();\nconst projectedProfit = Number(input.projected_assignment_profit ?? input.projected_profit ?? 0);\nconst sellerName = String(seller.name ?? input.seller_name ?? '').trim();\nconst sellerPhone = String(seller.phone ?? input.seller_phone ?? '').trim();\nconst sellerEmail = String(seller.email ?? input.seller_email ?? '').trim();\nconst identityComplete = Boolean(dealId && leadId && propertyId);\nconst sellerContactComplete = Boolean(sellerPhone || sellerEmail);\nconst maoValid = Number.isFinite(dynamicMao) && dynamicMao > 0;\nconst counterofferValid = counteroffer == null || (Number.isFinite(counteroffer) && counteroffer > 0);\nconst hardBlock = dnc || blockers.length > 0;\nlet decision = 'needs_review'; let nextWorkflow = 'WF-126'; let reason = 'Incomplete or blocked negotiation decision.'; let contractReady = false; let revisedOffer = false; let reengagement = false;\nif (hardBlock) { decision = dnc ? 'dnc_blocked' : 'blocked'; reason = dnc ? 'Seller is on DNC; no outbound action permitted.' : 'Active blocker prevents negotiation action.'; }\nelse if (!identityComplete || !sellerContactComplete || !maoValid || !counterofferValid) { decision = 'incomplete'; reason = 'Required deal, seller, MAO, or counteroffer data is missing/invalid.'; nextWorkflow = 'WF-338'; }\nelse if (['accepted','acceptance_ready','accepted_offer'].includes(negotiationDecision)) { decision = 'contract_decision_ready'; contractReady = true; nextWorkflow = 'WF-201'; reason = 'Seller acceptance is within the controlled negotiation state; contract launch remains human-review gated.'; }\nelse if (['counteroffer','counteroffer_received'].includes(negotiationDecision) && counteroffer != null) {\n  if (counteroffer > dynamicMao) { decision = 'above_mao_revised_offer_or_walk_away'; revisedOffer = true; nextWorkflow = 'WF-255'; reason = 'Counteroffer exceeds dynamic MAO; autonomous acceptance is prohibited.'; }\n  else if (counteroffer >= dynamicMao * 0.95) { decision = 'near_mao_controlled_review'; revisedOffer = true; nextWorkflow = 'WF-255'; reason = 'Counteroffer is at or above 95% of dynamic MAO; controlled human review required.'; }\n  else { decision = 'accept_counteroffer_contract_review'; contractReady = true; nextWorkflow = 'WF-201'; reason = 'Counteroffer is below dynamic MAO and economically acceptable for contract review.'; }\n}\nelse if (['rejected','declined'].includes(negotiationDecision)) { decision = 'rejection_reengagement'; reengagement = true; nextWorkflow = 'WF-261'; reason = 'Seller rejected the current position; route to controlled re-engagement.'; }\nelse if (['question','clarification','price_question'].includes(negotiationDecision)) { decision = 'clarification_response'; revisedOffer = true; nextWorkflow = 'WF-255'; reason = 'Seller needs clarification or pricing response before contract decision.'; }\nelse if (['timeout','no_response'].includes(negotiationDecision)) { decision = 'timeout_reengagement'; reengagement = true; nextWorkflow = 'WF-261'; reason = 'No seller response; route to controlled re-engagement.'; }\nelse { decision = 'needs_review'; nextWorkflow = 'WF-338'; reason = 'Negotiation decision is not recognized.'; }\nconst assetStrategy = { residential:'Residential wholesale economics; 70% rule is secondary reference only.', multifamily:'Multifamily economics; prioritize NOI, cap-rate/value evidence, debt/exit constraints and buyer demand.', land:'Land economics; prioritize land comps, zoning, utilities, access, topography, flood risk and development potential.', commercial:'Commercial economics; prioritize income/value evidence, tenant/lease factors, financing and exit demand.' }[assetType] ?? 'Asset-specific economics required; 70% rule is secondary reference only.';\nconst activity = { activity_type:'negotiation_decision_revised_offer_contract_controller', subject:'WF-339 ' + (dealId ?? 'unknown-deal'), deal_id:dealId, lead_id:leadId, property_id:propertyId, status:decision, decision, next_workflow:nextWorkflow, contract_ready:contractReady, revised_offer:revisedOffer, reengagement, dynamic_mao:dynamicMao, counteroffer_amount:counteroffer, seller_name:sellerName, seller_phone:sellerPhone, seller_email:sellerEmail, asset_type:assetType, asset_strategy:assetStrategy, projected_assignment_profit:projectedProfit, human_review_required:true, reason, hard_mao_guardrail:true, dnc, blockers };\nreturn [{json:{...input,wf_id:'WF-339',controller_status:controllerStatus || 'evaluated',negotiation_decision:negotiationDecision,decision,next_workflow:nextWorkflow,contract_ready:contractReady,revised_offer:revisedOffer,reengagement,dynamic_mao:dynamicMao,counteroffer_amount:counteroffer,asset_type:assetType,asset_strategy:assetStrategy,human_review_required:true,hard_mao_guardrail:true,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf339-controller",
+      "name": "WF-339 Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "contract-ready",
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "contract_decision_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "accept-counter",
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "accept_counteroffer_contract_review",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf339-gate",
+      "name": "Contract / Revised Offer Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf339-crm",
+      "name": "Persist Negotiation Decision Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf339-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-339 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-339 Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-339 Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "Contract / Revised Offer Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contract / Revised Offer Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Negotiation Decision Activity",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Negotiation Decision Activity",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Negotiation Decision Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf339-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

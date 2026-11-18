@@ -1,0 +1,171 @@
+{
+  "name": "WF-170 Executed Agreement → Transaction Readiness Package & Closing Launch",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-170-transaction-readiness-closing-launch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "170-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-170-transaction-readiness-closing-launch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??{}; const contract=input.contract??{}; const transaction=input.transaction??{}; const identity=Boolean(deal.property_id??input.property_id)&&Boolean(deal.lead_id??input.lead_id); const executed=String(contract.execution_state??input.execution_state??'').toLowerCase()==='executed'; const evidence=Boolean(contract.signed_evidence??input.signed_evidence); const price=Number(contract.agreed_price??input.agreed_price??deal.agreed_price??0); const mao=Number(contract.effective_mao??input.effective_mao??deal.effective_mao??0); const type=String(contract.agreement_type??input.agreement_type??deal.agreement_type??'').toLowerCase(); const docs=Array.isArray(transaction.required_documents)?transaction.required_documents:[]; const supplied=Array.isArray(transaction.supplied_documents)?transaction.supplied_documents:[]; const missing=docs.filter(d=>!supplied.includes(d)); const blockers=Array.isArray(transaction.blockers)?transaction.blockers:[]; const criticalDate=transaction.closing_date??transaction.critical_closing_date??input.closing_date??null; let status='transaction_readiness_blocked',next='human_review',reason=''; if(!identity)reason='seller_property_identity_required'; else if(!executed||!evidence)reason='executed_agreement_and_signed_evidence_required'; else if(!price)reason='agreed_price_required'; else if(mao&&price>mao)reason='executed_price_exceeds_mao'; else if(!['assignment','novation','double_close'].includes(type))reason='agreement_type_required'; else if(missing.length)reason='required_transaction_documents_missing'; else if(blockers.length)reason='transaction_blockers_present'; else if(!criticalDate)reason='critical_closing_date_required'; else {status='transaction_readiness_ready';next='WF-126 closing coordination & critical date controller';reason='transaction_package_validated';} return [{json:{workflow_id:'WF-170',status,reason,deal_id:deal.id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,contract:{agreement_type:type,execution_state:executed?'executed':'not_executed',signed_evidence_present:evidence,agreed_price:price,effective_mao:mao},transaction:{readiness_state:status==='transaction_readiness_ready'?'ready_for_closing_coordination':'blocked',required_documents:docs,supplied_documents:supplied,missing_documents:missing,blockers,critical_closing_date:criticalDate,closing_package_state:status==='transaction_readiness_ready'?'ready':'blocked'},routing:{next_route:next},safety:{executed_agreement_required:true,signed_evidence_required:true,price_must_not_exceed_mao:true,identity_required:true,blockers_prevent_closing_launch:true,human_review_for_exceptions:true},crm_activity:{event_type:'transaction_readiness_closing_launch',outcome:status,deal_id:deal.id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null},idempotency_key:'wf-170:transaction-readiness:'+(input.event_id??deal.id??input.deal_id??'unknown')}}}];"
+      },
+      "id": "170-controller",
+      "name": "Validate Transaction Readiness Package",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "transaction_readiness_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "170-ready",
+      "name": "Transaction Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,contract:$json.contract,transaction:$json.transaction,routing:$json.routing,safety:$json.safety,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "170-crm",
+      "name": "Persist Transaction Readiness Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Validate Transaction Readiness Package').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,reason:original.reason,next_route:original.routing.next_route}}}];"
+      },
+      "id": "170-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Transaction Readiness Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Transaction Readiness Package": {
+      "main": [
+        [
+          {
+            "node": "Transaction Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transaction Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Transaction Readiness Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Transaction Readiness Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Transaction Readiness Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-170-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

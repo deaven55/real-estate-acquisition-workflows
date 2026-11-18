@@ -1,0 +1,172 @@
+{
+  "name": "WF-198 — Seller Response → Negotiation Follow-Up / Acceptance / Rejection Decision",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-198-seller-response-negotiation-follow-up-decision",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Seller Response Classification",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-198-seller-response-negotiation-follow-up-decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const c=String(x.seller_response_classification?.classification??x.classification??'').toLowerCase();const counter=Number(x.seller_response_classification?.counteroffer_amount??x.counteroffer_amount??0);const original=Number(x.offer_price??x.seller_offer_package?.package?.offer_price??0);const mao=Number(x.dynamic_strategy?.adjusted_mao??x.adjusted_mao??x.mao??0);let decision='follow_up';if(c==='accepted')decision='acceptance_ready';else if(c==='rejected')decision='rejection_follow_up';else if(c==='counteroffer'){if(counter>0&&mao>0&&counter<=mao)decision='counteroffer_within_mao';else if(counter>0&&mao>0&&counter<=mao*1.05)decision='counteroffer_near_mao';else decision='counteroffer_above_mao';}else if(c==='question'||c==='other_response')decision='clarification_follow_up';else if(c==='no_response')decision='timeout_follow_up';const route={acceptance_ready:'WF-199',counteroffer_within_mao:'WF-199',counteroffer_near_mao:'WF-200',counteroffer_above_mao:'WF-200',rejection_follow_up:'WF-200',clarification_follow_up:'WF-200',timeout_follow_up:'WF-200',follow_up:'WF-200'}[decision]??'WF-200';const review=['counteroffer_near_mao','counteroffer_above_mao','acceptance_ready'].includes(decision);return[{json:{...x,workflow:'WF-198',negotiation_follow_up_decision:{decision,classification:c||'unknown',original_offer:original||null,counteroffer_amount:counter||null,adjusted_mao:mao||null,mao_delta:counter&&mao?counter-mao:null},routing:{next_workflow:route,requires_human_review:review},audit:{event:'seller_response_negotiation_follow_up_decision',status:decision}}}];"
+      },
+      "name": "Code — Negotiation Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "accept",
+              "leftValue": "={{$json.negotiation_follow_up_decision.decision}}",
+              "rightValue": "acceptance_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "within",
+              "leftValue": "={{$json.negotiation_follow_up_decision.decision}}",
+              "rightValue": "counteroffer_within_mao",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "name": "IF — Negotiation Action Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-198:'+($json.deal_id||$json.property_id||'unknown')+':negotiation-decision',external_source:'wholesale-os',activity_type:'seller_response_negotiation_follow_up_decision',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.negotiation_follow_up_decision?.decision||'unknown',notes:JSON.stringify({workflow:'WF-198',negotiation_follow_up_decision:$json.negotiation_follow_up_decision,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Negotiation Decision Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-198',decision:$json.negotiation_follow_up_decision?.decision??'unknown',next_workflow:$json.routing?.next_workflow??'WF-200',requires_human_review:Boolean($json.routing?.requires_human_review),negotiation_follow_up_decision:$json.negotiation_follow_up_decision??null}}}];"
+      },
+      "name": "Code — Negotiation Decision Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Seller Response Classification": {
+      "main": [
+        [
+          {
+            "node": "Code — Negotiation Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Negotiation Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Negotiation Action Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Negotiation Action Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Negotiation Decision Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Negotiation Decision Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Negotiation Decision Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Negotiation Decision Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-198-v1"
+}

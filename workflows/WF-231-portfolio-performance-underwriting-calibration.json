@@ -1,0 +1,165 @@
+{
+  "name": "WF-231 — Portfolio Performance → Underwriting Calibration & Dynamic Strategy Feedback",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-231-underwriting-calibration",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const net=Number(d.net_profit??NaN),margin=Number(d.profit_margin??NaN),sample=Number(d.historical_sample_size??d.sample_size??0),netDelta=Number(d.net_profit_delta??NaN),marginDelta=Number(d.profit_margin_delta??NaN);let confidence=sample>=20?\"high\":sample>=10?\"medium\":\"low\";let factor=1;let signal=\"hold_strategy\";if(confidence===\"high\"){if((Number.isFinite(marginDelta)&&marginDelta<-.10)||(Number.isFinite(netDelta)&&netDelta<0)){factor=.95;signal=\"tighten_mao_strategy\";}else if(Number.isFinite(marginDelta)&&marginDelta>.10&&Number.isFinite(netDelta)&&netDelta>0){factor=1.03;signal=\"expand_mao_strategy\";}}else if(confidence===\"medium\"){if(Number.isFinite(marginDelta)&&marginDelta<-.15){factor=.97;signal=\"tighten_mao_strategy\";}else if(Number.isFinite(marginDelta)&&marginDelta>.15&&Number.isFinite(netDelta)&&netDelta>0){factor=1.02;signal=\"expand_mao_strategy\";}}const adjusted=Number.isFinite(d.base_mao)?Number(d.base_mao)*factor:null;const state=confidence===\"low\"?\"calibration_low_confidence\":Number.isFinite(net)&&Number.isFinite(margin)?\"calibration_ready\":\"blocked\";const route=state===\"calibration_ready\"?\"WF-232\":\"WF-126\";return[{json:{workflow:\"WF-231\",lead_id,deal_id,property_id,net_profit:net,profit_margin:margin,historical_sample_size:sample,net_profit_delta:Number.isFinite(netDelta)?netDelta:null,profit_margin_delta:Number.isFinite(marginDelta)?marginDelta:null,confidence,adjustment_factor:factor,calibration_signal:signal,base_mao:Number.isFinite(d.base_mao)?Number(d.base_mao):null,adjusted_mao:adjusted,state,route,requires_human_review:state!==\"calibration_ready\",reason:state===\"calibration_ready\"?\"Performance evidence is sufficient for confidence-weighted underwriting calibration.\":state===\"calibration_low_confidence\"?\"Historical sample is too small for autonomous calibration.\":\"Performance inputs are incomplete or invalid.\"}}];"
+      },
+      "name": "Underwriting Calibration Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "calibration_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Calibration Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'underwriting_calibration',notes:'WF-231 state='+$json.state+' signal='+$json.calibration_signal+' factor='+$json.adjustment_factor+' adjusted_mao='+$json.adjusted_mao,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Calibration",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,next_workflow:$json.route,calibration_recorded:$json.state===\"calibration_ready\"}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Underwriting Calibration Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Underwriting Calibration Controller": {
+      "main": [
+        [
+          {
+            "node": "Calibration Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calibration Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Calibration",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Calibration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Calibration": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-231-underwriting-calibration-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

@@ -1,0 +1,158 @@
+{
+  "name": "WF-307 — Reconciled Closing Evidence → Final Closing Outcome & Completion Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-307-final-closing-outcome",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf307-webhook",
+      "name": "WF-307 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-307-final-closing-outcome"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst required=Array.isArray(input.required_evidence)?input.required_evidence:[];\nconst verified=Array.isArray(input.verified_evidence)?input.verified_evidence:[];\nconst failed=Array.isArray(input.failed_evidence)?input.failed_evidence:[];\nconst milestones=Array.isArray(input.milestones)?input.milestones:[];\nconst executionIdentity=Boolean(input.deal_id&&input.lead_id&&input.property_id);\nconst executedAgreement=Boolean(input.executed_agreement||input.signature_executed===true||[\"signed\",\"executed\",\"completed\"].includes(String(input.signature_status||\"\").toLowerCase()));\nconst verifiedSet=new Set(verified.map(v=>String(typeof v===\"string\"?v:v.type||v.name||\"\").toLowerCase()).filter(Boolean));\nconst missing=required.filter(v=>!verifiedSet.has(String(typeof v===\"string\"?v:v.type||v.name||\"\").toLowerCase()));\nconst milestonesComplete=milestones.length>0&&milestones.every(m=>[\"completed\",\"complete\",\"done\"].includes(String(m.status||\"\").toLowerCase()));\nlet status=\"blocked\",nextWorkflow=\"WF-126\",reason=\"\";\nif(blockers.length){reason=\"active blockers prevent final closing completion\";}\nelse if(!executionIdentity){status=\"identity_incomplete\";reason=\"deal/lead/property identity is incomplete\";}\nelse if(!executedAgreement){status=\"execution_evidence_missing\";nextWorkflow=\"WF-302\";reason=\"executed agreement evidence is missing\";}\nelse if(failed.length||missing.length){status=\"evidence_incomplete\";nextWorkflow=\"WF-306\";reason=\"required closing evidence is incomplete or failed\";}\nelse if(!milestonesComplete){status=\"completion_incomplete\";nextWorkflow=\"WF-305\";reason=\"closing milestones are not fully complete\";}\nelse{status=\"closing_outcome_ready\";nextWorkflow=\"WF-308\";reason=\"closing evidence, execution identity, and milestones reconcile; final close verification is ready\";}\nconst idempotencyKey=input.idempotency_key||`wf-307:${input.deal_id||\"unknown\"}:${input.close_version||input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-307\",workflow_name:\"Reconciled Closing Evidence → Final Closing Outcome & Completion Controller\",status,final_closing_outcome:{execution_identity_ready:executionIdentity,executed_agreement_verified:executedAgreement,required_evidence_count:required.length,verified_evidence_count:verified.length,missing_evidence:missing,failed_evidence_count:failed.length,milestones_complete:milestonesComplete,blockers},next_workflow:nextWorkflow,human_review_required:status!==\"closing_outcome_ready\",audit:{event_type:\"final_closing_outcome\",idempotency_key:idempotencyKey,reason}}}];"
+      },
+      "id": "wf307-controller",
+      "name": "WF-307 Final Closing Outcome Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'closing_outcome_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf307-if",
+      "name": "WF-307 Final Closing Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-307 final closing outcome',description:$json.audit.reason,metadata:{workflow:'WF-307',status:$json.status,final_closing_outcome:$json.final_closing_outcome,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf307-crm",
+      "name": "WF-307 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,final_closing_outcome:$json.final_closing_outcome,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf307-response",
+      "name": "WF-307 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-307 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-307 Final Closing Outcome Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-307 Final Closing Outcome Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-307 Final Closing Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-307 Final Closing Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-307 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-307 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-307 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-307 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-307-v1"
+}

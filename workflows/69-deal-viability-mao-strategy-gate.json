@@ -1,0 +1,84 @@
+{
+  "name": "WF-069 Deal Viability MAO Strategy Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-069-deal-viability-mao-strategy",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf069-webhook",
+      "name": "Deal Viability MAO Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "wf-069-deal-viability-mao-strategy"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const n=v=>Number.isFinite(Number(v))?Number(v):null; const s=v=>String(v??'').trim(); const type=s(input.property_type??input.asset_type??'residential').toLowerCase(); const value=n(input.arv??input.market_value??input.estimated_market_value); const repairs=n(input.repairs??input.estimated_repairs)??0; const closing=n(input.closing_costs)??0; const holding=n(input.holding_costs)??0; const fee=n(input.assignment_fee)??0; const targetProfit=n(input.minimum_profit??input.target_profit)??fee; const pct=n(input.reference_discount_pct); const identity=s(input.lead_id??input.property_id??input.deal_id??input.parcel_id); const missing=[]; if(!identity)missing.push('canonical_identity'); if(value===null)missing.push('market_value_or_arv'); const grossAfterCosts=value===null?null:value-repairs-closing-holding; const reference70=value===null?null:value*.70-repairs-closing-holding-fee; const viabilityMAO=grossAfterCosts===null?null:grossAfterCosts-targetProfit; const referenceMAO=pct===null?null:value*(pct/100)-repairs-closing-holding-fee; const recommended=viabilityMAO===null?null:Math.max(0,viabilityMAO); const land=type.includes('land')||type.includes('vacant'); const method=land?'land_value_and_buyer_demand':'market_value_and_deal_economics'; return[{json:{ok:missing.length===0,adapter:'wf-069',canonical_identity:identity||null,asset_type:type,underwriting_method:method,inputs:{market_value_or_arv:value,repairs,closing_costs:closing,holding_costs:holding,assignment_fee:fee,target_profit:targetProfit,reference_discount_pct:pct},outputs:{economic_mao:recommended,reference_70pct_mao:reference70,reference_discount_mao:referenceMAO,margin_before_target_profit:grossAfterCosts,profit_target:targetProfit},decision:{status:missing.length?'needs_data':recommended>0?'deal_can_work':'not_viable_at_current_inputs',primary_basis:'economic_viability',reference_70pct_role:'secondary_heuristic_only'},missing_requirements:missing,next_action:missing.length?'Collect missing valuation/identity inputs.':recommended>0?'Proceed to offer strategy and buyer/exit analysis.':'Rework price, terms, costs, or exit strategy before rejecting the deal.',policy:{70_percent_rule_not_primary:true,optimize_for_deal_viability:true,property_type_specific_logic:true,no_inference:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf069-mao",
+      "name": "Calculate Deal Viability & MAO Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf069-response",
+      "name": "Respond Deal Viability MAO",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        600,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Deal Viability MAO Webhook": {
+      "main": [
+        [
+          {
+            "node": "Calculate Deal Viability & MAO Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Deal Viability & MAO Strategy": {
+      "main": [
+        [
+          {
+            "node": "Respond Deal Viability MAO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf069-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

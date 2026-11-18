@@ -1,0 +1,165 @@
+{
+  "name": "WF-250 — Final CRM Closeout → Portfolio Performance Record & Underwriting Feedback",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-250-portfolio-performance",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const closeout_status=String(d.crm_closeout_status??d.status??\"\").toLowerCase();const gross=Number(d.gross_profit??NaN),costs=Number(d.closing_costs??0),net=Number(d.net_profit??(Number.isFinite(gross)?gross-costs:NaN));const historical_sample=Number(d.historical_sample_size??d.sample_size??0);const historical_avg_net=Number(d.historical_avg_net_profit??NaN);const historical_avg_margin=Number(d.historical_avg_margin??NaN);const deal_type=String(d.deal_type??\"wholesale\").toLowerCase();const exit_strategy=String(d.exit_strategy??\"assignment\").toLowerCase();const margin=Number.isFinite(gross)&&gross!==0?net/gross:null;const net_delta=Number.isFinite(historical_avg_net)&&Number.isFinite(net)?net-historical_avg_net:null;const margin_delta=Number.isFinite(historical_avg_margin)&&margin!==null?margin-historical_avg_margin:null;let status=\"needs_review\",reason=\"Portfolio performance requires review.\",next=\"WF-126\";if(!lead_id||!deal_id||!property_id){status=\"blocked\";reason=\"Missing lead, deal, or property identity.\";}else if(closeout_status!==\"closeout_ready\"){status=\"closeout_not_ready\";reason=\"CRM closeout must be ready before portfolio performance is recorded.\";next=\"WF-249\";}else if(!Number.isFinite(gross)||!Number.isFinite(costs)||!Number.isFinite(net)){status=\"profit_inputs_invalid\";reason=\"Profit inputs are invalid.\";next=\"WF-249\";}else{status=\"performance_record_ready\";reason=\"Portfolio performance is ready for underwriting feedback.\";next=\"WF-251\";}return[{json:{workflow:\"WF-250\",lead_id,deal_id,property_id,closeout_status,gross_profit:Number.isFinite(gross)?gross:null,closing_costs:Number.isFinite(costs)?costs:null,net_profit:Number.isFinite(net)?net:null,margin,historical_sample_size:historical_sample,historical_avg_net_profit:Number.isFinite(historical_avg_net)?historical_avg_net:null,historical_avg_margin:Number.isFinite(historical_avg_margin)?historical_avg_margin:null,net_delta,margin_delta,deal_type,exit_strategy,performance_status:status,reason,underwriting_feedback:{profitability_signal:net>0?\"positive\":net===0?\"break_even\":\"negative\",sample_confidence:historical_sample>=20?\"high\":historical_sample>=10?\"medium\":\"low\"},requires_human_review:status!==\"performance_record_ready\",next_workflow:next}}];"
+      },
+      "name": "Portfolio Performance Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.performance_status }}",
+              "rightValue": "performance_record_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Performance Record Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'portfolio_performance',notes:'WF-250 status='+$json.performance_status+' next='+$json.next_workflow+' net_profit='+$json.net_profit+' margin='+$json.margin+' sample='+$json.historical_sample_size,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Portfolio Performance",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,performance_record_ready:$json.performance_status===\"performance_record_ready\",underwriting_feedback_ready:$json.performance_status===\"performance_record_ready\",next_workflow:$json.next_workflow}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Portfolio Performance Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Portfolio Performance Controller": {
+      "main": [
+        [
+          {
+            "node": "Performance Record Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Performance Record Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Portfolio Performance",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Portfolio Performance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Portfolio Performance": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-250-portfolio-performance-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

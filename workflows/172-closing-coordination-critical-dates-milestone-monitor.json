@@ -1,0 +1,186 @@
+{
+  "name": "WF-172 — Closing Coordination → Critical Dates & Milestone Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-172-closing-coordination-critical-dates-milestone-monitor",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf172-webhook",
+      "name": "WF-172 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-172-closing-coordination-critical-dates-milestone-monitor"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json ?? {};\nconst deal = input.deal ?? input.transaction ?? input;\nconst milestones = Array.isArray(deal.milestones) ? deal.milestones : [];\nconst now = new Date();\nconst closingDate = deal.closing_date ?? deal.critical_dates?.closing_date ?? null;\nconst closingDateObj = closingDate ? new Date(closingDate) : null;\nconst daysToClose = closingDateObj && !Number.isNaN(closingDateObj.getTime())\n  ? Math.ceil((closingDateObj.getTime() - now.getTime()) / 86400000)\n  : null;\n\nconst blockers = Array.isArray(deal.blockers) ? deal.blockers.filter(Boolean) : [];\nconst overdueMilestones = milestones.filter(m => {\n  const due = m?.due_date ? new Date(m.due_date) : null;\n  const status = String(m?.status ?? '').toLowerCase();\n  return due && !Number.isNaN(due.getTime()) && due.getTime() < now.getTime() &&\n    !['completed','complete','closed','cancelled','waived'].includes(status);\n});\n\nconst readiness = {\n  title: Boolean(deal.title?.ready ?? deal.title?.confirmed ?? String(deal.title?.status ?? '').toLowerCase() === 'ready'),\n  attorney: Boolean(deal.attorney?.ready ?? deal.attorney?.confirmed ?? String(deal.attorney?.status ?? '').toLowerCase() === 'ready'),\n  funding: Boolean(deal.funding?.ready ?? deal.funding?.confirmed ?? String(deal.funding?.status ?? '').toLowerCase() === 'ready'),\n  buyer: Boolean(deal.buyer?.ready ?? deal.buyer?.confirmed ?? String(deal.buyer?.status ?? '').toLowerCase() === 'ready')\n};\n\nconst identityComplete = Boolean(deal.deal_id ?? deal.transaction_id) &&\n  Boolean(deal.property_id) &&\n  Boolean(deal.lead_id ?? deal.seller_id);\nconst executed = String(deal.execution_state ?? deal.agreement?.execution_state ?? '').toLowerCase() === 'executed';\nconst agreementEvidence = Boolean(deal.signed_evidence ?? deal.agreement?.signed_evidence);\nconst criticalDatePresent = Boolean(closingDateObj && !Number.isNaN(closingDateObj.getTime()));\nconst milestoneComplete = milestones.length > 0 && milestones.every(m =>\n  ['completed','complete','closed','waived'].includes(String(m?.status ?? '').toLowerCase())\n);\n\nlet status = 'on_track';\nlet severity = 'normal';\nif (!identityComplete || !executed || !agreementEvidence || !criticalDatePresent) {\n  status = 'blocked';\n  severity = 'urgent';\n} else if (blockers.length || overdueMilestones.length || Object.values(readiness).some(v => !v)) {\n  status = 'attention_required';\n  severity = overdueMilestones.length || daysToClose !== null && daysToClose <= 3 ? 'urgent' : 'high';\n} else if (daysToClose !== null && daysToClose < 0) {\n  status = 'attention_required';\n  severity = 'urgent';\n} else if (milestoneComplete) {\n  status = 'completed';\n  severity = 'normal';\n}\n\nreturn [{\n  json: {\n    ...input,\n    workflow_id: 'WF-172',\n    workflow_name: 'Closing Coordination → Critical Dates & Milestone Monitor',\n    decision: {status,severity},\n    closing_date: closingDate,\n    days_to_close: daysToClose,\n    readiness,\n    milestone_count: milestones.length,\n    overdue_milestone_count: overdueMilestones.length,\n    overdue_milestones: overdueMilestones.map(m => ({id:m?.id ?? null,name:m?.name ?? null,due_date:m?.due_date ?? null,status:m?.status ?? null})),\n    blockers,\n    identity_complete: identityComplete,\n    execution_state: deal.execution_state ?? deal.agreement?.execution_state ?? null,\n    signed_evidence_present: agreementEvidence,\n    milestone_complete: milestoneComplete,\n    routing: status === 'completed'\n      ? {next_workflow:'WF-137',reason:'All required closing milestones are complete; evaluate closing outcome.'}\n      : status === 'attention_required' || status === 'blocked'\n        ? {next_workflow:'WF-155',reason:'Closing milestone orchestration or escalation is required.'}\n        : {next_workflow:'WF-126',reason:'Closing coordination remains on track; continue coordination.'}\n  }\n}];"
+      },
+      "id": "wf172-controller",
+      "name": "WF-172 Closing Monitor Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchers": []
+          },
+          "conditions": [
+            {
+              "id": "wf172-gate",
+              "leftValue": "={{ $json.decision.status }}",
+              "rightValue": "blocked",
+              "operator": {
+                "type": "string",
+                "operation": "notEqual"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "wf172-gate",
+      "name": "WF-172 Readiness Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{ $json.deal?.lead_id || $json.lead_id || $json.seller_id }}"
+            },
+            {
+              "name": "activity_type",
+              "value": "closing_milestone_monitor"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.decision.status }}"
+            },
+            {
+              "name": "notes",
+              "value": "={{ JSON.stringify({workflow_id:$json.workflow_id, severity:$json.decision.severity, closing_date:$json.closing_date, days_to_close:$json.days_to_close, overdue_milestones:$json.overdue_milestones, blockers:$json.blockers, readiness:$json.readiness, routing:$json.routing}) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf172-crm",
+      "name": "Persist CRM Closing Monitor Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = $json ?? {};\nreturn [{\n  json: {\n    ...out,\n    workflow_id: 'WF-172',\n    result: 'closing_monitor_evaluated',\n    next_workflow: out.routing?.next_workflow ?? 'WF-126'\n  }\n}];"
+      },
+      "id": "wf172-response",
+      "name": "WF-172 Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-172 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-172 Closing Monitor Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-172 Closing Monitor Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-172 Readiness Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-172 Readiness Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist CRM Closing Monitor Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist CRM Closing Monitor Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist CRM Closing Monitor Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-172 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-172-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

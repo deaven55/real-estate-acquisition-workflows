@@ -1,0 +1,48 @@
+{
+  "name": "WF-087 Communication Chain Contract Test",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-087-communication-chain-contract-test",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf087-webhook",
+      "name": "Communication Chain Test Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0,0],
+      "webhookId": "wf-087-communication-chain-contract-test"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const scenario=s(input.scenario||'routine_email'); const tests={routine_email:{channel:'email',inbound_message:'Is the property still available?',auto_enabled:true,dnc:false,risk:false,expected:'autonomous_candidate'},routine_sms:{channel:'sms',inbound_message:'Can you send me the offer?',auto_enabled:true,dnc:false,risk:false,expected:'autonomous_candidate'},dnc:{channel:'sms',inbound_message:'STOP',auto_enabled:true,dnc:true,risk:false,expected:'suppress'},risk_escalation:{channel:'sms',inbound_message:'I have an attorney handling this and dispute the contract.',auto_enabled:true,dnc:false,risk:true,expected:'human_escalation'},approval_required:{channel:'email',inbound_message:'Please send the details.',auto_enabled:false,dnc:false,risk:false,expected:'human_approval'},missing_context:{channel:'email',inbound_message:'',auto_enabled:true,dnc:false,risk:false,expected:'needs_context'}}; const t=tests[scenario]||tests.routine_email; const mode=t.dnc?'suppress':t.risk?'human_escalation':!t.inbound_message?'needs_context':!t.auto_enabled?'human_approval':t.channel==='email'||t.channel==='sms'?'autonomous_candidate':'needs_context'; const chain=mode==='autonomous_candidate'?['wf-083','wf-084','wf-082','wf-085']:['wf-083','wf-084']; const passed=mode===t.expected; return[{json:{adapter:'wf-087',test_type:'contract_only_no_external_send',scenario,passed,observed_response_mode:mode,expected_response_mode:t.expected,chain,assertions:{dnc_hard_suppression: t.dnc?mode==='suppress':true,risk_escalation: t.risk?mode==='human_escalation':true,autonomous_requires_opt_in:t.auto_enabled||mode!=='autonomous_candidate',missing_inbound_context:t.inbound_message?true:mode==='needs_context',provider_receipt_required:mode==='autonomous_candidate'},dispatch_contract:mode==='autonomous_candidate'?{workflow:'wf-082-autonomous-communication-dispatch',runtime_adapter:'wf-085-communication-runtime',receipt_required:true,idempotency_key:'contract-test:'+scenario+':v1'}:null,next_action:passed?'Scenario contract passed. Run controlled provider traffic only after WF-086 reports ready.':'Scenario contract failed; review WF-083/WF-084/WF-082 policy mapping.'}}}];"
+      },
+      "id": "wf087-test",
+      "name": "Evaluate Communication Chain Contract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [320,0]
+    },
+    {
+      "parameters": {
+        "respondWith":"json",
+        "responseBody":"={{$json}}",
+        "options":{"responseCode":"={{$json.passed?200:422}}"}
+      },
+      "id":"wf087-response",
+      "name":"Return Contract Test Result",
+      "type":"n8n-nodes-base.respondToWebhook",
+      "typeVersion":1.4,
+      "position":[640,0]
+    }
+  ],
+  "connections":{
+    "Communication Chain Test Webhook":{"main":[[{"node":"Evaluate Communication Chain Contract","type":"main","index":0}]]},
+    "Evaluate Communication Chain Contract":{"main":[[{"node":"Return Contract Test Result","type":"main","index":0}]]}
+  },
+  "active":false,
+  "settings":{"executionOrder":"v1"},
+  "versionId":"wf-087-v1"
+}

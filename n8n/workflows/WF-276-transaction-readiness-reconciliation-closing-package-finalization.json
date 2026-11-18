@@ -1,0 +1,158 @@
+{
+  "name": "WF-276 — Transaction Readiness Reconciliation → Closing Package Finalization Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-276-transaction-readiness-reconciliation",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf276-webhook",
+      "name": "WF-276 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-276-transaction-readiness-reconciliation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst arr = v => Array.isArray(v) ? v : [];\nconst truthy = v => v === true || v === \"true\" || v === 1 || v === \"1\";\nconst blockers = arr(input.blockers);\nconst requiredDocs = arr(input.required_documents);\nconst suppliedDocs = arr(input.supplied_documents);\nconst parties = arr(input.parties);\nconst requiredRoles = arr(input.required_roles);\nconst assignedRoles = arr(input.assigned_roles);\nconst readiness = input.transaction_readiness ?? {};\nconst recovery = input.recovery ?? {};\nconst packageState = input.closing_package ?? {};\n\nconst identityComplete = Boolean(input.deal_id && input.lead_id && input.property_id);\nconst readinessReconciled =\n  truthy(input.transaction_readiness_reconciled) ||\n  [\"reconciled\",\"ready\",\"transaction_ready\"].includes(String(readiness.status || \"\").toLowerCase());\n\nconst recoveryClear =\n  !truthy(input.recovery_required) &&\n  !truthy(recovery.active) &&\n  ![\"pending\",\"in_progress\",\"failed\",\"blocked\"].includes(String(recovery.status || \"\").toLowerCase());\n\nconst blockersClear = blockers.length === 0;\nconst docsComplete = requiredDocs.length === 0 ||\n  requiredDocs.every(req => suppliedDocs.some(doc => String(doc.id ?? doc) === String(req.id ?? req)));\n\nconst rolesComplete = requiredRoles.length === 0 ||\n  requiredRoles.every(role => assignedRoles.some(assigned =>\n    String(assigned.role ?? assigned) === String(role.role ?? role)\n  ));\n\nconst partiesComplete = parties.length >= 2 ||\n  Boolean(input.seller && (input.buyer || input.assignee));\n\nconst executedAgreement = truthy(input.executed_agreement) ||\n  [\"executed\",\"signed\",\"fully_executed\"].includes(String(input.agreement_status || \"\").toLowerCase());\n\nconst closingDateValid = !input.closing_date || !Number.isNaN(new Date(input.closing_date).getTime());\nconst price = Number(input.contract_price ?? input.agreed_price ?? input.purchase_price);\nconst mao = Number(input.dynamic_mao ?? input.mao);\nconst priceProtected = !Number.isFinite(price) || !Number.isFinite(mao) || price <= mao;\n\nconst packageAlreadyFinalized =\n  truthy(packageState.finalized) ||\n  [\"finalized\",\"ready\",\"complete\"].includes(String(packageState.status || \"\").toLowerCase());\n\nconst packageReady =\n  identityComplete &&\n  readinessReconciled &&\n  recoveryClear &&\n  blockersClear &&\n  docsComplete &&\n  rolesComplete &&\n  partiesComplete &&\n  executedAgreement &&\n  closingDateValid &&\n  priceProtected;\n\nlet status = \"package_finalization_required\";\nlet nextWorkflow = \"WF-277\";\nlet humanReview = true;\n\nif (!identityComplete) {\n  status = \"blocked_missing_identity\";\n  nextWorkflow = \"WF-126\";\n} else if (!recoveryClear) {\n  status = \"recovery_not_cleared\";\n  nextWorkflow = \"WF-274\";\n} else if (!readinessReconciled) {\n  status = \"transaction_readiness_not_reconciled\";\n  nextWorkflow = \"WF-275\";\n} else if (!blockersClear || !closingDateValid || !priceProtected) {\n  status = \"blocked\";\n  nextWorkflow = \"WF-126\";\n} else if (!docsComplete || !rolesComplete || !partiesComplete || !executedAgreement) {\n  status = \"package_evidence_incomplete\";\n  nextWorkflow = \"WF-276\";\n} else if (packageAlreadyFinalized) {\n  status = \"package_already_finalized\";\n  nextWorkflow = \"WF-277\";\n} else if (packageReady) {\n  status = \"closing_package_ready_for_finalization\";\n  nextWorkflow = \"WF-277\";\n}\n\nreturn [{\n  json: {\n    ...input,\n    workflow: \"WF-276\",\n    workflow_name: \"Transaction Readiness Reconciliation → Closing Package Finalization Controller\",\n    status,\n    package_finalization: {\n      identity_complete: identityComplete,\n      transaction_readiness_reconciled: readinessReconciled,\n      recovery_clear: recoveryClear,\n      blockers_clear: blockersClear,\n      required_documents_complete: docsComplete,\n      required_roles_complete: rolesComplete,\n      parties_complete: partiesComplete,\n      executed_agreement: executedAgreement,\n      closing_date_valid: closingDateValid,\n      price_protected_by_mao: priceProtected,\n      package_already_finalized: packageAlreadyFinalized,\n      ready: packageReady\n    },\n    next_workflow: nextWorkflow,\n    human_review_required: humanReview,\n    routing_reason: status,\n    audit: {\n      event_type: \"transaction_readiness_reconciliation_package_finalization\",\n      idempotency_key: input.idempotency_key || `wf-276:${input.deal_id || \"unknown\"}:${input.package_id || \"none\"}:${input.version || 1}`\n    }\n  }\n}];"
+      },
+      "id": "wf276-controller",
+      "name": "WF-276 Transaction Readiness Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'closing_package_ready_for_finalization' || $json.status === 'package_already_finalized'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf276-if",
+      "name": "WF-276 Package Finalization Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id: $json.deal_id || $json.lead_id || $json.property_id, external_source: 'wholesale-os', activity_type: 'workflow_event', subject: 'WF-276 transaction readiness reconciliation', description: $json.routing_reason, metadata: {workflow: 'WF-276', status: $json.status, package_finalization: $json.package_finalization, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, idempotency_key: $json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf276-crm",
+      "name": "WF-276 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow: $json.workflow, status: $json.status, package_ready: $json.package_finalization?.ready, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, audit: $json.audit})}}",
+        "options": {}
+      },
+      "id": "wf276-response",
+      "name": "WF-276 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-276 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-276 Transaction Readiness Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-276 Transaction Readiness Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-276 Package Finalization Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-276 Package Finalization Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-276 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-276 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-276 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-276 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-276-v1"
+}

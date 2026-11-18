@@ -1,0 +1,264 @@
+{
+  "name": "WF-110 Underwriting Evidence Fan-Out Fan-In Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-110-underwriting-evidence-fanout-fanin",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf110-webhook",
+      "name": "Underwriting Evidence Fan-Out Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??'').trim();\nconst leadId=s(input.lead_id??input.identity?.lead_id);\nconst propertyId=s(input.property_id??input.identity?.property_id);\nconst dealId=s(input.deal_id??input.identity?.deal_id);\nconst propertyType=s(input.property_type??input.property?.type).toLowerCase();\nconst address=s(input.property_address??input.property?.address);\nconst id=s(dealId||propertyId||leadId);\nconst requestId=s(input.request_id)||('evidence-fanout:'+(id||'unknown')+':v1');\nconst missing=[];\nif(!id)missing.push('canonical_identity');\nif(!propertyType)missing.push('property_type');\nif(!address&&!propertyId)missing.push('property_address_or_property_id');\nif(missing.length)return[{json:{ok:false,status:'needs_context',request_id:requestId,identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null},missing_requirements:missing,dispatches:[]}}];\nconst base=s(input.acquisition_workflow_base_url)||s(input.base_url);\nif(!base)return[{json:{ok:false,status:'blocked',request_id:requestId,identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null},missing_requirements:['acquisition_workflow_base_url'],dispatches:[]}}];\nconst evidence=input.evidence??{};\nconst tasks=[\n {key:'comps',workflow:'wf-071-comps-market-evidence-adapter',path:'/webhook/wf-071-comps-market-evidence-adapter',present:evidence.comps??input.comps},\n {key:'repairs',workflow:'wf-072-repair-cost-property-condition-analysis',path:'/webhook/wf-072-repair-cost-property-condition-analysis',present:evidence.repairs??input.repairs??input.estimated_repairs},\n {key:'risk',workflow:'wf-073-property-risk-feasibility-analysis',path:'/webhook/wf-073-property-risk-feasibility-analysis',present:evidence.risk??input.property_risk??input.risk_evidence},\n {key:'buyer_demand',workflow:'wf-074-buyer-demand-exit-strategy-analysis',path:'/webhook/wf-074-buyer-demand-exit-strategy-analysis',present:evidence.buyer_demand??input.buyer_demand??input.exit_strategy}\n].filter(t=>t.present===undefined||t.present===null||t.present==='');\nif(!tasks.length)return[{json:{ok:true,status:'evidence_already_present',request_id:requestId,identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null},dispatches:[],next_workflow:'wf-109-underwriting-evidence-aggregator'}}];\nreturn tasks.map(t=>({json:{request_id:requestId,task_key:t.key,workflow:t.workflow,url:base+t.path,payload:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,property_type:propertyType,address,property_address:address,request_id:requestId,task_key:t.key,workflow:t.workflow,source_workflow:'wf-110'}}}));"
+      },
+      "id": "wf110-plan",
+      "name": "Plan Missing Evidence Tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.url}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Workflow-Request-ID",
+              "value": "={{$json.request_id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{JSON.stringify($json.payload)}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responsePropertyName": "provider_response"
+            }
+          }
+        }
+      },
+      "id": "wf110-dispatch",
+      "name": "Dispatch Evidence Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items=$input.all();\nconst normalized=items.map(i=>{\n const j=i.json??{};\n const status=Number(j.statusCode??j.httpStatus??0);\n const body=j.provider_response??j.body??j.data??j;\n const taskKey=body?.task_key??body?.request?.task_key??j.task_key??null;\n const workflow=body?.workflow??body?.request?.workflow??j.workflow??null;\n const requestId=body?.request_id??body?.request?.request_id??j.request_id??null;\n const ok=(status>=200&&status<300)||body?.ok===true||body?.status==='ready'||body?.status==='evidence_ready';\n return {task_key:taskKey,workflow,request_id:requestId,transport_status:status||null,ok,provider_response:body};\n});\nconst failed=normalized.filter(x=>!x.ok);\nreturn[{json:{ok:failed.length===0,status:failed.length?'evidence_dispatch_partial_failure':'evidence_dispatched',results:normalized,failed_tasks:failed.map(x=>x.task_key),completed_tasks:normalized.filter(x=>x.ok).map(x=>x.task_key),next_workflow:failed.length?null:'wf-109-underwriting-evidence-aggregator'}}];"
+      },
+      "id": "wf110-aggregate",
+      "name": "Fan-In Evidence Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "evidence_dispatched",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf110-ready",
+      "name": "Evidence Dispatch Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.ACQUISITION_WORKFLOW_BASE_URL}}/webhook/wf-109-underwriting-evidence-aggregator",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{JSON.stringify({request_id:$json.results?.[0]?.request_id,lead_id:$json.identity?.lead_id,property_id:$json.identity?.property_id,deal_id:$json.identity?.deal_id,evidence_results:$json.results,source_workflow:'wf-110'})}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf110-aggregate",
+      "name": "Send Results to WF-109",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf110-response",
+      "name": "Respond Fan-Out Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1560,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf110-failed",
+      "name": "Respond Dispatch Failure",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1320,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Underwriting Evidence Fan-Out Webhook": {
+      "main": [
+        [
+          {
+            "node": "Plan Missing Evidence Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Missing Evidence Tasks": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Evidence Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Evidence Task": {
+      "main": [
+        [
+          {
+            "node": "Fan-In Evidence Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fan-In Evidence Results": {
+      "main": [
+        [
+          {
+            "node": "Evidence Dispatch Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evidence Dispatch Complete?": {
+      "main": [
+        [
+          {
+            "node": "Send Results to WF-109",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Dispatch Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Results to WF-109": {
+      "main": [
+        [
+          {
+            "node": "Respond Fan-Out Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf110-v1"
+}

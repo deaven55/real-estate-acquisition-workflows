@@ -1,0 +1,105 @@
+{
+  "name": "WF-088 Controlled Communication Outbound Test Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-088-controlled-communication-test",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf088-webhook",
+      "name": "Controlled Communication Test Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const channel=s(input.channel).toLowerCase(); const recipient=s(input.recipient??input.to); const message=s(input.message??'Controlled communication runtime test'); const requestId=s(input.request_id??input.external_id); const allowlist=s($env.COMMUNICATION_TEST_RECIPIENT_ALLOWLIST).split(',').map(x=>x.trim()).filter(Boolean); const testMode=input.test_mode===true; const dnc=input.dnc===true||input.do_not_contact===true; const gaps=[]; if(!testMode)gaps.push('test_mode=true'); if(!requestId)gaps.push('request_id'); if(!['sms','email'].includes(channel))gaps.push('supported_channel_sms_or_email'); if(!recipient)gaps.push('recipient'); if(!allowlist.includes(recipient))gaps.push('recipient_not_in_test_allowlist'); if(dnc)gaps.push('dnc_suppression'); if(!s($env.COMMUNICATION_RUNTIME_BASE_URL))gaps.push('communication_runtime_base_url'); const allowed=gaps.length===0; return [{json:{ok:allowed,adapter:'wf-088',test:{mode:'controlled_outbound',test_mode:testMode,channel,recipient,message,request_id:requestId,allowlist_match:allowlist.includes(recipient)},authorization:{dispatch_allowed:allowed,explicit_test_mode_required:true,allowlist_required:true,dnc_hard_suppression:true},execution:{idempotency_key:'ai-communication-test:'+channel+':'+(requestId||'missing')+':v1',receipt_required:true,thread_or_conversation_tracking:true},missing_requirements:gaps,next_action:allowed?'Invoke WF-082 with autonomous opt-in and preserve the resulting provider receipt.':'Do not send. Fix the listed test gate requirements.',policy:{no_arbitrary_recipients:true,no_production_test_mode_bypass:true,no_secrets_in_payload:true,provider_credentials_outside_github:true}}}}];"
+      },
+      "id": "wf088-gate",
+      "name": "Validate Controlled Test Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [{"leftValue": "={{$json.authorization.dispatch_allowed}}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf088-allowed",
+      "name": "Controlled Test Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.COMMUNICATION_RUNTIME_BASE_URL.replace(/\\/$/,'')}}/webhook/wf-082-autonomous-communication-dispatch",
+        "sendHeaders": true,
+        "headerParametersUi": {"parameter": [{"name": "Content-Type", "value": "application/json"}]},
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersUi": {"parameter": []},
+        "jsonBody": "={{JSON.stringify({channel:$json.test.channel,recipient:$json.test.recipient,message:$json.test.message,request_id:$json.test.request_id,provider:'agenticmail',autonomous_communication_enabled:true,test_mode:true})}}",
+        "options": {"response": {"response": {"neverError": true}}}
+      },
+      "id": "wf088-dispatch",
+      "name": "Invoke WF-082 Controlled Dispatch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const gate=$('Validate Controlled Test Gate').first().json; const status=Number($response.statusCode||0); const receipt=$json; const sent=status>=200&&status<300&&receipt.dispatch_result?.status==='sent'; return [{json:{...gate,dispatch_result:{status:sent?'sent':'failed',http_status:status,provider_receipt:receipt,receipt_required:true},next_action:sent?'Controlled provider receipt received; verify CRM activity, thread continuity and idempotency before enabling production traffic.':'No successful send receipt; do not mark the test as passed. Investigate runtime/provider failure using the preserved idempotency key.'}}}];"
+      },
+      "id": "wf088-result",
+      "name": "Normalize Controlled Test Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {"responseCode": "={{$json.dispatch_result?.status==='sent'?200:502}}"}
+      },
+      "id": "wf088-response",
+      "name": "Respond Controlled Test Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1240, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {"responseCode": 400}
+      },
+      "id": "wf088-blocked",
+      "name": "Respond Controlled Test Block",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [760, 480]
+    }
+  ],
+  "connections": {
+    "Controlled Communication Test Webhook": {"main": [[{"node": "Validate Controlled Test Gate", "type": "main", "index": 0}]]},
+    "Validate Controlled Test Gate": {"main": [[{"node": "Controlled Test Allowed?", "type": "main", "index": 0}]]},
+    "Controlled Test Allowed?": {"main": [[{"node": "Invoke WF-082 Controlled Dispatch", "type": "main", "index": 0}], [{"node": "Respond Controlled Test Block", "type": "main", "index": 0}]]},
+    "Invoke WF-082 Controlled Dispatch": {"main": [[{"node": "Normalize Controlled Test Result", "type": "main", "index": 0}]]},
+    "Normalize Controlled Test Result": {"main": [[{"node": "Respond Controlled Test Result", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "wf-088-v1"
+}

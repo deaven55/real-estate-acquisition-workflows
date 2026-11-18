@@ -1,0 +1,163 @@
+{
+  "name": "WF-211 — Portfolio Performance → Underwriting Calibration & Dynamic Strategy Feedback",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-211-portfolio-performance-underwriting-calibration-dynamic-strategy-feedback",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Portfolio Performance",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-211-portfolio-performance-underwriting-calibration-dynamic-strategy-feedback"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const p=x.portfolio_performance??{};const sample=Number(p.historical_sample_size??x.historical_sample_size??0);const margin=Number(p.profit_margin);const net=Number(p.net_profit);const baselineMargin=Number(x.historical_avg_margin??x.baseline_margin??0);const baselineNet=Number(x.historical_avg_net_profit??x.baseline_net_profit??0);const missing=[];if(p.status!=='performance_record_ready')missing.push('performance_record_ready_status');if(!p.deal_id)missing.push('deal_id');if(!Number.isFinite(net))missing.push('net_profit');if(!Number.isFinite(margin))missing.push('profit_margin');let confidence=sample>=20?'high':sample>=10?'medium':'low';let factor=1;let rationale='no_adjustment';const marginDelta=Number.isFinite(baselineMargin)?margin-baselineMargin:null;const netDelta=Number.isFinite(baselineNet)?net-baselineNet:null;if(confidence==='high'){if((marginDelta!==null&&marginDelta<-0.10)||(netDelta!==null&&netDelta<0)){factor=0.95;rationale='performance_below_baseline';}else if((marginDelta!==null&&marginDelta>0.10)&&(netDelta!==null&&netDelta>0)){factor=1.03;rationale='performance_above_baseline';}}else if(confidence==='medium'){if(marginDelta!==null&&marginDelta<-0.15){factor=0.97;rationale='moderate_underperformance';}else if((marginDelta!==null&&marginDelta>0.15)&&(netDelta!==null&&netDelta>0)){factor=1.02;rationale='moderate_outperformance';}}const status=missing.length?'blocked':confidence==='low'?'calibration_low_confidence':'calibration_ready';const next=status==='calibration_ready'?'WF-212':status==='calibration_low_confidence'?'WF-126':'WF-126';return[{json:{...x,workflow:'WF-211',underwriting_calibration:{status,confidence,historical_sample_size:sample,actual_net_profit:net,actual_margin:margin,baseline_net_profit:Number.isFinite(baselineNet)?baselineNet:null,baseline_margin:Number.isFinite(baselineMargin)?baselineMargin:null,net_delta:netDelta,margin_delta:marginDelta,mao_adjustment_factor:factor,rationale},routing:{next_workflow:next,requires_human_review:status!=='calibration_ready'},audit:{event:'portfolio_performance_underwriting_calibration_dynamic_strategy_feedback_evaluated',status}}}];"
+      },
+      "name": "Code — Underwriting Calibration Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.underwriting_calibration.status}}",
+              "rightValue": "calibration_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Calibration Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-211:'+($json.underwriting_calibration?.deal_id||$json.deal_id||'unknown')+':underwriting-calibration',external_source:'wholesale-os',activity_type:'portfolio_performance_underwriting_calibration_dynamic_strategy_feedback',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.underwriting_calibration?.deal_id||$json.deal_id||null,status:$json.underwriting_calibration?.status||'blocked',notes:JSON.stringify({workflow:'WF-211',underwriting_calibration:$json.underwriting_calibration,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Calibration Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-211',status:$json.underwriting_calibration?.status??'blocked',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),underwriting_calibration:$json.underwriting_calibration??null}}}];"
+      },
+      "name": "Code — Calibration Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Portfolio Performance": {
+      "main": [
+        [
+          {
+            "node": "Code — Underwriting Calibration Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Underwriting Calibration Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Calibration Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Calibration Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Calibration Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Calibration Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Calibration Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Calibration Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-211-v1"
+}

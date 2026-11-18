@@ -1,0 +1,171 @@
+{
+  "name": "WF-139 Post-Close Profit Verification → CRM Closeout & Performance Record",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-139-post-close-profit-verification-crm-closeout",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "139-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-139-post-close-profit-verification-crm-closeout"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const economics=input.economics??deal.economics??{}; const expected=Number(economics.net_profit??0); const actual=Number(input.actual_net_profit??input.realized_net_profit??expected); const evidence=Array.isArray(input.profit_evidence)?input.profit_evidence:[]; const verified=input.profit_verified===true||input.verification_status==='verified'; const closed=['closed','funded','recorded','completed'].includes(String(input.closing_outcome??input.outcome??'').toLowerCase()); const discrepancy=Math.abs(actual-expected); const tolerance=Number(input.profit_tolerance??1); const reconciled=discrepancy<=tolerance; const status=verified&&closed&&reconciled?'verified_closeout':(!closed?'closeout_pending':(!reconciled?'profit_discrepancy':'verification_required')); const route=status==='verified_closeout'?'WF-044 CRM closeout/performance reporting':status==='profit_discrepancy'?'human_review':'WF-138 post-close profit performance controller'; return [{json:{workflow_id:'WF-139',workflow_name:'Post-Close Profit Verification → CRM Closeout & Performance Record',status,route,deal_id:deal.id??deal.deal_id??null,lead_id:deal.lead_id??null,property_id:deal.property_id??null,buyer_id:deal.buyer_id??null,profit_verification:{expected_net_profit:expected,actual_net_profit:actual,discrepancy, tolerance, reconciled,verified,evidence_count:evidence.length},closeout:{closed,ready_for_crm_closeout:status==='verified_closeout'},next_workflow:route,crm_activity:{event_type:'post_close_profit_verification_closeout',outcome:status,route,deal_id:deal.id??deal.deal_id??null},idempotency_key:'wf-139:profit-verification:'+(deal.id??deal.deal_id??input.event_id??'unknown')}}}];"
+      },
+      "id": "139-controller",
+      "name": "Verify Realized Profit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "verified_closeout",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "139-ready",
+      "name": "Verified Closeout?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,route:$json.route,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,buyer_id:$json.buyer_id,workflow_id:$json.workflow_id,profit_verification:$json.profit_verification,closeout:$json.closeout,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "139-crm",
+      "name": "Persist CRM Closeout Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Verify Realized Profit').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,route:original.route,profit_verification:original.profit_verification,closeout:original.closeout,next_workflow:original.next_workflow}}}];"
+      },
+      "id": "139-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Realized Profit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Realized Profit": {
+      "main": [
+        [
+          {
+            "node": "Verified Closeout?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verified Closeout?": {
+      "main": [
+        [
+          {
+            "node": "Persist CRM Closeout Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist CRM Closeout Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist CRM Closeout Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-139-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

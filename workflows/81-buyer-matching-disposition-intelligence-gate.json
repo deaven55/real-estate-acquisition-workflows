@@ -1,0 +1,75 @@
+{
+  "name": "WF-081 Buyer Matching & Disposition Intelligence Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-081-buyer-matching-disposition-intelligence",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf081-webhook",
+      "name": "Buyer Matching & Disposition Intelligence Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-081-buyer-matching-disposition-intelligence",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const num=v=>{const n=Number(v);return Number.isFinite(n)?n:null}; const arr=v=>Array.isArray(v)?v:[]; const contractId=s(input.contract_id??input.deal_id??input.property_id); const propertyType=s(input.property_type??'unknown').toLowerCase(); const contractPrice=num(input.contract_price??input.purchase_price); const assignmentFee=num(input.assignment_fee??input.expected_assignment_fee); const buyerCandidates=arr(input.buyers??input.buyer_candidates); const buyerCount=buyerCandidates.length; const gaps=[]; if(!contractId)gaps.push('contract_id_or_deal_id'); if(contractPrice===null)gaps.push('contract_price'); const ranked=buyerCandidates.map((b,i)=>{const fit=num(b.match_score??b.fit_score); const maxPrice=num(b.max_purchase_price??b.max_price??b.buy_box_max_price); const minPrice=num(b.min_purchase_price??b.buy_box_min_price); const types=arr(b.property_types??b.accepted_property_types).map(x=>s(x).toLowerCase()); const areas=arr(b.markets??b.target_markets??b.areas).map(x=>s(x).toLowerCase()); const evidence=arr(b.evidence??b.verification_evidence); const reasons=[]; let score=fit!==null?Math.max(0,Math.min(100,fit)):0; if(contractPrice!==null&&maxPrice!==null){if(contractPrice<=maxPrice){score+=15;reasons.push('contract_price_within_buyer_max_price')}else{score-=25;reasons.push('contract_price_above_buyer_max_price')}} if(contractPrice!==null&&minPrice!==null&&contractPrice>=minPrice){score+=5;reasons.push('contract_price_above_buyer_minimum')} if(propertyType!=='unknown'&&types.length){if(types.includes(propertyType)){score+=15;reasons.push('property_type_match')}else{score-=20;reasons.push('property_type_mismatch')}} const demandSignal=num(b.demand_score??b.demand); if(demandSignal!==null)score+=Math.max(-10,Math.min(10,(demandSignal-50)/5)); if(evidence.length===0)reasons.push('buyer_evidence_missing'); else reasons.push('buyer_evidence_supplied'); const missing=[]; if(maxPrice===null)missing.push('max_purchase_price'); if(types.length===0)missing.push('property_type_buy_box'); if(areas.length===0)missing.push('target_market'); if(evidence.length===0)missing.push('verification_evidence'); return {rank:i+1,buyer_id:s(b.buyer_id??b.id??b.external_id),buyer_name:s(b.name??b.company_name),match_score:Math.round(Math.max(0,Math.min(100,score))),match_reasons:reasons,missing_buyer_evidence:missing,estimated_spread:assignmentFee,proof_of_funds_status:s(b.proof_of_funds_status??'unknown'),closing_ability_status:s(b.closing_ability_status??'unknown'),raw_buyer_evidence:b};}).sort((a,b)=>b.match_score-a.match_score).map((b,i)=>({...b,rank:i+1})); const qualified=ranked.filter(b=>b.match_score>=70); const priority=qualified.length?'priority_outreach':'build_buyer_pool'; const expectedSpread=assignmentFee!==null?assignmentFee:null; const nextAction=gaps.length?'Complete contract economics before disposition ranking.':buyerCount===0?'Add or retrieve buyers whose buy boxes cover the property and market.':qualified.length?'Review top buyer matches, verify buyer evidence, then obtain human approval before outreach.':'Validate buyer buy-box data and add stronger buyer-demand evidence before outreach.'; return[{json:{ok:gaps.length===0,adapter:'wf-081',disposition:{contract_id:contractId,property_type:propertyType,contract_price:contractPrice,expected_assignment_fee:expectedSpread,buyer_count:buyerCount,qualified_buyer_count:qualified.length,disposition_priority:priority,expected_assignment_spread:expectedSpread},ranked_buyers:ranked,decision:{next_action:nextAction,top_buyer:qualified[0]??ranked[0]??null,outreach_ready:qualified.length>0&&gaps.length===0,human_approval_required:true},missing_requirements:gaps,policy:{buyer_matching_is_decision_support:true,human_approval_required_for_buyer_contact:true,no_automatic_outreach:true,no_proof_of_funds_claim_without_evidence:true,no_closing_ability_claim_without_evidence:true,no_guaranteed_buyer_claim:true,deal_viability_primary:true,70_percent_rule_secondary:true},provenance:{buyer_records_preserved:true,raw_buyer_evidence_preserved:true,derived_match_scores_not_market_facts:true}}}];"
+      },
+      "id": "wf081-analysis",
+      "name": "Rank Buyers & Disposition Priority",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf081-response",
+      "name": "Respond Buyer Matching Intelligence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [640, 300]
+    }
+  ],
+  "connections": {
+    "Buyer Matching & Disposition Intelligence Webhook": {
+      "main": [
+        [
+          {
+            "node": "Rank Buyers & Disposition Priority",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rank Buyers & Disposition Priority": {
+      "main": [
+        [
+          {
+            "node": "Respond Buyer Matching Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf081-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

@@ -1,0 +1,215 @@
+{
+  "name": "WF-324 — Transaction Readiness → Title / Attorney / Funding / Broker Closing Coordination Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-324-closing-coordination",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf324-webhook",
+      "name": "Webhook — Transaction Readiness",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst status=String(input.status??input.transaction_status??'').toLowerCase();\nconst dealId=input.deal_id,leadId=input.lead_id,propertyId=input.property_id;\nconst sellerId=input.seller_id??input.seller_contact_id;\nconst buyerId=input.buyer_id??input.assignee_id;\nconst closingDate=String(input.closing_date??'').trim();\nconst roles=input.coordination_roles??{};\nconst titleReady=Boolean(input.title_company??input.title_ready??roles.title);\nconst attorneyReady=Boolean(input.attorney??input.attorney_ready??roles.attorney);\nconst fundingReady=Boolean(input.funding_source??input.funding_ready??roles.funding);\nconst brokerReady=Boolean(input.broker??input.broker_ready??roles.broker);\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst dnc=input.dnc===true;\nconst identityReady=Boolean(dealId&&leadId&&propertyId&&sellerId&&buyerId);\nlet coordination_status='needs_review',next='WF-126',reason='closing coordination requires review';\nif(dnc){coordination_status='blocked_dnc';next='WF-126';reason='DNC/contact restriction';}\nelse if(blockers.length){coordination_status='blocked';next='WF-126';reason='active closing blockers';}\nelse if(status!=='transaction_ready'){coordination_status='transaction_not_ready';next='WF-323';reason='transaction readiness not confirmed';}\nelse if(!identityReady){coordination_status='incomplete_parties';next='WF-126';reason='seller/buyer/deal/property identity incomplete';}\nelse if(!closingDate){coordination_status='closing_date_required';next='WF-126';reason='closing date missing';}\nelse if(!titleReady||!attorneyReady||!fundingReady||!brokerReady){coordination_status='coordination_incomplete';next='WF-325';reason='one or more closing coordination roles are not ready';}\nelse{coordination_status='coordination_ready';next='WF-325';reason='title, attorney, funding, broker and parties validated for closing coordination';}\nreturn [{json:{...input,workflow_id:'WF-324',workflow_name:'Transaction Readiness → Title / Attorney / Funding / Broker Closing Coordination Controller',coordination_status,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,seller_id:sellerId||null,buyer_id:buyerId||null,closing_date:closingDate||null,coordination_roles:{title:titleReady,attorney:attorneyReady,funding:fundingReady,broker:brokerReady},next_workflow:next,human_review_required:coordination_status!=='coordination_ready',crm_activity:{activity_type:'closing_coordination',deal_id:dealId,lead_id:leadId,property_id:propertyId,status:coordination_status,closing_date:closingDate||null,reason}}}];"
+      },
+      "id": "wf324-controller",
+      "name": "Controller — Closing Coordination",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready-gate",
+              "leftValue": "={{ $json.coordination_status }}",
+              "rightValue": "coordination_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "identity-gate",
+              "leftValue": "={{ $json.deal_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf324-gate",
+      "name": "IF — Closing Coordination Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "closing_date",
+              "value": "={{ $json.crm_activity.closing_date }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf324-crm",
+      "name": "InsulaCRM — Closing Coordination Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, coordination_status: $json.coordination_status, reason: $json.reason, closing_date: $json.closing_date, coordination_roles: $json.coordination_roles, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf324-response",
+      "name": "Response — Closing Coordination Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Transaction Readiness": {
+      "main": [
+        [
+          {
+            "node": "Controller — Closing Coordination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Closing Coordination": {
+      "main": [
+        [
+          {
+            "node": "IF — Closing Coordination Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Closing Coordination Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Closing Coordination Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Closing Coordination Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Closing Coordination Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Closing Coordination Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-324-v1",
+  "meta": {
+    "workflow_id": "WF-324",
+    "description": "Validates transaction readiness and closing coordination roles for title, attorney, funding, broker, seller, buyer, and closing date before milestone monitoring.",
+    "safety": {
+      "dnc_protection": true,
+      "human_review_for_incomplete_coordination": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

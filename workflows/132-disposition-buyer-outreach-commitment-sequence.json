@@ -1,0 +1,148 @@
+{
+  "name": "WF-132 — Disposition Buyer Outreach & Commitment Sequence",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-132-disposition-buyer-outreach-commitment-sequence",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf132-webhook",
+      "name": "WF-132 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b=$json.body||$json;const requestId=String(b.request_id||('wf132-'+Date.now()));const dealId=b.deal_id||null,leadId=b.lead_id||null,propertyId=b.property_id||null,buyerId=b.buyer_id||b.assignee_id||null;const commitmentId=b.buyer_commitment_id||null;const channel=String(b.channel||'').toLowerCase();const message=b.message||null;const consent=Boolean(b.communication_consent||b.buyer_consent);const dnc=Boolean(b.dnc);const approved=Boolean(b.approved||b.outbound_approved);const autonomous=Boolean(b.autonomous_communication_enabled);const missing=[];if(!dealId)missing.push('deal_id');if(!leadId)missing.push('lead_id');if(!propertyId)missing.push('property_id');if(!buyerId)missing.push('buyer_id');if(!commitmentId)missing.push('buyer_commitment_id');if(!channel)missing.push('channel');if(!message)missing.push('message');const allowedChannels=['email','sms'];let status='blocked',nextState='human_review',route='human_review',reason='Buyer outreach requires review';if(dnc){status='suppressed';nextState='buyer_commitment';route='none';reason='DNC suppresses outbound communication';}else if(missing.length){status='blocked';nextState='missing_outreach_inputs';reason='Required buyer outreach identity/content is missing';}else if(!allowedChannels.includes(channel)){status='blocked';nextState='unsupported_channel';reason='Unsupported buyer communication channel';}else if(!consent){status='blocked';nextState='buyer_consent_required';reason='Buyer communication consent is not confirmed';}else if(!(approved||autonomous)){status='approval_required';nextState='outbound_approval';route='human_review';reason='Outbound buyer communication requires approval or autonomous communication authorization';}else{status='ready';nextState='dispatch';route='wf-079-agenticmail-communication-dispatch-receipt';reason='Buyer outreach passed identity, consent, channel, and authorization gates';}const id='buyer-outreach:'+dealId+':'+requestId+':v1';return[{json:{workflow:'WF-132',workflow_version:'1.0',request_id:requestId,buyer_outreach_id:id,deal_id:dealId,lead_id:leadId,property_id:propertyId,buyer_id:buyerId,buyer_commitment_id:commitmentId,channel,message,consent,approved,autonomous,status,next_state:nextState,route,reason,missing,guardrails:{no_dnc_outreach:true,consent_required:true,authorization_required:true,no_invented_buyer_facts:true,channel_allowlist_enforced:true,dispatch_is_not_delivery_confirmation:true},crm_activity:{activity_type:'buyer_outreach',subject:'WF-132 buyer outreach - '+status,lead_id:leadId,property_id:propertyId,deal_id:dealId,external_id:id,external_source:'wholesaling-os-disposition',metadata:{status,next_state,route,reason,buyer_id:buyerId,buyer_commitment_id:commitmentId,channel,consent,approved,autonomous}}}}];"
+      },
+      "id": "wf132-eval",
+      "name": "Evaluate Buyer Outreach",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;let valid=true,reason='validated';if(!r.buyer_outreach_id||!r.deal_id||!r.lead_id||!r.property_id||!r.buyer_id){valid=false;reason='missing_identity';}if(r.status==='ready'&&r.route!=='wf-079-agenticmail-communication-dispatch-receipt'){valid=false;reason='dispatch_route_mismatch';}if(r.dnc&&r.route!=='none'){valid=false;reason='dnc_route_mismatch';}if(r.status==='ready'&&!r.consent){valid=false;reason='consent_missing';}return[{json:{...r,validation_status:valid?'validated':'blocked',validation_reason:reason,status:valid?r.status:'blocked',next_state:valid?r.next_state:'human_review',route:valid?r.route:'human_review'}}];"
+      },
+      "id": "wf132-validate",
+      "name": "Validate Outreach Guardrails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({activity_type:$json.crm_activity.activity_type,subject:$json.crm_activity.subject,body:JSON.stringify({buyer_outreach_id:$json.buyer_outreach_id,status:$json.status,next_state:$json.next_state,route:$json.route,reason:$json.reason,buyer_id:$json.buyer_id,buyer_commitment_id:$json.buyer_commitment_id,channel:$json.channel,consent:$json.consent,approved:$json.approved,autonomous:$json.autonomous,guardrails:$json.guardrails}),lead_id:$json.crm_activity.lead_id,property_id:$json.crm_activity.property_id,deal_id:$json.crm_activity.deal_id,external_id:$json.crm_activity.external_id,external_source:$json.crm_activity.external_source,metadata:$json.crm_activity.metadata}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf132-crm",
+      "name": "Persist Buyer Outreach Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,crm_persistence_attempted:true,crm_persistence_status:$json.statusCode>=200&&$json.statusCode<300?'persisted':'failed',next_action:{route:$json.route,next_state:$json.next_state,request_id:$json.request_id,buyer_outreach_id:$json.buyer_outreach_id}}}];"
+      },
+      "id": "wf132-return",
+      "name": "Return Buyer Outreach Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-132 Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Buyer Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Buyer Outreach": {
+      "main": [
+        [
+          {
+            "node": "Validate Outreach Guardrails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Outreach Guardrails": {
+      "main": [
+        [
+          {
+            "node": "Persist Buyer Outreach Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Buyer Outreach Audit": {
+      "main": [
+        [
+          {
+            "node": "Return Buyer Outreach Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf132-v1"
+}

@@ -1,0 +1,165 @@
+{
+  "name": "WF-233 — Dynamic MAO → Property-Level Offer Strategy & Acquisition Decision",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-233-property-offer-strategy",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const asking=Number(d.asking_price??NaN),mao=Number(d.adjusted_mao??d.dynamic_mao??NaN),profit=Number(d.projected_assignment_profit??d.projected_profit??NaN),motivation=String(d.motivation??\"unknown\").toLowerCase(),dealType=String(d.deal_type??\"residential\").toLowerCase(),blockers=Array.isArray(d.blockers)?d.blockers:[];let decision=\"needs_evidence\",state=\"blocked\",route=\"WF-126\",reason=\"Offer strategy inputs are incomplete or blocked.\";if(!lead_id||!deal_id||!property_id||!Number.isFinite(mao)){reason=\"Missing deal identity or dynamic MAO.\";}else if(blockers.length){reason=\"Unresolved deal blockers prevent acquisition decision.\";}else if(!Number.isFinite(asking)){decision=\"needs_evidence\";state=\"needs_evidence\";route=\"WF-231\";reason=\"Asking price is required before an acquisition decision.\";}else if(asking<=mao&&(!Number.isFinite(profit)||profit>0)){decision=\"pursue\";state=\"strategy_ready\";route=\"WF-234\";reason=\"Asking price is at or below dynamic MAO with viable economics.\";}else if(asking>mao&&Number.isFinite(profit)&&profit>0){decision=\"negotiate\";state=\"strategy_ready\";route=\"WF-234\";reason=\"Economics remain viable but asking price exceeds dynamic MAO.\";}else{decision=\"pass\";state=\"strategy_ready\";route=\"WF-235\";reason=\"Current pricing/economics do not support acquisition.\";}return[{json:{workflow:\"WF-233\",lead_id,deal_id,property_id,deal_type:dealType,asking_price:asking,dynamic_mao:mao,projected_assignment_profit:Number.isFinite(profit)?profit:null,motivation,decision,state,route,reason,offer_strategy:{target_offer:decision===\"pursue\"?Math.min(asking,mao):decision===\"negotiate\"?Math.min(asking,mao):null,maximum_offer:mao,negotiation_required:decision===\"negotiate\"},requires_human_review:true}}];"
+      },
+      "name": "Property Offer Strategy Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "strategy_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Acquisition Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'property_offer_strategy',notes:'WF-233 decision='+$json.decision+' state='+$json.state+' asking='+$json.asking_price+' dynamic_mao='+$json.dynamic_mao+' projected_profit='+$json.projected_assignment_profit,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Offer Strategy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,next_workflow:$json.route,acquisition_decision_ready:$json.state===\"strategy_ready\"}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Property Offer Strategy Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Property Offer Strategy Controller": {
+      "main": [
+        [
+          {
+            "node": "Acquisition Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acquisition Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Offer Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Offer Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Offer Strategy": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-233-property-offer-strategy-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

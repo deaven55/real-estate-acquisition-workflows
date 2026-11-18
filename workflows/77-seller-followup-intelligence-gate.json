@@ -1,0 +1,84 @@
+{
+  "name": "WF-077 Seller Follow-Up Intelligence Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-077-seller-followup-intelligence",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf077-webhook",
+      "name": "Seller Follow-Up Intelligence Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-077-seller-followup-intelligence",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const items=Array.isArray(input.items)?input.items:[]; const now=Date.now(); const s=v=>String(v??'').trim(); const actions=items.map(x=>{const last=x.last_contact_at?new Date(x.last_contact_at).getTime():null; const next=x.next_followup_at?new Date(x.next_followup_at).getTime():null; const status=s(x.seller_status??x.status).toLowerCase(); const sentiment=s(x.seller_sentiment).toLowerCase(); const days=last&&!Number.isNaN(last)?Math.floor((now-last)/86400000):null; const overdue=next&&!Number.isNaN(next)&&next<now; const urgency=overdue?35:(next&&!Number.isNaN(next)&&next-now<86400000?25:0); const stale=days!==null&&days>=7?15:days===null?10:0; const hot=['interested','motivated','countered','accepted'].includes(status)?25:status==='new'?10:0; const risk=['negative','angry','do_not_contact'].includes(sentiment)||x.do_not_contact===true?30:0; const score=Math.min(100,urgency+stale+hot+risk); return{record_id:x.record_id??x.lead_id??x.deal_id??null,seller_status:status||null,seller_sentiment:sentiment||null,last_contact_at:x.last_contact_at??null,next_followup_at:x.next_followup_at??null,days_since_contact:days,do_not_contact:x.do_not_contact===true,followup_priority:score,priority_tier:score>=70?'urgent':score>=45?'high':score>=25?'normal':'low',next_action:x.do_not_contact===true?'Do not contact':x.next_action??(overdue?'Follow up now':score>=45?'Review seller context and schedule follow-up':'Monitor'),reason_codes:[overdue?'followup_overdue':null,stale?'contact_stale':null,hot?'seller_signal':null,risk?'seller_risk':null].filter(Boolean)};}).sort((a,b)=>b.followup_priority-a.followup_priority).map((x,i)=>({...x,rank:i+1})); return[{json:{ok:true,adapter:'wf-077',followup_queue:{generated_at:new Date().toISOString(),items:actions.slice(0,50),counts:{total:actions.length,urgent:actions.filter(x=>x.priority_tier==='urgent').length,high:actions.filter(x=>x.priority_tier==='high').length,do_not_contact:actions.filter(x=>x.do_not_contact).length}},assistant_briefing:{followups_now:actions.filter(x=>x.priority_tier==='urgent'&&!x.do_not_contact).slice(0,10),seller_risks:actions.filter(x=>x.seller_sentiment==='negative'||x.seller_sentiment==='angry').slice(0,10),next_actions:actions.filter(x=>!x.do_not_contact).slice(0,10).map(x=>x.next_action)},policy:{do_not_contact_is_hard_suppression:true,no_automatic_outreach:true,human_review_required_for_contact:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true},provenance:{raw_inputs_preserved:true,priority_is_derived:true,no_seller_intent_inference:true}}}];"
+      },
+      "id": "wf077-analysis",
+      "name": "Prioritize Seller Follow-Ups",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf077-response",
+      "name": "Respond Seller Follow-Up Intelligence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Seller Follow-Up Intelligence Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prioritize Seller Follow-Ups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prioritize Seller Follow-Ups": {
+      "main": [
+        [
+          {
+            "node": "Respond Seller Follow-Up Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf077-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

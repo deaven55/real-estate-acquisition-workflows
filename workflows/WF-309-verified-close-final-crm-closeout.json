@@ -1,0 +1,235 @@
+{
+  "name": "WF-309 — Verified Close → Final CRM Closeout & Assignment Profit Record",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-309-verified-close-final-crm-closeout",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf309-webhook",
+      "name": "Webhook — Verified Close",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json; const deal = input.deal ?? input; const verifiedClose = String(deal.close_status ?? deal.status ?? '').toLowerCase() === 'verified_close' || deal.verified_close === true; const dealId = deal.deal_id ?? deal.id; const leadId = deal.lead_id; const propertyId = deal.property_id; const closeId = deal.close_id; const closeDate = deal.actual_closing_date ?? deal.close_date; const grossProfit = Number(deal.gross_profit ?? deal.assignment_fee ?? 0); const closingCosts = Number(deal.closing_costs ?? deal.costs ?? 0); const netProfit = Number(deal.net_profit ?? (grossProfit - closingCosts)); const blockers = Array.isArray(deal.blockers) ? deal.blockers : []; const identityReady = Boolean(dealId && leadId && propertyId && closeId); const profitInputsValid = Number.isFinite(grossProfit) && Number.isFinite(closingCosts) && Number.isFinite(netProfit); const status = !verifiedClose ? 'blocked' : blockers.length ? 'blocked' : !identityReady ? 'incomplete' : !closeDate ? 'incomplete' : !profitInputsValid ? 'invalid_profit_inputs' : netProfit < 0 ? 'negative_profit_review' : 'closeout_ready'; const crmActivity = {activity_type:'verified_close_final_crm_closeout',deal_id:dealId,lead_id:leadId,property_id:propertyId,close_id:closeId,status,close_date:closeDate,gross_profit:grossProfit,closing_costs:closingCosts,net_profit:netProfit,assignment_profit_record:{deal_id:dealId,close_id:closeId,gross_profit:grossProfit,closing_costs:closingCosts,net_profit:netProfit,close_date:closeDate},portfolio_feedback:{signal:netProfit > 0 ? 'positive_close' : netProfit === 0 ? 'breakeven_close' : 'negative_close'},blockers}; return [{json:{...deal,workflow_id:'WF-309',workflow_name:'Verified Close → Final CRM Closeout & Assignment Profit Record',status,verified_close:verifiedClose,identity_ready:identityReady,profit_inputs_valid:profitInputsValid,gross_profit:grossProfit,closing_costs:closingCosts,net_profit:netProfit,assignment_profit_record:crmActivity.assignment_profit_record,portfolio_feedback:crmActivity.portfolio_feedback,crm_activity:crmActivity,next_workflow:status === 'closeout_ready' || status === 'negative_profit_review' ? 'WF-310' : status === 'blocked' ? 'WF-126' : 'WF-308'}}];"
+      },
+      "id": "wf309-controller",
+      "name": "Controller — Final CRM Closeout",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "closeout-ready",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "closeout_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "negative-profit-review",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "negative_profit_review",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf309-gate",
+      "name": "IF — Closeout Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "close_id",
+              "value": "={{ $json.crm_activity.close_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "close_date",
+              "value": "={{ $json.crm_activity.close_date }}"
+            },
+            {
+              "name": "gross_profit",
+              "value": "={{ $json.crm_activity.gross_profit }}"
+            },
+            {
+              "name": "closing_costs",
+              "value": "={{ $json.crm_activity.closing_costs }}"
+            },
+            {
+              "name": "net_profit",
+              "value": "={{ $json.crm_activity.net_profit }}"
+            },
+            {
+              "name": "assignment_profit_record",
+              "value": "={{ JSON.stringify($json.crm_activity.assignment_profit_record) }}"
+            },
+            {
+              "name": "portfolio_feedback",
+              "value": "={{ JSON.stringify($json.crm_activity.portfolio_feedback) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf309-crm",
+      "name": "InsulaCRM — Final Closeout Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, status: $json.status, next_workflow: $json.next_workflow, assignment_profit_record: $json.assignment_profit_record, portfolio_feedback: $json.portfolio_feedback, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf309-response",
+      "name": "Response — Closeout Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Verified Close": {
+      "main": [
+        [
+          {
+            "node": "Controller — Final CRM Closeout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Final CRM Closeout": {
+      "main": [
+        [
+          {
+            "node": "IF — Closeout Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Closeout Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Final Closeout Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Final Closeout Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Final Closeout Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Closeout Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-309-v1",
+  "meta": {
+    "workflow_id": "WF-309",
+    "description": "Verified close flows into final CRM closeout, assignment profit record, and portfolio feedback; negative profit remains reviewable rather than silently accepted.",
+    "safety": {
+      "dynamic_mao_protection": true,
+      "negative_profit_review": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

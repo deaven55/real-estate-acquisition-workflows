@@ -1,0 +1,84 @@
+{
+  "name": "WF-083 Inbound Business Communication Conversation Intake & Routing Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-083-inbound-business-communication",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf083-webhook",
+      "name": "Inbound Business Communication Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-083-inbound-business-communication",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const channel=s(input.channel??input.type).toLowerCase(); const message=s(input.message??input.body??input.text); const sender=s(input.sender??input.from??input.phone??input.email); const recipient=s(input.recipient??input.to); const thread=s(input.thread_id??input.conversation_id??input.message_thread_id); const provider=s(input.provider).toLowerCase(); const providerMessageId=s(input.provider_message_id??input.message_id??input.id); const requestId=s(input.request_id??('inbound:'+provider+':'+providerMessageId)); const leadId=s(input.lead_id); const propertyId=s(input.property_id); const dealId=s(input.deal_id); const dnc=input.do_not_contact===true||input.dnc===true; const gaps=[]; if(!channel||!['sms','email'].includes(channel))gaps.push('channel_sms_or_email'); if(!message)gaps.push('message'); if(!sender)gaps.push('sender'); if(!provider)gaps.push('provider'); if(!providerMessageId)gaps.push('provider_message_id'); if(!thread)gaps.push('thread_or_conversation_id'); const suppressed=dnc; const route=suppressed?'suppressed_dnc':gaps.length?'needs_context':'conversation_intelligence'; return[{json:{ok:!suppressed&&gaps.length===0,adapter:'wf-083',event:{event_type:'inbound_business_communication',received_at:s(input.received_at??new Date().toISOString()),channel,sender,recipient,message,provider,provider_message_id:providerMessageId,thread_id:thread},identity:{lead_id:leadId,property_id:propertyId,deal_id:dealId,identity_resolution_required:!leadId&&!propertyId&&!dealId},authorization:{dnc_suppressed:suppressed,inbound_processing_allowed:!suppressed},routing:{route,next_workflow:route==='conversation_intelligence'?'wf-078-seller-conversation-intelligence':null},execution:{request_id:requestId,idempotency_key:'inbound-communication:'+provider+':'+(providerMessageId||requestId)+':v1',duplicate_safe:true,receipt_required:true},missing_context:gaps,next_action:suppressed?'Do not respond or route to outbound communication; preserve the inbound event for audit.':gaps.length?'Resolve missing provider/thread/identity context before response generation.':'Analyze the message, resolve CRM context, determine response mode, then route any outbound response through WF-082/WF-079 according to configured autonomous communication policy.',policy:{inbound_reply_processing_enabled:true,dnc_hard_suppression:true,autonomous_outbound_requires_explicit_opt_in:true,provider_receipt_required:true,thread_continuity_required:true,all_messages_audited:true,no_legal_advice:true}}}];"
+      },
+      "id": "wf083-normalize",
+      "name": "Normalize Inbound Conversation Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf083-response",
+      "name": "Respond Inbound Communication Intake",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Inbound Business Communication Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Inbound Conversation Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Inbound Conversation Event": {
+      "main": [
+        [
+          {
+            "node": "Respond Inbound Communication Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf083-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

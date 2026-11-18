@@ -1,0 +1,205 @@
+{
+  "name": "WF-032 Distressed Lead Qualification Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wholestack-distressed-lead-qualification-v1",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf032-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        0
+      ],
+      "webhookId": "wholestack-distressed-lead-qualification-v1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body=$json.body??$json; const candidates=Array.isArray(body.candidate_records)?body.candidate_records:[]; const criteria=[...new Set((Array.isArray(body.criteria)?body.criteria:[]).map(x=>String(x).trim().toLowerCase()).filter(Boolean))]; const normalized=candidates.map((c,i)=>{const matched=Array.isArray(c.matched_criteria)?c.matched_criteria:[]; const evidenceCount=Number(c.evidence_count||0); const hasIdentity=Boolean(String(c.owner_name||'').trim()&&String(c.property_address||'').trim()); const explicitSupport=matched.length>0&&evidenceCount>0; return {...c,qualification:{candidate_index:i,has_identity:hasIdentity,explicit_criterion_support:explicitSupport,evidence_count:evidenceCount,requested_criteria:criteria,matched_criteria:matched,missing_criteria:criteria.filter(x=>!matched.includes(x))}};}); return [{json:{success:true,request_id:body.request_id||null,state:body.state||null,county:body.county||null,criteria,candidate_records:normalized}}];"
+      },
+      "id": "wf032-normalize",
+      "name": "Normalize Candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items=$input.all().map(x=>x.json); const output=[]; for(const item of items){const c=item.candidate_records||[]; const qualified=c.map(candidate=>{const q=candidate.qualification||{}; const matched=q.matched_criteria||[]; const score=Math.min(100,matched.length*25+Math.min(25,Number(q.evidence_count||0)*5)+(q.has_identity?15:0)+(q.explicit_criterion_support?10:0)); const status=!q.has_identity?'needs_identity':(!q.explicit_criterion_support?'needs_evidence':(matched.length<q.requested_criteria.length?'partial_support':'qualified_for_review')); return {...candidate,qualification:{...q,qualification_score:score,qualification_status:status,automation_allowed:false,reason:status==='qualified_for_review'?'Explicit evidence supports the requested criteria; downstream compliance and human review remain required.':'Additional explicit identity/evidence is required before downstream review.'}};}); const reviewReady=qualified.filter(x=>x.qualification?.qualification_status==='qualified_for_review'); output.push({json:{...item,candidate_records:reviewReady,qualified_candidate_records:qualified,qualified_count:reviewReady.length,rejected_or_needing_evidence_count:qualified.length-reviewReady.length,policy:'Qualification is evidence-based only. Downstream candidate_records contains only candidates with explicit identity and criterion support; qualified_candidate_records preserves the full qualification audit trail. Qualification does not determine legal distress status, equity, appraisal, seller intent, or outreach permission.'}});} return output;"
+      },
+      "id": "wf032-qualify",
+      "name": "Qualify Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        0
+      ]
+    },
+    {
+      "id": "wf032-prepare-crm",
+      "name": "Prepare InsulaCRM Lead Payloads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        220
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item=$input.first().json;\nconst records=Array.isArray(item.candidate_records)?item.candidate_records:[];\nfunction splitOwner(name){\n  const parts=String(name||'').trim().split(/\\\\s+/).filter(Boolean);\n  return {first_name:parts.shift()||'Unknown',last_name:parts.join(' ')||'Owner'};\n}\nreturn records.map((candidate,index)=>{\n  const owner=splitOwner(candidate.owner_name);\n  const externalId=String(candidate.external_id||candidate.parcel_id||candidate.normalized_identity_key||candidate.candidate_key||`${item.request_id||'wf032'}:${index}`);\n  return {json:{\n    qualification_context:{\n      request_id:item.request_id||null,\n      state:item.state||null,\n      county:item.county||null,\n      criteria:item.criteria||[],\n      qualification:candidate.qualification||{}\n    },\n    candidate,\n    crm_payload:{\n      first_name:owner.first_name,\n      last_name:owner.last_name,\n      phone:candidate.phone||candidate.owner_phone||null,\n      email:candidate.email||candidate.owner_email||null,\n      source:'distressed_lead_qualification',\n      notes:JSON.stringify({\n        qualification:candidate.qualification||{},\n        matched_criteria:candidate.matched_criteria||[],\n        evidence_count:candidate.evidence_count||0,\n        property_address:candidate.property_address||null,\n        county:item.county||candidate.county||null,\n        state:item.state||candidate.state||null\n      }),\n      property_address:candidate.property_address||null,\n      property_city:candidate.property_city||candidate.city||null,\n      property_state:candidate.property_state||candidate.state||item.state||null,\n      property_zip:candidate.property_zip||candidate.zip||null,\n      property_type:candidate.property_type||null,\n      external_id:externalId,\n      external_source:'wf032_distressed_lead_qualification'\n    }\n  }};\n});"
+      }
+    },
+    {
+      "id": "wf032-sync-crm",
+      "name": "Sync Qualified Lead to InsulaCRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        220,
+        220
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/leads' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'acquisition:qualified-lead:' + ($json.crm_payload.external_source || 'wf032') + ':' + ($json.crm_payload.external_id || 'unknown') + ':v1' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.crm_payload) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "wf032-finalize",
+      "name": "Finalize Qualification + CRM Handoff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        220
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const results=$input.all().map(x=>x.json);\nconst synced=results.filter(r=>r && (r.success===true || r.lead_id || r.data?.lead_id));\nreturn [{json:{\n  success:true,\n  qualification_handoff:true,\n  crm_sync_configured:Boolean($env.INSULA_CRM_BASE_URL && $env.INSULA_CRM_API_KEY),\n  crm_synced_count:synced.length,\n  crm_results:results.map(r=>({success:r.success??Boolean(r.lead_id),lead_id:r.lead_id??r.data?.lead_id??null,duplicate:r.duplicate??false,external_id:r.external_id??null,external_source:r.external_source??null})),\n  message:synced.length?'Qualified candidates were handed off to InsulaCRM using external identity and idempotency protection.':'No CRM lead records were synced; verify InsulaCRM environment configuration and candidate qualification output.'\n}}];"
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "wf032-response",
+      "name": "Respond Qualification",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        720,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Candidates": {
+      "main": [
+        [
+          {
+            "node": "Qualify Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualify Leads": {
+      "main": [
+        [
+          {
+            "node": "Prepare InsulaCRM Lead Payloads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare InsulaCRM Lead Payloads": {
+      "main": [
+        [
+          {
+            "node": "Sync Qualified Lead to InsulaCRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Qualified Lead to InsulaCRM": {
+      "main": [
+        [
+          {
+            "node": "Finalize Qualification + CRM Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Qualification + CRM Handoff": {
+      "main": [
+        [
+          {
+            "node": "Respond Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "wf032-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

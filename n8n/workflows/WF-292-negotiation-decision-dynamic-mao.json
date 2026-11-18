@@ -1,0 +1,158 @@
+{
+  "name": "WF-292 — Seller Response → Negotiation Decision & Dynamic MAO Evaluation Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-292-negotiation-decision-dynamic-mao",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf292-webhook",
+      "name": "WF-292 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-292-negotiation-decision-dynamic-mao"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst cls=input.seller_response_classification??{};\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao);\nconst counter=Number(cls.counteroffer_amount??input.counteroffer_amount);\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst classification=String(cls.classification||input.classification||\"\").toLowerCase();\nconst validMao=Number.isFinite(mao)&&mao>0;\nconst validCounter=Number.isFinite(counter)&&counter>0;\nconst nearBand=validMao&&validCounter&&counter<=mao*1.10;\nlet decision=\"needs_review\",strategy=\"human_review\",reason=\"negotiation evidence requires review\";\nif(blockers.length){decision=\"blocked\";strategy=\"blocked\";reason=\"active blockers present\";}\nelse if(!validMao){decision=\"needs_review\";strategy=\"recalibrate\";reason=\"dynamic MAO is missing or invalid\";}\nelse if(classification===\"accepted\"){decision=\"acceptance_ready\";strategy=\"prepare_contract\";reason=\"seller accepted the offer\";}\nelse if(classification===\"counteroffer\"&&validCounter&&counter<=mao){decision=\"counteroffer_within_mao\";strategy=\"accept_or_contract\";reason=\"counteroffer is within protected dynamic MAO\";}\nelse if(classification===\"counteroffer\"&&nearBand){decision=\"counteroffer_near_mao\";strategy=\"revised_offer_or_walkaway\";reason=\"counteroffer is above MAO but within controlled negotiation band\";}\nelse if(classification===\"counteroffer\"&&validCounter&&counter>mao){decision=\"counteroffer_above_mao\";strategy=\"walkaway_or_recalibration\";reason=\"counteroffer exceeds protected dynamic MAO\";}\nelse if(classification===\"rejected\"){decision=\"rejected\";strategy=\"reengagement\";reason=\"seller rejected the offer\";}\nelse if(classification===\"question\"||classification===\"other_response\"){decision=\"clarification_required\";strategy=\"clarify\";reason=\"seller response needs clarification\";}\nelse if(classification===\"no_response\"){decision=\"timeout_followup\";strategy=\"followup\";reason=\"seller has not responded\";}\nconst guardrail=decision===\"counteroffer_above_mao\"?\"HARD_BLOCK_ABOVE_DYNAMIC_MAO\":\"PASS\";\nlet status=\"negotiation_decision_ready\",nextWorkflow=\"WF-293\",humanReview=false;\nif(decision===\"blocked\"){status=\"negotiation_blocked\";nextWorkflow=\"WF-126\";humanReview=true;}\nelse if(decision===\"needs_review\"){status=\"negotiation_review_required\";nextWorkflow=\"WF-126\";humanReview=true;}\nelse if([\"counteroffer_near_mao\",\"counteroffer_above_mao\",\"rejected\",\"clarification_required\"].includes(decision)){humanReview=true;nextWorkflow=decision===\"rejected\"?\"WF-294\":\"WF-293\";}\nelse if(decision===\"timeout_followup\"){nextWorkflow=\"WF-290\";}\nreturn [{json:{...input,workflow:\"WF-292\",workflow_name:\"Seller Response → Negotiation Decision & Dynamic MAO Evaluation Controller\",status,negotiation_decision:{classification,counteroffer_amount:validCounter?counter:null,dynamic_mao:validMao?mao:null,decision,strategy,reason,near_mao:nearBand,guardrail},next_workflow:nextWorkflow,human_review_required:humanReview,audit:{event_type:\"negotiation_decision_dynamic_mao\",idempotency_key:input.idempotency_key||`wf-292:${input.deal_id||\"unknown\"}:${input.dispatch_id||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf292-controller",
+      "name": "WF-292 Negotiation Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['acceptance_ready','counteroffer_within_mao'].includes($json.negotiation_decision.decision)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf292-if",
+      "name": "WF-292 Negotiation Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-292 negotiation decision and dynamic MAO evaluation',description:$json.negotiation_decision.reason,metadata:{workflow:'WF-292',status:$json.status,negotiation_decision:$json.negotiation_decision,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf292-crm",
+      "name": "WF-292 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,negotiation_decision:$json.negotiation_decision,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf292-response",
+      "name": "WF-292 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-292 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-292 Negotiation Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-292 Negotiation Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-292 Negotiation Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-292 Negotiation Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-292 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-292 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-292 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-292 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-292-v1"
+}

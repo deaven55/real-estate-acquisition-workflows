@@ -1,0 +1,84 @@
+{
+  "name": "WF-070 Deal Analysis Explanation Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-070-deal-analysis-explanation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf070-webhook",
+      "name": "Deal Analysis Explanation Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-070-deal-analysis-explanation",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const n=v=>Number.isFinite(Number(v))?Number(v):null; const s=v=>String(v??'').trim(); const value=n(input.market_value??input.arv); const repairs=n(input.repairs)??0; const closing=n(input.closing_costs)??0; const holding=n(input.holding_costs)??0; const fee=n(input.assignment_fee)??0; const target=n(input.minimum_profit??input.target_profit)??fee; const offer=n(input.proposed_offer??input.offer); const mao=n(input.economic_mao??input.mao); const identity=s(input.lead_id??input.property_id??input.deal_id??input.parcel_id); const missing=[]; if(!identity)missing.push('canonical_identity'); if(value===null)missing.push('market_value_or_arv'); if(mao===null)missing.push('economic_mao'); const totalCosts=repairs+closing+holding; const impliedMargin=value===null||offer===null?null:value-offer-totalCosts; const spread=offer===null||mao===null?null:mao-offer; const strengths=[]; const risks=[]; const levers=[]; if(value!==null&&repairs/value<.15)strengths.push('repairs are relatively contained versus estimated value'); if(value!==null&&repairs/value>=.30)risks.push('repairs are a large share of estimated value'); if(spread!==null&&spread>0)strengths.push('proposed offer is below the calculated economic MAO'); if(spread!==null&&spread<0)risks.push('proposed offer exceeds the calculated economic MAO'); if(value!==null&&totalCosts/value>.15)risks.push('transaction and holding costs materially reduce available margin'); if(spread!==null&&spread<0)levers.push('reduce purchase price or improve terms'); if(repairs>0)levers.push('verify repair scope and seek contractor bids'); levers.push('validate comparable sales and buyer exit demand'); return[{json:{ok:missing.length===0,adapter:'wf-070',canonical_identity:identity||null,decision:{status:missing.length?'needs_data':(mao!==null&&offer!==null&&offer<=mao?'workable_at_current_offer':'needs_price_or_terms_adjustment'),primary_principle:'explain_economic_viability_not_70_percent_compliance'},analysis:{market_value_or_arv:value,repairs,closing_costs:closing,holding_costs:holding,assignment_fee:fee,target_profit:target,proposed_offer:offer,economic_mao:mao,implied_margin:impliedMargin,offer_to_mao_spread:spread},why_it_works_or_doesnt:{strengths,risks,levers},missing_requirements:missing,next_action:missing.length?'Collect missing underwriting inputs before making a deal recommendation.':offer!==null&&mao!==null&&offer<=mao?'Validate comps, repairs, buyer demand, and exit strategy before approval.':'Rework price/terms, costs, or exit strategy and recalculate MAO.',policy:{70_percent_rule_secondary:true,deal_viability_primary:true,no_inference:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf070-analysis",
+      "name": "Explain Deal Economics & Improvement Levers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf070-response",
+      "name": "Respond Deal Analysis Explanation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Deal Analysis Explanation Webhook": {
+      "main": [
+        [
+          {
+            "node": "Explain Deal Economics & Improvement Levers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explain Deal Economics & Improvement Levers": {
+      "main": [
+        [
+          {
+            "node": "Respond Deal Analysis Explanation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf070-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

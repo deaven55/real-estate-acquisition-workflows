@@ -1,0 +1,42 @@
+{
+  "name": "WF-056 External Action Reconciliation & Failure Recovery Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-056-action-reconciliation-recovery", "responseMode": "responseNode", "options": {} },
+      "id": "wf056-webhook",
+      "name": "Action Reconciliation Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-056-action-reconciliation-recovery"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const records=Array.isArray(input.dispatch_records)?input.dispatch_records:Array.isArray(input.records)?input.records:[]; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const terminal=new Set(['completed','failed','cancelled']); const retryable=new Set(['failed','timeout','unacknowledged','rejected']); const out=[]; const issues=[]; const recovery=[]; records.forEach((r,i)=>{const id=norm(r.action_id??r.request_id??r.id); const key=norm(r.idempotency_key??r.execution_id??r.request_id); const status=lower(r.receipt_status??r.dispatch_status??r.status); const ref=norm(r.external_reference??r.external_id); const attempts=Number(r.attempt_count??r.attempts??0); const reason=norm(r.failure_reason??r.error??r.message); if(!id)issues.push({record_index:i,type:'missing_action_id',severity:'blocking'}); if(!key)issues.push({record_index:i,type:'missing_idempotency_key',severity:'blocking'}); if(!status)issues.push({record_index:i,type:'missing_action_status',severity:'blocking'}); if(status==='completed'&&!ref)issues.push({record_index:i,type:'completed_without_external_reference',severity:'review'}); const canRetry=retryable.has(status)&&Boolean(key)&&attempts<3; const next=status==='completed'?'close_action':status==='failed'?'reconcile_failure':status==='cancelled'?'record_cancellation':canRetry?'eligible_for_authorized_retry':'await_external_receipt'; const row={record_index:i,action_id:id||null,idempotency_key:key||null,status:status||null,attempt_count:attempts,external_reference:ref||null,failure_reason:reason||null,retryable:canRetry,next_action:next}; out.push(row); if(canRetry)recovery.push({action_id:id||null,idempotency_key:key,retry_reason:reason||status,attempt_count:attempts,recommended_action:'request_human_authorization_for_retry'});}); const blocked=issues.filter(x=>x.severity==='blocking').length; const health=blocked?'blocked':issues.length||recovery.length?'needs_review':'ready'; return[{json:{ok:health==='ready',reconciliation_health:health,record_count:out.length,completed_count:out.filter(x=>x.status==='completed').length,failed_count:out.filter(x=>x.status==='failed').length,cancelled_count:out.filter(x=>x.status==='cancelled').length,retry_candidate_count:recovery.length,reconciliation_records:out,issues,recovery_queue:recovery,next_action:health==='ready'?'Reconcile the completed receipts into the downstream business record and close the action.':recovery.length?'Review each recovery candidate and obtain fresh human authorization before retrying.':'Resolve blocking reconciliation issues before treating external action state as authoritative.',policy:{reconciliation_only:true,no_automatic_retries:true,human_authorization_required_for_retry:true,idempotency_key_required:true,no_external_side_effects_executed:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf056-reconcile",
+      "name": "Reconcile External Actions & Recovery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf056-response",
+      "name": "Respond Reconciliation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Action Reconciliation Webhook": { "main": [[{ "node": "Reconcile External Actions & Recovery", "type": "main", "index": 0 }]] },
+    "Reconcile External Actions & Recovery": { "main": [[{ "node": "Respond Reconciliation", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf056-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

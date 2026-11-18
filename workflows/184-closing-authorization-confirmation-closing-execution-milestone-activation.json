@@ -1,0 +1,172 @@
+{
+  "name": "WF-184 — Closing Authorization Confirmation → Closing Execution & Milestone Activation",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-184-closing-execution-milestone-activation",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Closing Execution Activation",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-184-closing-execution-milestone-activation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{}; const auth=input.closing_authorization??input.authorization??{}; const execution=input.execution??input.closingExecution??{}; const packageValidation=input.closing_package_validation??{}; const milestones=Array.isArray(input.milestones)?input.milestones:[]; const launchKey=String(execution.launchIdempotencyKey??input.launchIdempotencyKey??'').trim(); const executionId=String(execution.id??execution.executionId??'').trim(); const authorized=auth.status==='confirmed'||auth.status==='already_confirmed'; const packageReady=packageValidation.status==='package_ready'||input.packageReady===true; const alreadyActive=execution.status==='active'||execution.active===true; const blockers=Array.isArray(input.blockers)?input.blockers.filter(Boolean):[]; const gaps=[]; if(!authorized)gaps.push('closing_authorization_confirmation'); if(!packageReady)gaps.push('final_package_ready'); if(!launchKey)gaps.push('launch_idempotency_key'); if(!executionId&&!alreadyActive)gaps.push('execution_identity'); if(blockers.length)gaps.push('blockers_cleared'); const activationId=String(input.activationId??execution.activationId??('close:'+launchKey)).trim(); let status=blockers.length?'blocked':alreadyActive?'already_active':gaps.length?'activation_required':'activated'; const activeState={status:status==='activated'||status==='already_active'?'active':status,execution_id:executionId||null,activation_id:activationId||null,launch_idempotency_key:launchKey||null,started_at:status==='activated'?(input.now??new Date().toISOString()):null,milestones:milestones.map((m,i)=>({...m,sequence:m.sequence??i+1,status:m.status??'pending'}))}; const route=status==='activated'||status==='already_active'?'WF-185':status==='blocked'?'WF-126':'WF-183'; return [{json:{...input,workflow:'WF-184',execution_activation:{status,missing_requirements:gaps,active_state:activeState},routing:{next_workflow:route,reason:status,requires_human_review:status==='blocked'||status==='activation_required'},audit:{event:'closing_execution_milestone_activation_evaluated',status,activation_id:activationId||null}}}];"
+      },
+      "name": "Code — Execution & Milestone Activation Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "activated",
+              "leftValue": "={{$json.execution_activation.status}}",
+              "rightValue": "activated",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "already-active",
+              "leftValue": "={{$json.execution_activation.status}}",
+              "rightValue": "already_active",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "name": "IF — Activation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-184:'+($json.execution_activation?.active_state?.activation_id||'unknown'),external_source:'wholesale-os',activity_type:'closing_execution_milestone_activation',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.execution_activation?.status||'unknown',notes:JSON.stringify({workflow:'WF-184',routing:$json.routing,execution_activation:$json.execution_activation,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Activation Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{...($json??{}),workflow:'WF-184',response:{ok:true,workflow:'WF-184',status:$json.execution_activation?.status??'unknown',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),execution_activation:$json.execution_activation??null}}}];"
+      },
+      "name": "Code — Activation Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Closing Execution Activation": {
+      "main": [
+        [
+          {
+            "node": "Code — Execution & Milestone Activation Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Execution & Milestone Activation Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Activation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Activation Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Activation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Activation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Activation Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Activation Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-184-v1"
+}

@@ -1,0 +1,42 @@
+{
+  "name": "WF-046 Acquisition Pipeline Orchestration & Operating Control Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-046-acquisition-pipeline-control", "responseMode": "responseNode", "options": {} },
+      "id": "wf046-webhook",
+      "name": "Pipeline Control Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-046-acquisition-pipeline-control"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const stages=Array.isArray(input.pipeline_records)?input.pipeline_records:Array.isArray(input.records)?input.records:[]; const allowed=['new','normalized','qualified','underwriting','offer_ready','offer_sent','seller_countered','contracted','buyer_matching','buyer_selected','transaction_pending','closing_pending','closed','closed_out','reopened','failed','cancelled']; const norm=v=>String(v??'').toLowerCase().trim(); const stage=r=>norm(r.pipeline_stage??r.stage??r.status); const counts={}; allowed.forEach(s=>counts[s]=0); stages.forEach(r=>{const s=stage(r);if(counts[s]!==undefined)counts[s]++;}); const identity=r=>({candidate_key:r.candidate_key??null,normalized_identity_key:r.normalized_identity_key??null,lead_id:r.lead_id??r.leadId??null,deal_id:r.deal_id??r.dealId??null,property_id:r.property_id??r.propertyId??null,parcel_id:r.parcel_id??null}); const missingIdentity=stages.filter(r=>{const i=identity(r);return !i.candidate_key&&!i.normalized_identity_key&&!i.property_id&&!i.parcel_id}).length; const blockers=[]; const addBlock=(code,msg,count)=>{if(count)blockers.push({code,message:msg,count});}; addBlock('missing_stage','Records have no recognized pipeline stage.',stages.filter(r=>!allowed.includes(stage(r))).length); addBlock('missing_identity','Records lack canonical property identity.',missingIdentity); addBlock('stale_active_record','Active records require an explicit next action or updated timestamp.',stages.filter(r=>['new','normalized','qualified','underwriting','offer_ready','offer_sent','seller_countered','contracted','buyer_matching','buyer_selected','transaction_pending','closing_pending'].includes(stage(r))&&!r.next_action&&!r.updated_at&&!r.last_activity_at).length); const active=stages.filter(r=>!['closed','closed_out','cancelled','failed'].includes(stage(r))); const terminal=stages.length-active.length; const readiness=blockers.length?'needs_attention':'operational'; const priority=blockers.some(b=>['missing_identity','missing_stage'].includes(b.code))?'high':blockers.length?'medium':'normal'; const bottlenecks=allowed.filter(s=>counts[s]).map(s=>({stage:s,count:counts[s]})).sort((a,b)=>b.count-a.count).slice(0,5); const nextActions=stages.filter(r=>r.next_action).slice(0,25).map(r=>({identity:identity(r),stage:stage(r),next_action:r.next_action,priority:r.priority??null})); const stageOrder=['new','normalized','qualified','underwriting','offer_ready','offer_sent','seller_countered','contracted','buyer_matching','buyer_selected','transaction_pending','closing_pending','closed','closed_out']; const transitionWarnings=[]; stages.forEach(r=>{const s=stage(r),i=stageOrder.indexOf(s),prior=norm(r.prior_pipeline_stage);if(prior&&i>=0&&stageOrder.indexOf(prior)>i)transitionWarnings.push({identity:identity(r),prior_stage:prior,current_stage:s,message:'Current stage is earlier than prior stage; review for regression or reopen.'});}); const action=readiness==='operational'?'Continue normal pipeline execution and use stage concentration to prioritize the next operating queue.':priority==='high'?'Resolve identity/stage blockers before relying on the pipeline snapshot.':'Resolve flagged records, then refresh the control snapshot.'; return[{json:{ok:readiness==='operational',control_status:readiness,priority,record_count:stages.length,active_record_count:active.length,terminal_record_count:terminal,pipeline_stage_counts:counts,bottlenecks,blockers,transition_warnings:transitionWarnings,next_actions:nextActions,operating_queue:{highest_priority:nextActions.filter(x=>norm(x.priority)==='high').length,records_requiring_action:nextActions.length},data_quality:{records_with_identity:stages.length-missingIdentity,records_without_identity:missingIdentity,recognized_stage_records:stages.filter(r=>allowed.includes(stage(r))).length},identity_provenance:stages.slice(0,100).map(identity),next_action:action,policy:{control_and_orchestration_only:true,no_automatic_outreach:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true,no_fabricated_pipeline_state:true}}}];"
+      },
+      "id": "wf046-control",
+      "name": "Normalize Pipeline Control Snapshot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf046-response",
+      "name": "Respond Pipeline Control",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Pipeline Control Webhook": { "main": [[{ "node": "Normalize Pipeline Control Snapshot", "type": "main", "index": 0 }]] },
+    "Normalize Pipeline Control Snapshot": { "main": [[{ "node": "Respond Pipeline Control", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf046-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

@@ -1,0 +1,171 @@
+{
+  "name": "WF-166 Seller Response/Timeout → Negotiation Follow-Up Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-166-seller-response-followup",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "166-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-166-seller-response-followup"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const response=input.seller_response??input.response??{}; const deal=input.deal??{}; const raw=String(response.classification??input.classification??input.response_type??input.outcome??'').toLowerCase(); const text=String(response.message??input.message??'').trim(); const dnc=Boolean(input.dnc??response.dnc??false); const dealId=deal.id??input.deal_id??null; const leadId=deal.lead_id??input.lead_id??null; const map=(r)=>r.includes('accept')?'accept':(r.includes('counter')?'counteroffer':(r.includes('declin')?'decline':(r.includes('dnc')?'dnc':(r.includes('timeout')||r.includes('silence')||r.includes('no_response')?'timeout':(r.includes('clarif')?'clarification':'ambiguous'))))); const classification=map(raw); let state='human_review',next='human_review'; if(dnc||classification==='dnc'){state='dnc_blocked';next='stop_communication';} else if(classification==='accept'){state='seller_acceptance_pending_contract';next='WF-150 seller acceptance → contract package launch';} else if(classification==='counteroffer'){state='counteroffer_received';next='WF-147 counteroffer evaluation';} else if(classification==='decline'){state='seller_declined';next='WF-099 seller follow-up timing/cadence engine';} else if(classification==='timeout'){state='seller_response_timeout';next='WF-099 seller follow-up timing/cadence engine';} else if(classification==='clarification'){state='seller_clarification_required';next='WF-120 negotiation response generator';} return [{json:{workflow_id:'WF-166',classification,state,deal_id:dealId,lead_id:leadId,property_id:deal.property_id??input.property_id??null,seller_response:{classification:raw?classification:'ambiguous',message:text,received_at:response.received_at??input.received_at??null},routing:{next_route:next},safety:{dnc_blocks_all_outreach:dnc||classification==='dnc',acceptance_requires_contract_validation:true,counteroffer_requires_mao_evaluation:true,decline_does_not_close_deal:true,timeout_does_not_equal_decline:true,ambiguous_requires_human_review:true},crm_activity:{event_type:'seller_response_followup_decision',outcome:classification,deal_id:dealId,lead_id:leadId},idempotency_key:'wf-166:response:'+(input.event_id??response.message_id??dealId??'unknown')}}}];"
+      },
+      "id": "166-controller",
+      "name": "Classify Seller Response & Route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.classification}}",
+              "rightValue": "ambiguous",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "166-known",
+      "name": "Actionable Response?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,seller_response:$json.seller_response,state:$json.state,routing:$json.routing,safety:$json.safety,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "166-crm",
+      "name": "Persist Seller Response Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Classify Seller Response & Route').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{classification:original.classification,state:original.state,next_route:original.routing.next_route}}}];"
+      },
+      "id": "166-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Classify Seller Response & Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Seller Response & Route": {
+      "main": [
+        [
+          {
+            "node": "Actionable Response?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Actionable Response?": {
+      "main": [
+        [
+          {
+            "node": "Persist Seller Response Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Seller Response Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Seller Response Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-166-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

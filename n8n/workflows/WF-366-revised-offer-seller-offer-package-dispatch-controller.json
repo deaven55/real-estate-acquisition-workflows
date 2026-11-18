@@ -1,0 +1,208 @@
+{
+  "name": "WF-366 — Revised Offer → Seller Offer Package & Dispatch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-366-revised-offer-seller-package-dispatch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "366-webhook",
+      "name": "Webhook — Offer Decision",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const i=$input.first().json||{};const now=new Date().toISOString();const dealId=i.deal_id||i.dealId;const leadId=i.lead_id||i.leadId;const propertyId=i.property_id||i.propertyId;const outcome=String(i.outcome||'').toLowerCase();const offer=Number(i.revised_offer||i.offer_amount||0);const mao=Number(i.adjusted_mao||i.dynamic_mao||0);const phone=String(i.seller_phone||i.phone||'').trim();const email=String(i.seller_email||i.email||'').trim();const dnc=Boolean(i.dnc||i.do_not_contact);const blockers=Array.isArray(i.blockers)?i.blockers:[];let route='human_control',reason='review_required',channel='';if(dnc){route='human_control';reason='dnc';}else if(blockers.length){route='human_control';reason='deal_blocker';}else if(!dealId||!leadId||!propertyId){route='reconciliation';reason='missing_identity';}else if(!['revised_offer','accept_or_contract'].includes(outcome)){route=outcome==='reengage'?'reengagement':'human_control';reason='offer_not_dispatchable';}else if(offer<=0||mao<=0||offer>mao){route='human_control';reason='offer_exceeds_mao_or_missing_amount';}else if(phone){channel='sms';route='dispatch';reason='sms_available';}else if(email){channel='email';route='dispatch';reason='email_fallback';}else{route='human_control';reason='missing_seller_contact';}const message=i.offer_message||'Hi, I wanted to follow up on the property. Based on our review, we can offer $'+offer.toFixed(2)+'. If that works for you, we can move forward with the next steps. Let me know what you think.';const key=(i.decision_idempotency_key||[dealId,leadId,propertyId,offer].join(':'))+':offer-dispatch';return[{json:{...i,workflow_id:'WF-366',status:'package_ready',route,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,offer_amount:offer,adjusted_mao:mao,channel,recipient:channel==='sms'?phone:email,message,offer_package:{offer_amount:offer,mao_protected:true,channel,recipient:channel==='sms'?phone:email,message},dispatch_idempotency_key:key,processed_at:now,crm_activity:{type:'seller_offer_package_dispatch',workflow_id:'WF-366',route,reason,offer_amount:offer,channel}}}];"
+      },
+      "id": "366-controller",
+      "name": "Controller — Build Seller Offer Package & Dispatch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchWholeWord": false,
+            "operator": "or",
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.route}}",
+              "rightValue": "dispatch",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{$json.route}}",
+              "rightValue": "reengagement",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "366-gate",
+      "name": "IF — Dispatch / Re-engagement Routing",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{$json.lead_id}}"
+            },
+            {
+              "name": "activity_type",
+              "value": "={{$json.crm_activity.type}}"
+            },
+            {
+              "name": "notes",
+              "value": "={{JSON.stringify($json.crm_activity)}}"
+            },
+            {
+              "name": "external_id",
+              "value": "={{$json.dispatch_idempotency_key}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "366-crm",
+      "name": "InsulaCRM — Persist Offer Package",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "366-response",
+      "name": "Respond — Offer Package State",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Offer Decision": {
+      "main": [
+        [
+          {
+            "node": "Controller — Build Seller Offer Package & Dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Build Seller Offer Package & Dispatch": {
+      "main": [
+        [
+          {
+            "node": "IF — Dispatch / Re-engagement Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Dispatch / Re-engagement Routing": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Persist Offer Package",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Persist Offer Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Persist Offer Package": {
+      "main": [
+        [
+          {
+            "node": "Respond — Offer Package State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-366-v1",
+  "meta": {
+    "workflow_id": "WF-366",
+    "purpose": "Assemble safe seller offer package and choose SMS/email dispatch channel",
+    "routes": {
+      "dispatch": "WF-347",
+      "reengagement": "WF-345",
+      "reconciliation": "WF-360",
+      "human_control": "WF-126"
+    }
+  }
+}

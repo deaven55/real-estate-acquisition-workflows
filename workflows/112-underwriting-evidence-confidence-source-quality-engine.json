@@ -1,0 +1,191 @@
+{
+  "name": "WF-112 Underwriting Evidence Confidence & Source Quality Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-112-underwriting-evidence-confidence",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf112-webhook",
+      "name": "Evidence Confidence Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??'').trim();\nconst first=(...v)=>v.find(x=>x!==undefined&&x!==null&&x!=='');\nconst identity=input.identity??{};\nconst leadId=s(first(input.lead_id,identity.lead_id));\nconst propertyId=s(first(input.property_id,identity.property_id));\nconst dealId=s(first(input.deal_id,identity.deal_id));\nconst id=s(first(dealId,propertyId,leadId));\nconst requestId=s(input.request_id)||('evidence-confidence:'+(id||'unknown')+':v1');\nconst packet=input.packet??input;\nconst evidence=packet.evidence??{};\nconst sourceMeta=packet.source_metadata??input.source_metadata??{};\nconst rules={direct_source:0.95,verified_source:0.9,derived_source:0.8,unknown_source:0.5,missing:0};\nfunction score(value,meta){\n if(value===undefined||value===null||value==='')return {score:0,status:'missing',reason:'no_evidence'};\n const m=meta??{};\n if(Number.isFinite(Number(m.confidence)))return {score:Math.max(0,Math.min(1,Number(m.confidence))),status:'provided_confidence',reason:'source_confidence_supplied'};\n const source=s(m.source_type??m.source);\n if(source==='direct'||source==='primary')return {score:rules.direct_source,status:'direct_source',reason:'primary_or_direct_source'};\n if(source==='verified'||source==='verified_source')return {score:rules.verified_source,status:'verified_source',reason:'verified_source'};\n if(source==='derived'||source==='model'||source==='estimated')return {score:rules.derived_source,status:'derived_source',reason:'derived_or_estimated'};\n if(source)return {score:rules.unknown_source,status:'unknown_source',reason:'source_declared_but_unverified'};\n return {score:rules.unknown_source,status:'unknown_source',reason:'source_metadata_missing'};\n}\nconst keys=['valuation','comps','repairs','risk','buyer_demand','exit_strategy'];\nconst scores={};\nfor(const k of keys){\n const v=evidence[k];\n const meta=(packet.evidence_metadata?.[k]??input.evidence_metadata?.[k]??(v&&typeof v==='object'&&!Array.isArray(v)?v.metadata:null));\n scores[k]=score(v,meta);\n}\nconst weights={valuation:.25,comps:.2,repairs:.15,risk:.15,buyer_demand:.1,exit_strategy:.15};\nlet weighted=0,weightTotal=0;\nfor(const k of keys){weighted+=scores[k].score*weights[k];weightTotal+=weights[k];}\nconst overall=weightTotal?weighted/weightTotal:0;\nconst missing=keys.filter(k=>scores[k].score===0);\nconst low=keys.filter(k=>scores[k].score>0&&scores[k].score<0.7);\nconst conflicts=keys.filter(k=>evidence[k]?.conflict===true||evidence[k]?.status==='conflict');\nconst quality=overall>=.85?'high':overall>=.7?'medium':overall>0?'low':'insufficient';\nconst ready=missing.length===0&&conflicts.length===0&&overall>=.7;\nconst packetId=s(packet.packet_id)||('underwriting-packet:'+(id||'unknown')+':v1');\nreturn[{json:{ok:true,status:ready?'confidence_ready':missing.length?'confidence_incomplete':conflicts.length?'confidence_conflict':'confidence_low',request_id:requestId,packet_id:packetId,identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null},source_quality:{overall_score:Number(overall.toFixed(4)),quality,weighted_scores:scores,weights,missing,low_confidence:low,conflicts,threshold:.7},policy:{confidence_required_for_mao:true,low_confidence_blocks_mao:true,conflicts_block_mao:true,unknown_sources_do_not_count_as_verified:true},routing:{next_workflow:ready?'wf-109-underwriting-evidence-aggregator':conflicts.length?'human_review':'wf-111-underwriting-evidence-reconciliation',reason:ready?'evidence_confidence_sufficient_for_aggregation':conflicts.length?'evidence_conflict_requires_review':'evidence_quality_or_completeness_requires_reconciliation'},evidence:packet.evidence??{}}}];"
+      },
+      "id": "wf112-score",
+      "name": "Score Evidence Quality",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "confidence_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf112-ready",
+      "name": "Confidence Sufficient?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.ACQUISITION_WORKFLOW_BASE_URL}}/webhook/wf-109-underwriting-evidence-aggregator",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{JSON.stringify({request_id:$json.request_id,lead_id:$json.identity.lead_id,property_id:$json.identity.property_id,deal_id:$json.identity.deal_id,packet_id:$json.packet_id,evidence:$json.evidence,evidence_quality:$json.source_quality,source_workflow:'wf-112'})}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf112-aggregate",
+      "name": "Send Confidence-Qualified Evidence to WF-109",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf112-response",
+      "name": "Respond Confidence Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf112-blocked",
+      "name": "Respond Confidence Blocked",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Evidence Confidence Webhook": {
+      "main": [
+        [
+          {
+            "node": "Score Evidence Quality",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Evidence Quality": {
+      "main": [
+        [
+          {
+            "node": "Confidence Sufficient?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confidence Sufficient?": {
+      "main": [
+        [
+          {
+            "node": "Send Confidence-Qualified Evidence to WF-109",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Confidence Blocked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Confidence-Qualified Evidence to WF-109": {
+      "main": [
+        [
+          {
+            "node": "Respond Confidence Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf112-v1"
+}

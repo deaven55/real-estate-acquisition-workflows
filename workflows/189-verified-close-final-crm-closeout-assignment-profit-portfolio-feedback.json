@@ -1,0 +1,163 @@
+{
+  "name": "WF-189 — Verified Close → Final CRM Closeout, Assignment Profit Record & Portfolio Feedback",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-189-final-crm-closeout-profit-record",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Verified Close",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-189-final-crm-closeout-profit-record"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const v=x.verified_close??{};const p=x.profit_reconciliation??{};const net=Number(v.net_profit??p.net_profit??0);const verified=v.status==='verified_close';const leadId=String(x.lead_id??'').trim();const dealId=String(x.deal_id??'').trim();const propertyId=String(x.property_id??'').trim();const closeId=String(x.close_id??x.closing_id??('close:'+dealId)).trim();const blockers=Array.isArray(x.blockers)?x.blockers.filter(Boolean):[];const missing=[];if(!verified)missing.push('verified_close');if(!dealId)missing.push('deal_id');if(!leadId)missing.push('lead_id');if(!propertyId)missing.push('property_id');if(!closeId)missing.push('close_id');let status=blockers.length?'blocked':missing.length?'closeout_data_incomplete':'closeout_ready';const route=status==='closeout_ready'?'WF-190':status==='blocked'?'WF-126':'WF-188';const record={close_id:closeId,deal_id:dealId,lead_id:leadId,property_id:propertyId,verified_close:true,gross_profit:Number(v.gross_profit??p.gross_profit??0),total_costs:Number(v.total_costs??p.total_costs??0),net_profit:Number.isFinite(net)?net:null,closed_at:x.closed_at??v.closing_date??new Date().toISOString()};return[{json:{...x,workflow:'WF-189',crm_closeout:{status,missing_requirements:missing,profit_record:record,portfolio_feedback:{net_profit:record.net_profit,deal_type:x.deal_type??'unknown',exit_strategy:x.exit_strategy??'unknown'}},routing:{next_workflow:route,requires_human_review:status==='blocked'},audit:{event:'verified_close_final_crm_closeout_evaluated',status}}}];"
+      },
+      "name": "Code — CRM Closeout & Profit Record Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.crm_closeout.status}}",
+              "rightValue": "closeout_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Closeout Readiness Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-189:'+($json.crm_closeout?.profit_record?.close_id||'unknown'),external_source:'wholesale-os',activity_type:'final_crm_closeout_profit_record',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.crm_closeout?.status||'unknown',notes:JSON.stringify({workflow:'WF-189',crm_closeout:$json.crm_closeout,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Final Closeout Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-189',status:$json.crm_closeout?.status??'unknown',next_workflow:$json.routing?.next_workflow??'WF-188',requires_human_review:Boolean($json.routing?.requires_human_review),crm_closeout:$json.crm_closeout??null}}}];"
+      },
+      "name": "Code — Final Closeout Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Verified Close": {
+      "main": [
+        [
+          {
+            "node": "Code — CRM Closeout & Profit Record Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — CRM Closeout & Profit Record Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Closeout Readiness Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Closeout Readiness Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Final Closeout Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Final Closeout Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Final Closeout Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Final Closeout Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-189-v1"
+}

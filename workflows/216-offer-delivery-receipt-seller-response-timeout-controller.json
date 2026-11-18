@@ -1,0 +1,163 @@
+{
+  "name": "WF-216 — Offer Delivery Receipt → Seller Response / Timeout Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-216-offer-delivery-receipt-seller-response-timeout-controller",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Offer Delivery Receipt",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-216-offer-delivery-receipt-seller-response-timeout-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const d=x.offer_dispatch??{};const receipt=String(x.delivery_status??x.receipt_status??x.status??'').toLowerCase();const missing=[];if(!x.deal_id)missing.push('deal_id');if(!x.lead_id)missing.push('lead_id');if(!d.dispatch_id&&!x.dispatch_id)missing.push('dispatch_id');const delivered=['delivered','delivery_confirmed','sent'].includes(receipt);const failed=['failed','undelivered','bounced'].includes(receipt);const responded=['response_received','seller_response_received'].includes(receipt);const timedOut=['response_timeout','timeout'].includes(receipt);let state='receipt_pending',reason='awaiting_delivery_receipt';if(missing.length)state='blocked',reason='missing_dispatch_identity';else if(responded)state='response_received',reason='seller_response_received';else if(timedOut)state='response_timeout',reason='seller_response_timeout';else if(failed)state='delivery_failed',reason='delivery_failed';else if(delivered)state='awaiting_seller_response',reason='offer_delivered';const next=state==='response_received'?'WF-217':(state==='awaiting_seller_response'||state==='response_timeout')?'WF-218':state==='delivery_failed'||state==='receipt_pending'?'WF-215':'WF-126';return[{json:{...x,workflow:'WF-216',offer_delivery_response:{state,reason,receipt_status:receipt,dispatch_id:d.dispatch_id||x.dispatch_id||null,response_deadline:x.response_deadline||null},routing:{next_workflow:next,requires_human_review:state!=='awaiting_seller_response'},audit:{event:'offer_delivery_receipt_seller_response_timeout_evaluated',state}}}];"
+      },
+      "name": "Code — Delivery Receipt Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "routed",
+              "leftValue": "={{$json.offer_delivery_response.state}}",
+              "rightValue": "response_received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Seller Response Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-216:'+($json.deal_id||'unknown')+':'+($json.offer_delivery_response?.dispatch_id||'unknown'),external_source:'wholesale-os',activity_type:'offer_delivery_receipt_seller_response_timeout_controller',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.offer_delivery_response?.state||'blocked',notes:JSON.stringify({workflow:'WF-216',offer_delivery_response:$json.offer_delivery_response,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Delivery Receipt Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-216',state:$json.offer_delivery_response?.state??'blocked',next_workflow:$json.routing?.next_workflow??'WF-126',dispatch_id:$json.offer_delivery_response?.dispatch_id??null}}}];"
+      },
+      "name": "Code — Delivery Receipt Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Offer Delivery Receipt": {
+      "main": [
+        [
+          {
+            "node": "Code — Delivery Receipt Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Delivery Receipt Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Seller Response Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Seller Response Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Delivery Receipt Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Delivery Receipt Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Delivery Receipt Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Delivery Receipt Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-216-v1"
+}

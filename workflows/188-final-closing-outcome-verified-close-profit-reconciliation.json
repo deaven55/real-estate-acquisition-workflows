@@ -1,0 +1,163 @@
+{
+  "name": "WF-188 — Final Closing Outcome → Verified Close, Profit Reconciliation & CRM Closeout",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-188-verified-close-profit-reconciliation",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Final Closing Outcome",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-188-verified-close-profit-reconciliation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const o=x.closing_outcome_evaluation??x.closing_outcome??{};const close=x.close_verification??{};const executed=x.executed_agreement===true||x.signed_evidence===true||o.signed_evidence_present===true;const funds=x.funds_verified===true||close.funds_verified===true;const title=x.title_verified===true||close.title_verified===true;const closingDate=x.closing_date??close.closing_date??null;const profit=x.profit_reconciliation??{};const gross=Number(profit.gross_profit??x.gross_profit??0);const costs=Number(profit.total_costs??x.total_costs??0);const net=Number.isFinite(gross-costs)?gross-costs:null;const blockers=Array.isArray(x.blockers)?x.blockers.filter(Boolean):[];const verifiedClose=close.status==='verified'||close.status==='closed'||(executed&&funds&&title&&o.status==='completed');let status=blockers.length?'blocked':!executed?'execution_evidence_missing':!funds?'funding_verification_required':!title?'title_verification_required':!closingDate?'closing_date_missing':!verifiedClose?'close_verification_required':'verified_close';const route=status==='verified_close'?'WF-189':status==='blocked'?'WF-126':'WF-187';return[{json:{...x,workflow:'WF-188',verified_close:{status,executed_agreement_verified:executed,funds_verified:funds,title_verified:title,closing_date:closingDate,gross_profit:Number.isFinite(gross)?gross:null,total_costs:Number.isFinite(costs)?costs:null,net_profit:net,blockers},routing:{next_workflow:route,requires_human_review:status!=='verified_close'},audit:{event:'verified_close_profit_reconciliation_evaluated',status}}}];"
+      },
+      "name": "Code — Verified Close & Profit Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "verified",
+              "leftValue": "={{$json.verified_close.status}}",
+              "rightValue": "verified_close",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Verified Close Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-188:'+($json.deal_id||$json.property_id||'unknown')+':verified_close',external_source:'wholesale-os',activity_type:'verified_close_profit_reconciliation',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.verified_close?.status||'unknown',notes:JSON.stringify({workflow:'WF-188',verified_close:$json.verified_close,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Verified Close Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-188',status:$json.verified_close?.status??'unknown',next_workflow:$json.routing?.next_workflow??'WF-187',requires_human_review:Boolean($json.routing?.requires_human_review),verified_close:$json.verified_close??null}}}];"
+      },
+      "name": "Code — Verified Close Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Final Closing Outcome": {
+      "main": [
+        [
+          {
+            "node": "Code — Verified Close & Profit Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Verified Close & Profit Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Verified Close Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Verified Close Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Verified Close Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Verified Close Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Verified Close Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Verified Close Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-188-v1"
+}

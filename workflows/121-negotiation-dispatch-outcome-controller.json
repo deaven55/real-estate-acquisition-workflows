@@ -1,0 +1,148 @@
+{
+  "name": "WF-121 — Negotiation Dispatch & Outcome Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-121-negotiation-dispatch-outcome-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf121-webhook",
+      "name": "WF-121 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b=$json.body??$json,r=b.response??b;const status=String(r.status??'').toLowerCase(),action=String(r.response_action??r.action??'').toLowerCase(),delivery=String(b.delivery_status??r.delivery_status??'').toLowerCase(),dnc=Boolean(b.dnc??r.dnc),requestId=String(b.request_id??r.request_id??'wf121-'+Date.now()),responseId=String(r.response_id??b.response_id??''),leadId=r.lead_id??b.lead_id??null,dealId=r.deal_id??b.deal_id??null,propertyId=r.property_id??b.property_id??null;let outcome='human_review',nextState='human_review',route='human_review',reason='';if(dnc||delivery==='dnc'||delivery==='stop'){outcome='suppressed';nextState='suppressed';route='none';reason='DNC/STOP suppression';}else if(status==='blocked'||delivery==='failed'||delivery==='error'||delivery==='timeout'||delivery==='transport_error'){outcome='delivery_failure';nextState='delivery_attention';route='wf-089-safe-retry-reconciliation';reason='Outbound communication did not complete successfully';}else if(action==='accept'&&(delivery==='sent'||delivery==='delivered'||delivery==='accepted'||status==='ready')){outcome='accepted';nextState='accepted';route='wf-036-offer-lifecycle';reason='Seller acceptance response is ready for offer lifecycle advancement';}else if(action==='counter'&&(delivery==='sent'||delivery==='delivered'||status==='ready')){outcome='counter_sent';nextState='awaiting_seller_response';route='wf-099-seller-follow-up-timing';reason='Counter response dispatched; await seller response';}else if(action==='decline'||action==='nurture'){outcome=action==='decline'?'declined':'nurture';nextState=action==='decline'?'paused':'nurture';route='wf-099-seller-follow-up-timing';reason='Negotiation response closed or deferred';}else if(action==='clarify'){outcome='clarification_sent';nextState='awaiting_seller_response';route='wf-099-seller-follow-up-timing';reason='Clarification requested from seller';}else{outcome='human_review';nextState='human_review';route='human_review';reason='Insufficient evidence for safe state transition';}const auditId='negotiation-dispatch:'+responseId+':'+requestId+':v1';return[{json:{workflow:'WF-121',workflow_version:'1.0',request_id:requestId,response_id:responseId,audit_id:auditId,outcome,next_state:nextState,route,reason,lead_id:leadId,deal_id:dealId,property_id:propertyId,delivery_status:delivery,guardrails:{dnc_suppression:true,no_retry_on_dnc:true,acceptance_requires_offer_lifecycle:true,failed_delivery_routes_to_safe_retry:true,no_advance_without_evidence:true},crm_activity:{activity_type:'negotiation_dispatch_outcome',subject:'WF-121 negotiation dispatch — '+outcome,lead_id:leadId,property_id:propertyId,deal_id:dealId,external_id:auditId,external_source:'wholesaling-os-negotiation',metadata:{response_id:responseId,outcome,next_state,route,delivery_status:delivery,reason}},dispatch:{route,request_id:requestId,response_id:responseId}}}];"
+      },
+      "id": "wf121-normalize",
+      "name": "Evaluate Dispatch Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;if(!r.audit_id||!r.outcome||!r.next_state||!r.route)return[{json:{...r,outcome:'blocked',next_state:'human_review',route:'human_review',audit_status:'invalid_outcome_contract'}}];if(r.outcome==='accepted'&&r.next_state!=='accepted')return[{json:{...r,outcome:'blocked',next_state:'human_review',route:'human_review',audit_status:'acceptance_state_mismatch'}}];if(r.outcome==='suppressed'&&r.route!=='none')return[{json:{...r,outcome:'blocked',next_state:'suppressed',route:'none',audit_status:'dnc_route_mismatch'}}];return[{json:{...r,audit_status:'validated'}}];"
+      },
+      "id": "wf121-validate",
+      "name": "Validate Outcome Guardrails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({ activity_type: $json.crm_activity.activity_type, subject: $json.crm_activity.subject, body: JSON.stringify({ audit_id: $json.audit_id, response_id: $json.response_id, outcome: $json.outcome, next_state: $json.next_state, route: $json.route, reason: $json.reason, delivery_status: $json.delivery_status, guardrails: $json.guardrails }), lead_id: $json.crm_activity.lead_id, property_id: $json.crm_activity.property_id, deal_id: $json.crm_activity.deal_id, external_id: $json.crm_activity.external_id, external_source: $json.crm_activity.external_source, metadata: $json.crm_activity.metadata }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf121-crm",
+      "name": "Persist Negotiation Outcome Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;return[{json:{...r,crm_persistence_attempted:true,crm_persistence_status:$json.statusCode>=200&&$json.statusCode<300?'persisted':'failed',next_action:{route:r.route,next_state:r.next_state,request_id:r.request_id,response_id:r.response_id}}}];"
+      },
+      "id": "wf121-return",
+      "name": "Return Negotiation Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-121 Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Dispatch Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Dispatch Outcome": {
+      "main": [
+        [
+          {
+            "node": "Validate Outcome Guardrails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Outcome Guardrails": {
+      "main": [
+        [
+          {
+            "node": "Persist Negotiation Outcome Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Negotiation Outcome Audit": {
+      "main": [
+        [
+          {
+            "node": "Return Negotiation Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf121-v1"
+}

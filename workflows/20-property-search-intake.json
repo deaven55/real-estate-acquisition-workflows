@@ -1,0 +1,1177 @@
+{
+  "name": "WholeStack WF-020: State/County Property Search Intake",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-property-search-intake-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare Search Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input=$input.first().json.body||$input.first().json; const required=['state']; const missing=required.filter(k=>!input[k]); let state=String(input.state||'').trim().toUpperCase(); const aliases={'NORTH CAROLINA':'NC','SOUTH CAROLINA':'SC','NEW YORK':'NY','NEW JERSEY':'NJ','NEW MEXICO':'NM','NEW HAMPSHIRE':'NH','WEST VIRGINIA':'WV','WASHINGTON':'WA','DISTRICT OF COLUMBIA':'DC'}; state=aliases[state]||state; const rawCriteria=Array.isArray(input.criteria)?input.criteria:[]; const aliasesCriteria={'tax delinquent':'tax_delinquent','tax-delinquent':'tax_delinquent','vacant':'vacant','vacant property':'vacant','vacant land':'vacant_land','absentee':'absentee','absentee owner':'absentee','high equity':'high_equity','high-equity':'high_equity','probate':'probate','pre foreclosure':'pre_foreclosure','pre-foreclosure':'pre_foreclosure','foreclosure':'pre_foreclosure','fixer upper':'fixer_upper','fixer-upper':'fixer_upper','distressed':'distressed'}; const criteria=[...new Set(rawCriteria.map(v=>aliasesCriteria[String(v).trim().toLowerCase()]||String(v).trim().toLowerCase().replace(/\\s+/g,'_')).filter(Boolean))]; return [{json:{valid:missing.length===0&&/^[A-Z]{2}$/.test(state),errors:missing.length?missing:(/^[A-Z]{2}$/.test(state)?[]:['state']),state,county:String(input.county||'').trim(),city:String(input.city||'').trim(),zip:String(input.zip||'').trim(),criteria,property_type:input.property_type||null,limit:Math.min(25,Math.max(1,Number(input.limit||10))),search_notes:String(input.search_notes||'').trim(),request_id:String(input.request_id||('search-'+Date.now()))}}];"
+      }
+    },
+    {
+      "id": "if",
+      "name": "IF Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "leftValue": ""
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "bad",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        240
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success:false,errors:$json.errors}) }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "registry",
+      "name": "Resolve Curated Jurisdiction Sources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        700,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-jurisdiction-source-registry-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,property_type:$json.property_type,limit:$json.limit,search_notes:$json.search_notes,official_sources:$json.official_sources||[]}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "sourceStrategy",
+      "name": "Build Criteria Source Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const criteria=new Set($json.criteria||[]); const restricted=$json.commercial_restrictions||[];\nconst map={\n  tax_delinquent:{types:[\"tax_delinquency\",\"tax_record\",\"county_dataset\"],fields:[\"delinquent_tax_amount\",\"tax_status\",\"tax_amount\",\"parcel_id\",\"owner_name\"]},\n  vacant:{types:[\"gis_parcel\",\"property_record\",\"tax_record\",\"permit_record\"],fields:[\"property_address\",\"parcel_id\",\"property_type\",\"building_sqft\",\"year_built\",\"owner_name\",\"mailing_address\"]},\n  vacant_land:{types:[\"gis_parcel\",\"tax_record\",\"zoning_record\",\"county_dataset\"],fields:[\"parcel_id\",\"acreage\",\"zoning\",\"land_value\",\"property_type\",\"owner_name\"]},\n  absentee:{types:[\"property_record\",\"tax_record\",\"land_record\"],fields:[\"owner_name\",\"mailing_address\",\"property_address\",\"parcel_id\"]},\n  high_equity:{types:[\"land_record\",\"property_record\",\"tax_record\"],fields:[\"owner_name\",\"last_verified_sale_date\",\"last_verified_sale_price\",\"assessed_value\",\"parcel_id\"]},\n  probate:{types:[\"probate_record\",\"court_record\",\"land_record\"],fields:[\"owner_name\",\"estate_or_probate_signal\",\"property_address\",\"parcel_id\",\"source_record_id\"]},\n  pre_foreclosure:{types:[\"foreclosure_record\",\"court_record\",\"land_record\"],fields:[\"owner_name\",\"property_address\",\"parcel_id\",\"foreclosure_signal\",\"source_record_id\"]},\n  fixer_upper:{types:[\"permit_record\",\"code_enforcement\",\"property_record\",\"gis_parcel\"],fields:[\"property_address\",\"building_sqft\",\"year_built\",\"permit_records\",\"condition_signals\",\"parcel_id\"]},\n  distressed:{types:[\"tax_delinquency\",\"foreclosure_record\",\"permit_record\",\"code_enforcement\",\"property_record\"],fields:[\"distress_signals\",\"owner_name\",\"property_address\",\"parcel_id\",\"source_record_id\"]}\n};\nconst selected=[...criteria].flatMap(c=>map[c]||[]).reduce((acc,v)=>acc.includes(v)?acc:acc.concat(v),[]);\nconst defaultTypes=[\"property_record\",\"tax_record\",\"gis_parcel\",\"land_record\"];\nconst sourceTypes=selected.length?selected:defaultTypes;\nconst requestedFields=[...criteria].flatMap(c=>map[c]?.fields||[]).reduce((acc,v)=>acc.includes(v)?acc:acc.concat(v),[]);\nreturn [{json:{...$json,source_strategy:{criteria:[...criteria],priority_source_types:sourceTypes,required_evidence_fields:requestedFields,minimum_identity_fields:[\"owner_name\",\"property_address\",\"state\"],curated_sources:$json.curated_sources||[],commercial_restrictions:restricted,source_resolution:$json.source_resolution||null,criteria_rules:{tax_delinquent:'Require explicit delinquent tax evidence; GIS alone is insufficient when no delinquency field exists.',vacant:'Require explicit structure/use evidence; absence of building data is not proof of vacancy.',vacant_land:'Prefer explicit land/vacant-land use plus structure evidence; acreage alone is not proof.',absentee:'Compare explicit site and mailing addresses; do not infer absentee status without both.',high_equity:'Do not call equity from assessed value alone; require explicit debt evidence or label as needs_evidence.',probate:'Require probate/court/estate evidence.',pre_foreclosure:'Require foreclosure/court/default/lis-pendens evidence.',fixer_upper:'Require explicit condition, permit, code-enforcement, violation, or comparable evidence.',distressed:'Require one or more explicit distress signals from tax, foreclosure, permit, code, or court sources.'},rules:[\"Use official sources first.\",\"Match each criterion to evidence from the corresponding source type when available.\",\"Do not infer a distress status from absence of data.\",\"Keep unknown fields null and list them in limitations.\",\"Preserve source_url or source_record_id for every candidate.\"]}}}];"
+      }
+    },
+    {
+      "id": "gisAdapter",
+      "name": "Query Official GIS Adapter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1600,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-official-arcgis-source-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,official_sources:$json.adapter_plan?.arcgis||[]}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "nonArcGISAdapter",
+      "name": "Query Official Non-ArcGIS Adapter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1820,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-official-non-arcgis-source-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,criteria:$json.criteria,limit:$json.limit,sources:$json.adapter_plan?.non_arcgis||[]}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "mergeResearchContext",
+      "name": "Merge GIS Research Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const base=$('Build Criteria Source Strategy').first().json; const gis=$('Query Official GIS Adapter').first().json; const non=$('Query Official Non-ArcGIS Adapter').first().json; const crit=$('Query Criterion Evidence Adapter').first().json; const nonResults=Array.isArray(non.source_results)?non.source_results:[]; const nonRecords=nonResults.flatMap(r=>Array.isArray(r.records)?r.records:[]); const critRecords=Array.isArray(crit.records)?crit.records:[]; return [{json:{...base,gis_records:Array.isArray(gis.records)?gis.records:[],gis_record_count:gis.record_count||0,gis_sources_checked:gis.sources_checked||0,gis_limitations:gis.limitations||[],non_arcgis_records:nonRecords,non_arcgis_record_count:nonRecords.length,non_arcgis_sources_checked:nonResults.length,non_arcgis_limitations:nonResults.flatMap(r=>r.limitations||[]),criterion_evidence:critRecords,criterion_evidence_count:critRecords.length,criterion_evidence_limitations:crit.limitations||[],criterion_adapter_results:crit.adapter_results||[],restricted_sources:non.skipped_sources||[]}}];"
+      }
+    },
+    {
+      "id": "criterionAdapter",
+      "name": "Query Criterion Evidence Adapter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1300,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-criterion-evidence-orchestrator-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,sources:$json.adapter_plan?.criterion_evidence||[]}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "research",
+      "name": "Research Candidate Properties",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1420,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PERPLEXITY_API_URL || 'https://api.perplexity.ai/chat/completions' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.PERPLEXITY_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({model:$env.PERPLEXITY_PROPERTY_MODEL || 'sonar',messages:[{role:'system',content:'You are a property-record research and verification agent. You are given a deterministic list of qualified candidate records produced by an evidence-based qualification gate. Use official sources first to cross-check and enrich those candidates. Do not create new candidate properties that are absent from the supplied qualified candidate list. Do not invent owners, addresses, parcel IDs, delinquency amounts, values, sale facts, or source URLs. Preserve supplied candidate identity and provenance fields when supported. Only return candidates from the qualified list for which the cited source supports the key identity facts. Return JSON only: {candidates:[{owner_name,property_address,city,state,zip,county,parcel_id,property_type,distress_signals,source_record_id,source_url,source_observed_at,confidence,notes}],limitations:[],search_notes:''}. Each candidate must have owner_name, property_address, state, and source_url or source_record_id.'},{role:'user',content:'Jurisdiction: '+$json.state+' '+($json.county||'')+' '+($json.city||'')+' '+($json.zip||'')+'\\\\nCriteria: '+JSON.stringify($json.criteria)+'\\\\nProperty type: '+($json.property_type||'any')+'\\\\nLimit: '+$json.limit+'\\\\nAdditional notes: '+$json.search_notes+'\\\\nOfficial sources discovered for this jurisdiction: '+JSON.stringify($json.official_sources)+'\\\\nSource discovery limitations: '+JSON.stringify($json.source_limitations)+'\\\\\\\\nMachine-readable GIS records collected from official sources: '+JSON.stringify($json.gis_records)+'\\\\\\\\nNon-ArcGIS official records collected: '+JSON.stringify($json.non_arcgis_records)+'\\\\nCriterion evidence collected: '+JSON.stringify($json.criterion_evidence)+'\\\\nDeterministically deduped and ranked candidate records: '+JSON.stringify($json.candidate_records)+'\\\\nCandidate fan-in limitations: '+JSON.stringify($json.limitations||[])+'\\\\nGIS collection limitations: '+JSON.stringify($json.gis_limitations)}],temperature:0.1}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "sourceDiscover",
+      "name": "Discover Official Jurisdiction Sources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        940,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PERPLEXITY_API_URL || 'https://api.perplexity.ai/chat/completions' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.PERPLEXITY_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({model:$env.PERPLEXITY_PROPERTY_MODEL || 'sonar',messages:[{role:'system',content:'You are a public-record source discovery agent for real estate research. Identify official government sources for the requested state/county/city. Prefer county assessor/tax property search, county GIS/parcel data, Register of Deeds/land records, delinquent tax records, probate/estate records, foreclosure/court records, permits/code enforcement, and official open-data portals. Do not return commercial lead vendors as primary sources. Return JSON only: {sources:[{name,type,evidence_type,url,scope,notes}],limitations:[]}. URLs must be official government domains or official county/state GIS services. If a source type is unavailable, omit it rather than inventing a URL.'},{role:'user',content:'Jurisdiction: '+$json.state+' '+($json.county||'')+' '+($json.city||'')+' '+($json.zip||'')+'\\\\nRequested lead criteria: '+JSON.stringify($json.criteria)+'\\\\nProperty type: '+($json.property_type||'any')+'\\\\nFind official public-record sources that can support these criteria.'}],temperature:0.1}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "sourceParse",
+      "name": "Parse Jurisdiction Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ctx=$(\"Prepare Search Request\").first().json; const raw=$input.first().json; let content=raw.output_text??raw.choices?.[0]?.message?.content??raw.content??''; if(typeof content!=='string') content=JSON.stringify(content); content=content.replace(/^\\`\\`\\`(?:json)?\\s*/i,'').replace(/\\s*\\`\\`\\`$/,'').trim(); let parsed; try{parsed=JSON.parse(content);}catch(e){parsed={sources:[],limitations:['Source discovery returned non-JSON data; continue with provider search using jurisdiction only.']};} const sources=(Array.isArray(parsed.sources)?parsed.sources:[]).filter(s=>s&&s.url&&s.name).slice(0,20); return [{json:{...ctx,official_sources:sources,source_limitations:Array.isArray(parsed.limitations)?parsed.limitations:[]}}];"
+      }
+    },
+    {
+      "id": "parse",
+      "name": "Parse Candidate Properties",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1640,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ctx=$(\"Prepare Search Request\").first().json; const raw=$input.first().json; let content=raw.output_text??raw.choices?.[0]?.message?.content??raw.content??''; if(typeof content!=='string') content=JSON.stringify(content); content=content.replace(/^\\`\\`\\`(?:json)?\\s*/i,'').replace(/\\s*\\`\\`\\`$/,'').trim(); let parsed; try{parsed=JSON.parse(content);}catch(e){return [{json:{success:false,error:'Research provider returned non-JSON candidate data',raw:content,request_id:ctx.request_id,no_results:false,parse_error:true}}];} const qualified=$('Qualify Distressed Leads').first().json.candidate_records||[]; const key=v=>String(v??'').trim().toLowerCase().replace(/[^a-z0-9]+/g,''); const findQualified=c=>qualified.find(q=>(c.parcel_id&&q.parcel_id&&key(c.parcel_id)===key(q.parcel_id))||(c.source_record_id&&q.source_record_id&&key(c.source_record_id)===key(q.source_record_id))||(c.property_address&&q.property_address&&key(c.property_address)===key(q.property_address))); const candidates=(Array.isArray(parsed.candidates)?parsed.candidates:[]).map(c=>{const q=findQualified(c); return q?{...q,...c,candidate_key:q.candidate_key||c.candidate_key,normalized_identity_key:q.normalized_identity_key||c.normalized_identity_key,evidence:q.evidence||c.evidence,evidence_count:q.evidence_count??c.evidence_count,evidence_source_types:q.evidence_source_types||c.evidence_source_types,matched_criteria:q.matched_criteria||c.matched_criteria,evidence_status:q.evidence_status||c.evidence_status,normalization_warnings:q.normalization_warnings||c.normalization_warnings,qualification:q.qualification}:c;}).filter(c=>c&&c.owner_name&&c.property_address&&c.state&&(c.source_url||c.source_record_id)).slice(0,ctx.limit); if(candidates.length===0){return [{json:{success:true,no_results:true,request_id:ctx.request_id,criteria:ctx.criteria,jurisdiction:{state:ctx.state,county:ctx.county,city:ctx.city,zip:ctx.zip},limitations:Array.isArray(parsed.limitations)?parsed.limitations:[],search_notes:parsed.search_notes||ctx.search_notes,message:'No qualifying candidate properties were found for the requested jurisdiction and criteria.'}}];} return candidates.map((c,i)=>({json:{request_id:ctx.request_id,candidate_index:i+1,criteria:ctx.criteria,...c,state:String(c.state).toUpperCase(),county:c.county||ctx.county,city:c.city||ctx.city,zip:c.zip||ctx.zip,external_id:c.source_record_id||('property:'+String(c.property_address).toLowerCase().replace(/[^a-z0-9]+/g,'-')),external_source:'public_record_search',no_results:false,criterion_match_status:Object.fromEntries(Object.entries(c.criterion_signals||{}).map(([k,v])=>[k,v.status]))}}));"
+      }
+    },
+    {
+      "id": "ifCandidates",
+      "name": "IF Candidates Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1160,
+        -80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "leftValue": ""
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "hasCandidates",
+              "leftValue": "={{ $json.no_results }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "noResults",
+      "name": "Respond No Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1400,
+        120
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success:true,request_id:$json.request_id,results:[],message:$json.message,criteria:$json.criteria,jurisdiction:$json.jurisdiction,limitations:$json.limitations||[],search_notes:$json.search_notes||''}) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "split",
+      "name": "Candidate Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        -80
+      ],
+      "parameters": {
+        "jsCode": "return $input.all();"
+      }
+    },
+    {
+      "id": "owner",
+      "name": "Normalize Owner Identity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        -80
+      ],
+      "parameters": {
+        "jsCode": "const raw=String($json.owner_name||'').trim(); const parts=raw.split(/\\\\s+/).filter(Boolean); const first=parts.shift()||'Property'; const last=parts.join(' ')||'Owner'; return [{json:{...$json,first_name:first,last_name:last}}];"
+      }
+    },
+    {
+      "id": "lead",
+      "name": "Create or Upsert Insula Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2320,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/leads' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'property-search:lead:' + $json.external_id + ':v1' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({first_name:$json.first_name,last_name:$json.last_name,source:'public_record_search',notes:JSON.stringify({distress_signals:$json.distress_signals||[],source_url:$json.source_url||null,source_record_id:$json.source_record_id||null,confidence:$json.confidence??null,search_request_id:$json.request_id,candidate_key:$json.candidate_key||null,normalized_identity_key:$json.normalized_identity_key||null,evidence_count:$json.evidence_count??0,evidence_source_types:$json.evidence_source_types||[],matched_criteria:$json.matched_criteria||[],evidence_status:$json.evidence_status||null,normalization_warnings:$json.normalization_warnings||[]}),property_address:$json.property_address,property_city:$json.city,property_state:$json.state,property_zip:$json.zip,property_type:$json.property_type||null,external_id:$json.external_id,external_source:$json.external_source}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "leadctx",
+      "name": "Preserve Candidate Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2540,
+        -80
+      ],
+      "parameters": {
+        "jsCode": "const candidate=$('Normalize Owner Identity').item.json; return [{json:{...candidate,lead_result:$json,lead_id:$json.lead_id,property_id:$json.property_id}}];"
+      }
+    },
+    {
+      "id": "deal",
+      "name": "Create Insula Deal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2760,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/deals' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'property-search:deal:' + $json.external_id + ':v1' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,title:$json.property_address+' Acquisition',stage:'new',external_id:$json.external_id,external_source:'public_record_search',notes:JSON.stringify({search_request_id:$json.request_id,source_url:$json.source_url||null,source_record_id:$json.source_record_id||null,distress_signals:$json.distress_signals||[],confidence:$json.confidence??null,candidate_key:$json.candidate_key||null,normalized_identity_key:$json.normalized_identity_key||null,evidence_count:$json.evidence_count??0,evidence_source_types:$json.evidence_source_types||[],matched_criteria:$json.matched_criteria||[],evidence_status:$json.evidence_status||null,normalization_warnings:$json.normalization_warnings||[]})}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "dealctx",
+      "name": "Preserve Deal Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2980,
+        -80
+      ],
+      "parameters": {
+        "jsCode": "const base=$('Preserve Candidate Context').item.json; return [{json:{...base,deal_result:$json,deal_id:$json.deal_id}}];"
+      }
+    },
+    {
+      "id": "evidence",
+      "name": "Persist Candidate Evidence to Insula",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3200,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/deals/' + $json.deal_id + '/evidence' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'property-search:evidence:' + $json.external_id + ':v1' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({evidence_type:'property_search_candidate',source:'public_record_search',source_record_id:$json.source_record_id||null,observed_at:$json.source_observed_at||null,confidence:$json.confidence??null,payload:{structured_facts:{owner_name:$json.owner_name||null,property_address:$json.property_address||null,city:$json.city||null,state:$json.state||null,zip:$json.zip||null,county:$json.county||null,parcel_id:$json.parcel_id||null,property_type:$json.property_type||null,distress_signals:$json.distress_signals||[],criteria:$json.criteria||[],criterion_signals:$json.criterion_signals||{},criterion_evidence:$json.criterion_evidence||[],criterion_missing_fields:$json.criterion_missing_fields||[],search_request_id:$json.request_id,candidate_key:$json.candidate_key||null,normalized_identity_key:$json.normalized_identity_key||null,evidence_count:$json.evidence_count??0,evidence_source_types:$json.evidence_source_types||[],matched_criteria:$json.matched_criteria||[],evidence_status:$json.evidence_status||null,normalization_warnings:$json.normalization_warnings||[],canonical_evidence:$json.evidence||[]},source:{url:$json.source_url||null,record_id:$json.source_record_id||null,observed_at:$json.source_observed_at||null},notes:$json.notes||null}}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "orchestrate",
+      "name": "Run WF-019 Underwriting Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3200,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-acquisition-orchestrator-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({dealId:$json.deal_id,leadId:$json.lead_id,propertyId:$json.property_id,address:$json.property_address,city:$json.city,state:$json.state,zip:$json.zip,county:$json.county,parcel_id:$json.parcel_id,property_type:$json.property_type,external_id:$json.external_id,external_source:$json.external_source,candidate_key:$json.candidate_key||null,normalized_identity_key:$json.normalized_identity_key||null,evidence_count:$json.evidence_count??0,evidence_source_types:$json.evidence_source_types||[],matched_criteria:$json.matched_criteria||[],evidence_status:$json.evidence_status||null,normalization_warnings:$json.normalization_warnings||[],criterion_signals:$json.criterion_signals||{},criterion_evidence:$json.criterion_evidence||[],canonical_evidence:$json.evidence||[],source_url:$json.source_url||null,source_record_id:$json.source_record_id||null,activity:'acquisition'}) }}",
+        "options": {
+          "timeout": 300000
+        }
+      }
+    },
+    {
+      "id": "acquisitionDecision",
+      "name": "Run WF-034 Acquisition Decision Gate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3420,
+        120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-acquisition-decision-gate-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "crmStatusSync",
+      "name": "Sync Underwriting Status to InsulaCRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3420,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-underwriting-crm-status-sync-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({dealId:$json.deal_id,leadId:$json.lead_id,propertyId:$json.property_id,candidate_key:$json.candidate_key||null,normalized_identity_key:$json.normalized_identity_key||null,external_id:$json.external_id||null,parcel_id:$json.parcel_id||null,evidence_count:$json.evidence_count??0,evidence_status:$json.evidence_status||null,underwriting_pipeline:$json.underwriting_pipeline||$json,acquisition_decision:$json.acquisition_decision||null,crm_stage:$json.crm_stage||null}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "result",
+      "name": "Build Candidate Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3420,
+        -80
+      ],
+      "parameters": {
+        "jsCode": "const base=$('Preserve Deal Context').item.json; const sync=$json; return [{json:{...base,crm_status_sync:sync,success:true,request_id:base.request_id,candidate_index:base.candidate_index,property:{owner_name:base.owner_name,address:base.property_address,city:base.city,state:base.state,zip:base.zip,county:base.county,parcel_id:base.parcel_id,distress_signals:base.distress_signals||[],criterion_signals:base.criterion_signals||{},criterion_evidence:base.criterion_evidence||[],criterion_missing_fields:base.criterion_missing_fields||[],criterion_match_status:base.criterion_match_status||{}},source:{source_url:base.source_url||null,source_record_id:base.source_record_id||null,confidence:base.confidence??null},insula:{lead_id:base.lead_id,property_id:base.property_id,deal_id:base.deal_id},underwriting_pipeline:base.underwriting_pipeline||$json,identity:{candidate_key:base.candidate_key||null,normalized_identity_key:base.normalized_identity_key||null,external_id:base.external_id||null,parcel_id:base.parcel_id||null},evidence:{count:base.evidence_count??0,source_types:base.evidence_source_types||[],matched_criteria:base.matched_criteria||[],status:base.evidence_status||null,normalization_warnings:base.normalization_warnings||[]}}}];"
+      }
+    },
+    {
+      "id": "response",
+      "name": "Respond Search Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3640,
+        -80
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success:true,request_id:$('Prepare Search Request').first().json.request_id,results:$input.all().map(i=>i.json),message:'Candidate properties were ingested into InsulaCRM and sent through the underwriting pipeline.'}) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "dispatch",
+      "name": "Plan Source Adapter Dispatch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        920,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-source-adapter-dispatch-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "qualificationGate",
+      "name": "Qualify Distressed Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1220,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-distressed-lead-qualification-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,criteria:$json.criteria,candidate_records:$json.candidate_records||[]}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "canonicalNormalize",
+      "name": "Normalize Canonical Property Records",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2050,
+        -260
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-universal-property-normalizer-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,records:[...($json.gis_records||[]),...($json.non_arcgis_records||[]),...($json.criterion_evidence||[])]}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "canonicalContext",
+      "name": "Preserve Canonical Research Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2260,
+        -260
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const base=$('Merge GIS Research Context').first().json; const normalized=$input.first().json; return [{json:{...base,canonical_records:normalized.records||[],canonical_record_count:normalized.record_count||0,canonical_duplicate_count:normalized.duplicate_count||0,canonical_warnings:(normalized.records||[]).flatMap(r=>r.normalization_warnings||[])}}];"
+      }
+    },
+    {
+      "id": "candidateFanInCanonical",
+      "name": "Aggregate Canonical Property Candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2480,
+        -260
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-property-candidate-fanin-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({request_id:$json.request_id,state:$json.state,county:$json.county,city:$json.city,zip:$json.zip,criteria:$json.criteria,limit:$json.limit,canonical_records:$json.canonical_records||[],gis_records:[],non_arcgis_records:[],criterion_evidence:[],gis_limitations:$json.gis_limitations||[],non_arcgis_limitations:$json.non_arcgis_limitations||[],criterion_evidence_limitations:$json.criterion_evidence_limitations||[]}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "runWf035",
+      "name": "Run WF-035 Offer Preparation Gate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1900,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_BASE_URL + '/webhook/wholestack-offer-preparation-v1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare Search Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Search Request": {
+      "main": [
+        [
+          {
+            "node": "IF Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Valid": {
+      "main": [
+        [
+          {
+            "node": "Discover Official Jurisdiction Sources",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Candidate Properties": {
+      "main": [
+        [
+          {
+            "node": "IF Candidates Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Candidate Items": {
+      "main": [
+        [
+          {
+            "node": "Normalize Owner Identity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Owner Identity": {
+      "main": [
+        [
+          {
+            "node": "Create or Upsert Insula Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create or Upsert Insula Lead": {
+      "main": [
+        [
+          {
+            "node": "Preserve Candidate Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preserve Candidate Context": {
+      "main": [
+        [
+          {
+            "node": "Create Insula Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Insula Deal": {
+      "main": [
+        [
+          {
+            "node": "Preserve Deal Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preserve Deal Context": {
+      "main": [
+        [
+          {
+            "node": "Persist Candidate Evidence to Insula",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run WF-019 Underwriting Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Run WF-034 Acquisition Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Candidate Result": {
+      "main": [
+        [
+          {
+            "node": "Respond Search Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Candidates Found": {
+      "main": [
+        [
+          {
+            "node": "Candidate Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discover Official Jurisdiction Sources": {
+      "main": [
+        [
+          {
+            "node": "Parse Jurisdiction Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Jurisdiction Sources": {
+      "main": [
+        [
+          {
+            "node": "Resolve Curated Jurisdiction Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research Candidate Properties": {
+      "main": [
+        [
+          {
+            "node": "Parse Candidate Properties",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Criteria Source Strategy": {
+      "main": [
+        [
+          {
+            "node": "Query Official GIS Adapter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Candidate Evidence to Insula": {
+      "main": [
+        [
+          {
+            "node": "Run WF-019 Underwriting Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Official GIS Adapter": {
+      "main": [
+        [
+          {
+            "node": "Query Official Non-ArcGIS Adapter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge GIS Research Context": {
+      "main": [
+        [
+          {
+            "node": "Normalize Canonical Property Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Curated Jurisdiction Sources": {
+      "main": [
+        [
+          {
+            "node": "Plan Source Adapter Dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Official Non-ArcGIS Adapter": {
+      "main": [
+        [
+          {
+            "node": "Query Criterion Evidence Adapter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Criterion Evidence Adapter": {
+      "main": [
+        [
+          {
+            "node": "Merge GIS Research Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Source Adapter Dispatch": {
+      "main": [
+        [
+          {
+            "node": "Build Criteria Source Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualify Distressed Leads": {
+      "main": [
+        [
+          {
+            "node": "Research Candidate Properties",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Canonical Property Records": {
+      "main": [
+        [
+          {
+            "node": "Preserve Canonical Research Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preserve Canonical Research Context": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Canonical Property Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Canonical Property Candidates": {
+      "main": [
+        [
+          {
+            "node": "Qualify Distressed Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Underwriting Status to InsulaCRM": {
+      "main": [
+        [
+          {
+            "node": "Build Candidate Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run WF-034 Acquisition Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "Run WF-035 Offer Preparation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run WF-035 Offer Preparation Gate": {
+      "main": [
+        [
+          {
+            "node": "Sync Underwriting Status to InsulaCRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

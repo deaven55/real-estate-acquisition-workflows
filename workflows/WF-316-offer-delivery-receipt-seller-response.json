@@ -1,0 +1,220 @@
+{
+  "name": "WF-316 — Offer Delivery Receipt → Seller Response / Timeout Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-316-offer-delivery-receipt-seller-response",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf316-webhook",
+      "name": "Webhook — Offer Delivery Receipt",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const event=input.delivery_event??input.provider_event??input; const eventType=String(event.event_type??event.status??'').toLowerCase(); const dispatchId=event.dispatch_id??deal.dispatch_id; const dealId=deal.deal_id??deal.id; const leadId=deal.lead_id; const propertyId=deal.property_id; const dnc=deal.dnc===true; const blockers=Array.isArray(deal.blockers)?deal.blockers:[]; const responseText=String(event.response_text??event.inbound_message??deal.seller_response??'').trim(); const delivered=['delivered','sent','accepted'].includes(eventType); const failed=['failed','bounced','rejected','undeliverable'].includes(eventType); const responseReceived=['response_received','inbound_response','reply_received'].includes(eventType)||responseText.length>0; const timeout=['timeout','response_timeout','expired'].includes(eventType); let status='pending',next='WF-316',reason='awaiting provider/seller event'; if(dnc||blockers.length){status='blocked';next='WF-126';reason=dnc?'DNC protection':'active blockers';}else if(!dispatchId||!dealId){status='incomplete';next='WF-315';reason='dispatch/deal identity missing';}else if(responseReceived){status='seller_response_received';next='WF-317';reason='seller response captured';}else if(failed){status='delivery_failed';next='WF-315';reason='offer delivery failed';}else if(timeout){status='response_timeout';next='WF-318';reason='seller response window expired';}else if(delivered){status='delivered_awaiting_response';next='WF-317';reason='offer delivered; awaiting seller response';} return [{json:{...deal,workflow_id:'WF-316',workflow_name:'Offer Delivery Receipt → Seller Response / Timeout Controller',status,reason,dispatch_id:dispatchId,seller_response:responseText||null,delivery_event:{event_type:eventType,delivered,failed,response_received:responseReceived,timeout},next_workflow:next,crm_activity:{activity_type:'offer_delivery_receipt',deal_id:dealId,lead_id:leadId,property_id:propertyId,status,dispatch_id:dispatchId,reason,seller_response:responseText||null}}}];"
+      },
+      "id": "wf316-controller",
+      "name": "Controller — Delivery & Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "seller-response",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "seller_response_received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "delivered",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "delivered_awaiting_response",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf316-gate",
+      "name": "IF — Seller Response Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "dispatch_id",
+              "value": "={{ $json.crm_activity.dispatch_id }}"
+            },
+            {
+              "name": "seller_response",
+              "value": "={{ $json.crm_activity.seller_response }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf316-crm",
+      "name": "InsulaCRM — Delivery Receipt Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, status: $json.status, reason: $json.reason, next_workflow: $json.next_workflow, dispatch_id: $json.dispatch_id, seller_response: $json.seller_response, delivery_event: $json.delivery_event, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf316-response",
+      "name": "Response — Delivery Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Offer Delivery Receipt": {
+      "main": [
+        [
+          {
+            "node": "Controller — Delivery & Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Delivery & Response": {
+      "main": [
+        [
+          {
+            "node": "IF — Seller Response Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Seller Response Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Delivery Receipt Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Delivery Receipt Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Delivery Receipt Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Delivery Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-316-v1",
+  "meta": {
+    "workflow_id": "WF-316",
+    "description": "Processes provider delivery receipts and seller responses, separating delivered, failed, timeout, and inbound-response states.",
+    "safety": {
+      "dnc_protection": true,
+      "provider_agnostic": true,
+      "credentials_runtime_only": true,
+      "idempotent_dispatch_tracking": true
+    }
+  }
+}

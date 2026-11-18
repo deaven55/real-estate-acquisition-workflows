@@ -1,0 +1,156 @@
+{
+  "name": "WF-261 Rejection / Walk-Away / Timeout → Seller Re-engagement Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-261-seller-reengagement",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf261-webhook",
+      "name": "WF-261 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst outcome = String(input.negotiation_outcome ?? input.outcome ?? input.decision ?? '').toLowerCase();\nconst dealId = input.deal_id ?? null;\nconst leadId = input.lead_id ?? null;\nconst propertyId = input.property_id ?? null;\nconst dynamicMao = Number(input.dynamic_mao ?? input.adjusted_mao ?? input.mao);\nconst askingPrice = Number(input.asking_price);\nconst lastOffer = Number(input.last_offer_price ?? input.offer_price ?? input.accepted_price);\nconst attempts = Number(input.reengagement_attempts ?? input.follow_up_attempts ?? 0);\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\nconst dnc = Boolean(input.dnc ?? input.do_not_contact);\nconst identityOk = Boolean(dealId && leadId && propertyId);\nconst maxAttempts = Number(input.max_reengagement_attempts ?? 3);\n\nlet status = 'needs_review';\nlet action = 'human_review';\nlet nextWorkflow = 'WF-126';\nlet channel = input.preferred_channel ?? input.channel ?? 'sms';\nlet cadence = 'review';\nlet humanReview = true;\n\nif (!identityOk || blockers.length || dnc) {\n  status = dnc ? 'do_not_contact' : 'blocked';\n  action = dnc ? 'suppress_contact' : 'human_review';\n  nextWorkflow = 'WF-126';\n} else if (attempts >= maxAttempts) {\n  status = 'reengagement_exhausted';\n  action = 'pause_and_recycle';\n  nextWorkflow = 'WF-126';\n  humanReview = true;\n} else if (['rejected','seller_rejected','declined','walk_away','walkaway','timeout','no_response','silence','rejection_reengagement','walk_away_reengagement','reengagement'].includes(outcome)) {\n  status = 'reengagement_ready';\n  action = attempts === 0 ? 'first_reengagement' : 'follow_up_reengagement';\n  nextWorkflow = 'WF-262';\n  cadence = attempts === 0 ? '24h' : attempts === 1 ? '72h' : '7d';\n  humanReview = false;\n} else {\n  status = 'needs_review';\n  action = 'human_review';\n}\n\nconst messageContext = {\n  reason: outcome || 'negotiation ended without agreement',\n  last_offer_price: Number.isFinite(lastOffer) ? lastOffer : null,\n  asking_price: Number.isFinite(askingPrice) ? askingPrice : null,\n  dynamic_mao: Number.isFinite(dynamicMao) ? dynamicMao : null,\n  reengagement_attempts: attempts,\n  max_reengagement_attempts: maxAttempts,\n  channel,\n  cadence\n};\n\nreturn [{ json: {\n  ...input,\n  workflow_id: 'WF-261',\n  workflow_name: 'Rejection / Walk-Away / Timeout → Seller Re-engagement Controller',\n  status,\n  action,\n  next_workflow: nextWorkflow,\n  human_review_required: humanReview,\n  reengagement: {\n    eligible: status === 'reengagement_ready',\n    attempt_number: attempts + 1,\n    cadence,\n    channel,\n    message_context: messageContext\n  },\n  contact_suppressed: dnc,\n  identity_valid: identityOk,\n  blockers,\n  crm_activity: {\n    activity_type: 'seller_reengagement_routing',\n    workflow_id: 'WF-261',\n    action,\n    status,\n    next_workflow: nextWorkflow,\n    attempt_number: attempts + 1\n  }\n} }];"
+      },
+      "id": "wf261-controller",
+      "name": "WF-261 Re-engagement Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "operation": "equal",
+              "value2": "reengagement_ready"
+            }
+          ]
+        }
+      },
+      "id": "wf261-gate",
+      "name": "WF-261 Re-engagement Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'seller_reengagement_routing',subject:'WF-261 seller re-engagement routing',body:JSON.stringify({workflow_id:$json.workflow_id,status:$json.status,action:$json.action,next_workflow:$json.next_workflow,reengagement:$json.reengagement,contact_suppressed:$json.contact_suppressed}),source:'wholesaling-os',external_id:'WF-261:'+($json.deal_id ?? $json.lead_id ?? 'unknown')+':'+($json.reengagement?.attempt_number ?? 1)})}})"
+      },
+      "id": "wf261-crm",
+      "name": "WF-261 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf261-response",
+      "name": "WF-261 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-261 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-261 Re-engagement Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-261 Re-engagement Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-261 Re-engagement Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-261 Re-engagement Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-261 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-261 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-261 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-261 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

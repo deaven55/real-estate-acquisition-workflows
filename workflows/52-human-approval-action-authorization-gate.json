@@ -1,0 +1,42 @@
+{
+  "name": "WF-052 Human Approval & Action Authorization Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-052-human-approval-authorization", "responseMode": "responseNode", "options": {} },
+      "id": "wf052-webhook",
+      "name": "Human Approval Authorization Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-052-human-approval-authorization"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const records=Array.isArray(input.requests)?input.requests:Array.isArray(input.records)?input.records:[]; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const allowedActions=new Set(['review','approve','reject','send_offer','contact_seller','contact_buyer','verify_disclosures','prepare_contract','schedule_closing','sync_crm','retry_execution']); const approvalStates=new Set(['requested','approved','rejected','expired','revoked']); const blockers=[]; const warnings=[]; const decisions=[]; records.forEach((r,i)=>{const id=norm(r.request_id??r.approval_id??r.id); const action=lower(r.requested_action??r.action); const state=lower(r.approval_state??r.status); const approver=norm(r.approver_id??r.approved_by??r.actor_id); const approvedAt=norm(r.approved_at??r.decision_at); const expiresAt=norm(r.expires_at); const evidence=norm(r.evidence_reference??r.reason??r.notes); const explicit=Boolean(r.human_approval===true||r.approved===true); if(!id)blockers.push({record_index:i,type:'missing_approval_id',severity:'blocking',message:'Approval/action request requires a deterministic identifier.'}); if(!allowedActions.has(action))blockers.push({record_index:i,type:'unsupported_action',severity:'blocking',action:action||null,message:'Action is not in the supported human-authorization contract.'}); if(!approvalStates.has(state))blockers.push({record_index:i,type:'invalid_approval_state',severity:'blocking',state:state||null,message:'Approval state is not supported.'}); if(['approved'].includes(state)&&(!approver||!approvedAt))blockers.push({record_index:i,type:'incomplete_approval_record',severity:'blocking',message:'Approved actions require approver identity and decision timestamp.'}); if(state==='approved'&&!explicit)warnings.push({record_index:i,type:'implicit_approval',severity:'warning',message:'Approved state was supplied without an explicit human_approval/approved boolean.'}); if(state==='approved'&&!evidence)warnings.push({record_index:i,type:'missing_approval_context',severity:'warning',message:'Approval lacks a reason, evidence reference, or decision note.'}); if(state==='approved'&&['send_offer','contact_seller','contact_buyer','prepare_contract','schedule_closing','retry_execution'].includes(action))decisions.push({record_index:i,request_id:id,action,authorized:true,authorization_basis:'explicit_human_approval',approver_id:approver,approved_at:approvedAt,expires_at:expiresAt||null}); else decisions.push({record_index:i,request_id:id,action,authorized:false,authorization_basis:state||'not_approved',approver_id:approver||null,approved_at:approvedAt||null,expires_at:expiresAt||null});}); const blocking=blockers.filter(x=>x.severity==='blocking'); const health=blocking.length?'blocked':warnings.length?'needs_review':'ready'; const authorized=decisions.filter(x=>x.authorized); const next=health==='ready'?'Only execute actions explicitly marked authorized by a human approval record; otherwise keep the request pending.':health==='blocked'?'Resolve approval-contract blockers before permitting the requested action.':'Review approval warnings and confirm the human decision context before operational execution.'; return[{json:{ok:health==='ready',authorization_health:health,request_count:records.length,authorized_action_count:authorized.length,blocked_action_count:decisions.length-authorized.length,blocking_issue_count:blocking.length,warning_count:warnings.length,blockers,warnings,authorization_decisions:decisions,authorized_actions:authorized,next_action:next,policy:{human_authorization_boundary:true,no_implicit_approval:true,no_automatic_outreach_without_approval:true,no_automatic_contract_execution:true,no_automatic_closing_execution:true,no_legal_validation:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf052-authorization",
+      "name": "Validate Human Approval & Action Authorization",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf052-response",
+      "name": "Respond Human Authorization",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Human Approval Authorization Webhook": { "main": [[{ "node": "Validate Human Approval & Action Authorization", "type": "main", "index": 0 }]] },
+    "Validate Human Approval & Action Authorization": { "main": [[{ "node": "Respond Human Authorization", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf052-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

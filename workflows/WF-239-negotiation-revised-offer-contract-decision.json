@@ -1,0 +1,165 @@
+{
+  "name": "WF-239 — Negotiation Decision → Revised Offer / Contract Decision",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-239-revised-offer-contract-decision",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const decision=String(d.decision??\"\").toLowerCase(),counter=Number(d.counteroffer_amount??NaN),mao=Number(d.dynamic_mao??d.adjusted_mao??d.maximum_offer??NaN),offer=Number(d.current_offer_price??d.offer_price??NaN);const blockers=Array.isArray(d.blockers)?d.blockers:[];let action=\"needs_review\",state=\"blocked\",route=\"WF-126\",reason=\"Negotiation decision is incomplete or requires review.\";if(!lead_id||!deal_id||!property_id){reason=\"Missing negotiation identity.\";}else if(blockers.length){reason=\"Unresolved blockers prevent revised offer or contract decision.\";}else if(decision===\"acceptance_ready\"||decision===\"counteroffer_within_mao\"){if(Number.isFinite(counter)&&Number.isFinite(mao)&&counter<=mao){action=\"accept_counteroffer\";state=\"contract_decision_ready\";route=\"WF-240\";reason=\"Seller price is within the protected dynamic MAO ceiling.\";}else if(decision===\"acceptance_ready\"&&Number.isFinite(offer)&&Number.isFinite(mao)&&offer<=mao){action=\"accept_offer\";state=\"contract_decision_ready\";route=\"WF-240\";reason=\"Seller accepted an offer that remains within the protected MAO ceiling.\";}else{action=\"needs_review\";state=\"needs_evidence\";route=\"WF-238\";reason=\"Acceptance cannot be validated against the current MAO.\";}}else if(decision===\"counteroffer_near_mao\"){if(Number.isFinite(mao)&&Number.isFinite(counter)){const revised=Math.round(Math.min(counter,mao)*100)/100;action=\"revised_offer\";state=\"revised_offer_ready\";route=\"WF-240\";reason=\"Counteroffer is near MAO; prepare a revised offer capped at MAO.\";}else{action=\"needs_review\";state=\"needs_evidence\";route=\"WF-238\";reason=\"Counteroffer or MAO is missing.\";}}else if(decision===\"counteroffer_above_mao\"){action=\"walk_away_or_revised_offer\";state=\"human_review\";route=\"WF-126\";reason=\"Counteroffer exceeds protected MAO and requires human authorization to continue.\";}else if(decision===\"rejection_reengagement\"){action=\"reengage\";state=\"reengagement_ready\";route=\"WF-240\";reason=\"Rejected offer requires a controlled re-engagement strategy.\";}else{action=\"needs_review\";state=\"human_review\";route=\"WF-126\";reason=\"Negotiation outcome requires human review before further action.\";}const revisedOffer=action===\"revised_offer\"&&Number.isFinite(mao)?Math.round(Math.min(counter,mao)*100)/100:null;return[{json:{workflow:\"WF-239\",lead_id,deal_id,property_id,decision,counteroffer_amount:Number.isFinite(counter)?counter:null,current_offer_price:Number.isFinite(offer)?offer:null,dynamic_mao:Number.isFinite(mao)?mao:null,action,state,route,reason,revised_offer_price:revisedOffer,maO_protection:{maximum_offer:Number.isFinite(mao)?mao:null,override_required:action===\"walk_away_or_revised_offer\",revised_offer_capped:true},requires_human_review:[\"human_review\",\"blocked\"].includes(state)}}];"
+      },
+      "name": "Revised Offer Contract Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "contract_decision_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Contract Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'revised_offer_contract_decision',notes:'WF-239 action='+$json.action+' state='+$json.state+' counteroffer='+$json.counteroffer_amount+' revised_offer='+$json.revised_offer_price+' dynamic_mao='+$json.dynamic_mao,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Contract Decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,next_workflow:$json.route,decision_ready:[\"contract_decision_ready\",\"revised_offer_ready\",\"reengagement_ready\"].includes($json.state)}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Revised Offer Contract Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Revised Offer Contract Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "Contract Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contract Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Contract Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Contract Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Contract Decision": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-239-revised-offer-contract-decision-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

@@ -1,0 +1,208 @@
+{
+  "name": "WF-367 — Seller Offer Package → Provider Dispatch Authorization & Delivery Tracking Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-367-offer-package-provider-dispatch-authorization",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "367-webhook",
+      "name": "Webhook — Seller Offer Package",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const i=$input.first().json||{};const now=new Date().toISOString();const dealId=i.deal_id||i.dealId;const leadId=i.lead_id||i.leadId;const propertyId=i.property_id||i.propertyId;const channel=String(i.channel||'').toLowerCase();const recipient=String(i.recipient||'').trim();const message=String(i.message||'').trim();const offer=Number(i.offer_amount||i.revised_offer||0);const mao=Number(i.adjusted_mao||i.dynamic_mao||0);const dnc=Boolean(i.dnc||i.do_not_contact);const blockers=Array.isArray(i.blockers)?i.blockers:[];const authorized=Boolean(i.dispatch_authorized||i.authorized||false);let route='human_control',reason='authorization_required';if(dnc){route='human_control';reason='dnc';}else if(blockers.length){route='human_control';reason='deal_blocker';}else if(!dealId||!leadId||!propertyId){route='reconciliation';reason='missing_identity';}else if(!['sms','email'].includes(channel)||!recipient||!message){route='human_control';reason='invalid_dispatch_package';}else if(offer<=0||mao<=0||offer>mao){route='human_control';reason='offer_exceeds_mao';}else if(!authorized){route='authorization';reason='dispatch_authorization_required';}else{route='dispatch';reason='dispatch_authorized';}const key=(i.dispatch_idempotency_key||[dealId,leadId,propertyId,channel,recipient,offer].join(':'))+':provider-dispatch';return[{json:{...i,workflow_id:'WF-367',status:route==='dispatch'?'dispatch_ready':'blocked',route,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,channel,recipient,message,offer_amount:offer,adjusted_mao:mao,dispatch_authorized:authorized,provider_dispatch_idempotency_key:key,delivery_tracking:{status:route==='dispatch'?'awaiting_provider_acceptance':'not_started',provider_message_id:i.provider_message_id||null},processed_at:now,crm_activity:{type:'seller_offer_provider_dispatch_authorization',workflow_id:'WF-367',route,reason,channel,offer_amount:offer}}}];"
+      },
+      "id": "367-controller",
+      "name": "Controller — Validate Dispatch Authorization & Tracking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchWholeWord": false,
+            "operator": "or",
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.route}}",
+              "rightValue": "dispatch",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{$json.route}}",
+              "rightValue": "authorization",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "367-gate",
+      "name": "IF — Dispatch Authorization Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{$json.lead_id}}"
+            },
+            {
+              "name": "activity_type",
+              "value": "={{$json.crm_activity.type}}"
+            },
+            {
+              "name": "notes",
+              "value": "={{JSON.stringify($json.crm_activity)}}"
+            },
+            {
+              "name": "external_id",
+              "value": "={{$json.provider_dispatch_idempotency_key}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "367-crm",
+      "name": "InsulaCRM — Persist Dispatch Authorization",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "367-response",
+      "name": "Respond — Dispatch State",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Seller Offer Package": {
+      "main": [
+        [
+          {
+            "node": "Controller — Validate Dispatch Authorization & Tracking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Validate Dispatch Authorization & Tracking": {
+      "main": [
+        [
+          {
+            "node": "IF — Dispatch Authorization Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Dispatch Authorization Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Persist Dispatch Authorization",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Persist Dispatch Authorization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Persist Dispatch Authorization": {
+      "main": [
+        [
+          {
+            "node": "Respond — Dispatch State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-367-v1",
+  "meta": {
+    "workflow_id": "WF-367",
+    "purpose": "Validate seller offer dispatch authorization, channel package safety, and delivery tracking state",
+    "routes": {
+      "dispatch": "WF-347",
+      "authorization": "WF-126",
+      "reconciliation": "WF-360",
+      "human_control": "WF-126"
+    }
+  }
+}

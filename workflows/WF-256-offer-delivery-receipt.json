@@ -1,0 +1,165 @@
+{
+  "name": "WF-256 — Offer Delivery Receipt → Seller Response / Timeout Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-256-offer-delivery-receipt",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const dispatch_id=String(d.dispatch_id??\"\").trim();const delivery=String(d.delivery_status??d.status??\"\").toLowerCase();const seller_response=String(d.seller_response??d.response_status??\"\").toLowerCase();const timeout=Boolean(d.timeout??false);let state=\"receipt_pending\",reason=\"Delivery receipt requires reconciliation.\",next=\"WF-255\";if(!lead_id||!deal_id||!property_id||!dispatch_id){state=\"blocked\";reason=\"Missing lead, deal, property, or dispatch identity.\";next=\"WF-126\";}else if([\"delivered\",\"sent\",\"accepted_by_provider\"].includes(delivery)&&seller_response===\"response_received\"){state=\"response_received\";reason=\"Offer delivered and seller response received.\";next=\"WF-257\";}else if([\"delivered\",\"sent\",\"accepted_by_provider\"].includes(delivery)&&timeout){state=\"response_timeout\";reason=\"Offer delivery succeeded but seller response timed out.\";next=\"WF-258\";}else if([\"delivered\",\"sent\",\"accepted_by_provider\"].includes(delivery)){state=\"awaiting_seller_response\";reason=\"Offer delivered; awaiting seller response.\";next=\"WF-258\";}else if([\"failed\",\"undelivered\",\"rejected\"].includes(delivery)){state=\"delivery_failed\";reason=\"Offer delivery failed or was rejected by provider.\";next=\"WF-255\";}else{state=\"receipt_pending\";reason=\"No definitive delivery receipt is available.\";next=\"WF-255\";}return[{json:{workflow:\"WF-256\",lead_id,deal_id,property_id,dispatch_id,delivery_status:delivery,seller_response_status:seller_response,timeout,state,reason,requires_human_review:state===\"delivery_failed\"||state===\"blocked\",next_workflow:next,response_route:state===\"response_received\"?\"seller_response\":state===\"response_timeout\"?\"timeout\":state===\"awaiting_seller_response\"?\"awaiting_response\":\"delivery_recovery\"}}];"
+      },
+      "name": "Delivery Receipt Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "response_received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Seller Response Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'offer_delivery_receipt',notes:'WF-256 state='+$json.state+' dispatch_id='+$json.dispatch_id+' next='+$json.next_workflow,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Delivery Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,seller_response_ready:$json.state===\"response_received\",delivery_reconciled:$json.state!==\"receipt_pending\",next_workflow:$json.next_workflow}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Delivery Receipt Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delivery Receipt Controller": {
+      "main": [
+        [
+          {
+            "node": "Seller Response Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seller Response Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Delivery Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Delivery Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Delivery Receipt": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-256-offer-delivery-receipt-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

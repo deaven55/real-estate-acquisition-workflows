@@ -1,0 +1,171 @@
+{
+  "name": "WF-158 Verified Closing → Assignment Profit, Costs & Net-Profit Reconciliation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-158-profit-reconciliation",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "158-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-158-profit-reconciliation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const outcome=String(input.closing_outcome??input.outcome??'').toLowerCase(); const evidence=input.closing_evidence??input.outcome_evidence??{}; const execution=input.execution??{}; const contract=input.contract??input.agreement??{}; const executed=execution.executed===true||contract.execution_state==='executed'; const price=Number(contract.agreed_price??input.agreed_price??0); const sellerPurchasePrice=Number(input.purchase_price??input.seller_purchase_price??price); const buyerPrice=Number(input.buyer_price??input.assignee_price??input.exit_price??0); const assignmentFee=Number(input.assignment_fee??input.expected_assignment_fee??0); const closingCosts=Number(input.closing_costs??input.total_closing_costs??0); const marketingCosts=Number(input.marketing_costs??0); const otherCosts=Number(input.other_costs??0); const realizedProfit=Number(input.realized_profit??input.net_profit??0); const evidencePresent=Object.keys(evidence).length>0; const validClosed=['closed','funded','recorded'].includes(outcome); const identity=Boolean(deal.property_id??input.property_id)&&Boolean(deal.lead_id??input.lead_id??input.seller_id); let status='profit_reconciliation_blocked'; let route='human_review'; let calculatedNet=null; let discrepancy=null; if(!validClosed) status='verified_closing_required'; else if(!executed||!identity||!price||!evidencePresent) status='closing_evidence_required'; else { calculatedNet=buyerPrice>0?buyerPrice-sellerPurchasePrice-assignmentFee-closingCosts-marketingCosts-otherCosts:assignmentFee-closingCosts-marketingCosts-otherCosts; discrepancy=realizedProfit?realizedProfit-calculatedNet:null; const tolerance=Number(input.discrepancy_tolerance??100); if(realizedProfit&&Math.abs(discrepancy)>tolerance){status='profit_discrepancy';route='human_review';} else {status='profit_reconciled';route='WF-139 post-close profit verification → CRM closeout';} } return [{json:{workflow_id:'WF-158',workflow_name:'Verified Closing → Assignment Profit, Costs & Net-Profit Reconciliation',status,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,closing_outcome:outcome,execution:{executed},contract:{agreement_type:String(contract.agreement_type??input.agreement_type??'').toLowerCase(),agreed_price:price,execution_state:executed?'executed':'not_executed'},economics:{purchase_price:sellerPurchasePrice,buyer_price:buyerPrice,assignment_fee:assignmentFee,closing_costs:closingCosts,marketing_costs:marketingCosts,other_costs:otherCosts,calculated_net_profit:calculatedNet,reported_realized_profit:realizedProfit||null,discrepancy},routing:{next_route:route,next_workflow:route==='WF-139 post-close profit verification → CRM closeout'?'WF-139':null},guardrails:{verified_closing_required:true,profit_requires_evidence:true,negative_or_disputed_economics_require_review:true,realized_profit_must_not_be_invented:true,discrepancy_tolerance_applied:true},crm_activity:{event_type:'verified_closing_profit_reconciliation',outcome:status,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-158:profit-reconciliation:'+(input.event_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "158-calc",
+      "name": "Calculate Net Profit & Reconcile",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "profit_reconciled",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "158-ready",
+      "name": "Profit Reconciled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,closing_outcome:$json.closing_outcome,execution:$json.execution,contract:$json.contract,economics:$json.economics,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "158-crm",
+      "name": "Persist Profit Reconciliation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Calculate Net Profit & Reconcile').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,next_route:original.routing.next_route,next_workflow:original.routing.next_workflow}}}];"
+      },
+      "id": "158-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Calculate Net Profit & Reconcile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Net Profit & Reconcile": {
+      "main": [
+        [
+          {
+            "node": "Profit Reconciled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profit Reconciled?": {
+      "main": [
+        [
+          {
+            "node": "Persist Profit Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Profit Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Profit Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-158-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

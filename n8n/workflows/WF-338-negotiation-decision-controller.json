@@ -1,0 +1,183 @@
+{
+  "name": "WF-338 — Negotiation Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-338-negotiation-decision-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf338-webhook",
+      "name": "Webhook — Classified Seller Response",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-338-negotiation-decision-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst classification = String(input.response_classification ?? \"\").toLowerCase();\nconst counteroffer = Number(input.counteroffer_amount);\nconst mao = Number(input.dynamic_mao ?? input.adjusted_mao);\nconst motivation = String(input.motivation ?? \"\").toLowerCase();\nconst dealId = input.deal_id;\nconst leadId = input.lead_id;\nconst propertyId = input.property_id;\nconst dispatchId = input.dispatch_id;\nconst dnc = input.dnc === true || input.do_not_contact === true;\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\n\nconst identityReady = Boolean(dealId && leadId && propertyId);\nconst validMao = Number.isFinite(mao) && mao >= 0;\nconst validCounter = classification !== \"counteroffer\" || (Number.isFinite(counteroffer) && counteroffer >= 0);\nconst blocked = dnc || blockers.length > 0;\n\nlet decision = \"needs_review\";\nlet strategy = \"human_review\";\nlet nextWorkflow = \"WF-339\";\nlet reason = \"Seller response requires negotiation decisioning.\";\n\nif (!identityReady || !validMao || !validCounter) {\n  decision = \"incomplete\";\n  strategy = \"collect_missing_evidence\";\n  nextWorkflow = \"WF-126\";\n  reason = \"Deal identity, dynamic MAO, or counteroffer data is incomplete/invalid.\";\n} else if (blocked || classification === \"dnc\") {\n  decision = \"blocked\";\n  strategy = \"stop_communication\";\n  nextWorkflow = \"WF-126\";\n  reason = \"DNC or active blockers prevent automated negotiation.\";\n} else if (classification === \"accepted\") {\n  decision = \"acceptance_ready\";\n  strategy = \"move_to_contract_review\";\n  nextWorkflow = \"WF-339\";\n  reason = \"Seller accepted the offer; contract readiness review can begin.\";\n} else if (classification === \"counteroffer\") {\n  if (counteroffer <= mao) {\n    const nearMao = counteroffer >= mao * 0.95;\n    if (nearMao) {\n      decision = \"counteroffer_near_mao\";\n      strategy = \"controlled_accept_or_revise\";\n      nextWorkflow = \"WF-339\";\n      reason = \"Counteroffer is within MAO but close enough to the ceiling to require controlled review.\";\n    } else {\n      decision = \"counteroffer_within_mao\";\n      strategy = \"evaluate_counteroffer\";\n      nextWorkflow = \"WF-339\";\n      reason = \"Counteroffer is within the dynamic MAO ceiling.\";\n    }\n  } else {\n    decision = \"counteroffer_above_mao\";\n    strategy = \"revised_offer_or_reengagement\";\n    nextWorkflow = \"WF-340\";\n    reason = \"Counteroffer exceeds dynamic MAO; autonomous acceptance is prohibited.\";\n  }\n} else if (classification === \"rejected\") {\n  decision = \"rejection_reengagement\";\n  strategy = \"reengage_with_cadence\";\n  nextWorkflow = \"WF-340\";\n  reason = \"Seller rejected the current offer; controlled re-engagement may be appropriate.\";\n} else if (classification === \"price_question\" || classification === \"question\") {\n  decision = \"clarification_required\";\n  strategy = \"answer_and_continue_negotiation\";\n  nextWorkflow = \"WF-339\";\n  reason = \"Seller needs clarification before negotiation can advance.\";\n} else if (classification === \"other_response\") {\n  decision = \"needs_review\";\n  strategy = \"human_review\";\n  nextWorkflow = \"WF-126\";\n  reason = \"Response intent is not sufficiently clear for autonomous negotiation.\";\n}\n\nconst motivationBoost = /(urgent|distress|high)/i.test(motivation);\nif (motivationBoost && decision === \"rejection_reengagement\") strategy = \"high_motivation_reengagement\";\n\nreturn [{\n  json: {\n    ...input,\n    workflow_id: \"WF-338\",\n    controller_status: decision,\n    negotiation_decision: decision,\n    negotiation_strategy: strategy,\n    dynamic_mao: validMao ? mao : null,\n    counteroffer_amount: Number.isFinite(counteroffer) ? counteroffer : null,\n    deal_id: dealId,\n    lead_id: leadId,\n    property_id: propertyId,\n    dispatch_id: dispatchId,\n    mao_protected: true,\n    reason,\n    next_workflow: nextWorkflow,\n    requires_human_review: [\"acceptance_ready\", \"counteroffer_near_mao\", \"clarification_required\", \"needs_review\"].includes(decision),\n    idempotency_key: input.idempotency_key ?? \\`wf-338:\\${dispatchId ?? \"unknown\"}:\\${decision}:\\${Number.isFinite(counteroffer) ? counteroffer : \"none\"}\\`\n  }\n}];"
+      },
+      "id": "wf338-controller",
+      "name": "Code — Negotiation Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.controller_status }}",
+              "rightValue": "acceptance_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{ $json.controller_status }}",
+              "rightValue": "counteroffer_within_mao",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf338-gate",
+      "name": "IF — Negotiation Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL }}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({ activity_type: 'negotiation_decision', lead_id: $json.lead_id, property_id: $json.property_id, deal_id: $json.deal_id, dispatch_id: $json.dispatch_id, status: $json.controller_status, negotiation_decision: $json.negotiation_decision, negotiation_strategy: $json.negotiation_strategy, dynamic_mao: $json.dynamic_mao, counteroffer_amount: $json.counteroffer_amount, mao_protected: $json.mao_protected, next_workflow: $json.next_workflow, reason: $json.reason, idempotency_key: $json.idempotency_key }) }}",
+        "options": {}
+      },
+      "id": "wf338-crm",
+      "name": "HTTP — InsulaCRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ workflow_id: 'WF-338', status: $json.controller_status ?? 'incomplete', negotiation_decision: $json.negotiation_decision, negotiation_strategy: $json.negotiation_strategy, dynamic_mao: $json.dynamic_mao, counteroffer_amount: $json.counteroffer_amount, next_workflow: $json.next_workflow ?? 'WF-339', mao_protected: $json.mao_protected === true, requires_human_review: $json.requires_human_review === true, crm_activity_persisted: true }) }}",
+        "options": {}
+      },
+      "id": "wf338-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Classified Seller Response": {
+      "main": [
+        [
+          {
+            "node": "Code — Negotiation Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Negotiation Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Negotiation Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Negotiation Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — InsulaCRM Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-338-v1",
+  "meta": {
+    "workflow_id": "WF-338",
+    "safety": "dynamic MAO is a hard ceiling; above-MAO counteroffers cannot be autonomously accepted; near-MAO decisions require controlled review"
+  }
+}

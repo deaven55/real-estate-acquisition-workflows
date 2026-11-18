@@ -1,0 +1,184 @@
+{
+  "name": "WF-345 — Rejection / No Response → Seller Re-engagement Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-345-seller-reengagement-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf345-webhook",
+      "name": "WF-345 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-345-seller-reengagement-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst decision=String(input.decision??input.outcome??'').toLowerCase();\nconst dealId=input.deal_id??null; const leadId=input.lead_id??null; const propertyId=input.property_id??null;\nconst seller=input.seller??{}; const sellerPhone=String(seller.phone??input.seller_phone??'').trim(); const sellerEmail=String(seller.email??input.seller_email??'').trim();\nconst dnc=Boolean(input.dnc??input.do_not_contact??false); const blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst attempts=Number(input.reengagement_attempts??input.attempts??0); const maxAttempts=Number(input.max_reengagement_attempts??3);\nconst lastContactAt=input.last_contact_at??input.last_outbound_at??null;\nconst cadence=attempts<=0?'24h':attempts===1?'72h':'7d';\nconst identityComplete=Boolean(dealId&&leadId&&propertyId); const contactComplete=Boolean(sellerPhone||sellerEmail);\nlet status='needs_review'; let nextWorkflow='WF-344'; let action='review'; let reason='Seller re-engagement requires review.';\nif(dnc){status='dnc_blocked';action='stop';nextWorkflow='WF-126';reason='Seller is on DNC; no re-engagement permitted.';}\nelse if(blockers.length){status='blocked';action='stop';nextWorkflow='WF-126';reason='Active blocker prevents seller re-engagement.';}\nelse if(!identityComplete||!contactComplete){status='incomplete';action='repair_data';nextWorkflow='WF-344';reason='Required deal identity or seller contact is missing.';}\nelse if(attempts>=maxAttempts){status='max_attempts_reached';action='pause';nextWorkflow='WF-126';reason='Maximum re-engagement attempts reached; human review required.';}\nelse if(['reengagement_ready','rejection_reengagement','rejection','no_response','timeout_reengagement'].includes(decision)){status='reengagement_ready';action='schedule_reengagement';nextWorkflow='WF-346';reason='Seller outcome qualifies for controlled re-engagement cadence.';}\nelse{status='not_applicable';action='review';nextWorkflow='WF-344';reason='Current outcome does not require re-engagement.';}\nconst activity={activity_type:'seller_reengagement_controller',subject:'WF-345 '+(dealId??'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,status,action,next_workflow:nextWorkflow,reengagement_attempts:attempts,max_reengagement_attempts:maxAttempts,cadence,seller_phone:sellerPhone,seller_email:sellerEmail,last_contact_at:lastContactAt,dnc,blockers,reason};\nreturn [{json:{...input,wf_id:'WF-345',status,action,next_workflow:nextWorkflow,reengagement_attempts:attempts,max_reengagement_attempts:maxAttempts,cadence,last_contact_at:lastContactAt,dnc,blockers,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf345-controller",
+      "name": "WF-345 Re-engagement Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "reengagement_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "stop",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "stop",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf345-gate",
+      "name": "Re-engagement / Stop Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf345-crm",
+      "name": "Persist WF-345 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf345-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-345 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-345 Re-engagement Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-345 Re-engagement Controller": {
+      "main": [
+        [
+          {
+            "node": "Re-engagement / Stop Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-engagement / Stop Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-345 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-345 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-345 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf345-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

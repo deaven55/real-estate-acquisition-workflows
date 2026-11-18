@@ -1,0 +1,172 @@
+{
+  "name": "WF-179 — Closing Execution Launch → Active Closing Milestone Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-179-closing-execution-launch",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Closing Execution Launch",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-179-closing-execution-launch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json ?? {};\nconst execution = input.execution ?? input.closingExecution ?? {};\nconst evidence = input.evidence ?? {};\nconst auth = input.authorization ?? input.launchAuthorization ?? {};\nconst readiness = input.readiness ?? input.transactionReadiness ?? {};\nconst agreement = input.agreement ?? input.contract ?? {};\nconst parties = input.parties ?? {};\nconst price = Number(input.agreedPrice ?? agreement.agreedPrice ?? input.purchasePrice ?? NaN);\nconst mao = Number(input.effectiveMAO ?? input.mao ?? agreement.effectiveMAO ?? NaN);\nconst closingDate = input.closingDate ?? readiness.closingDate ?? null;\nconst launchKey = String(input.launchIdempotencyKey ?? execution.launchIdempotencyKey ?? input.idempotencyKey ?? '').trim();\nconst launchEvidence = input.launchEvidence ?? execution.launchEvidence ?? null;\nconst alreadyActive = Boolean(input.executionAlreadyActive ?? execution.active === true || execution.status === 'active');\nconst priorLaunchState = String(input.executionState ?? execution.state ?? '').toLowerCase();\nconst identityOk = Boolean(input.identityVerified ?? evidence.identityVerified);\nconst executedAgreementOk = Boolean(input.executedAgreementVerified ?? evidence.executedAgreementVerified ?? agreement.executed === true);\nconst signedEvidenceOk = Boolean(input.signedEvidenceVerified ?? evidence.signedEvidenceVerified ?? agreement.signed === true);\nconst agreementType = String(input.agreementType ?? agreement.type ?? '').trim();\nconst authorizationType = String(auth.type ?? auth.authorizationType ?? '').trim().toLowerCase();\nconst authorizationApproved = auth.approved === true || auth.authorized === true || auth.status === 'approved';\nconst authorized = authorizationApproved && ['closing_execution','closing','execution_launch','final_closing'].includes(authorizationType);\nconst priceProtected = Number.isFinite(price) && Number.isFinite(mao) ? price <= mao : false;\nconst dateValid = Boolean(closingDate) && !Number.isNaN(new Date(closingDate).getTime());\nconst launchEvidenceValid = Boolean(launchEvidence && (launchEvidence.id || launchEvidence.timestamp || launchEvidence.confirmed === true));\nconst blocked = Array.isArray(input.blockers) ? input.blockers.filter(Boolean) : [];\nconst missing = [];\nif (!identityOk) missing.push('identity_verified');\nif (!executedAgreementOk) missing.push('executed_agreement_verified');\nif (!signedEvidenceOk) missing.push('signed_evidence_verified');\nif (!agreementType) missing.push('agreement_type');\nif (!authorized) missing.push('explicit_closing_execution_authorization');\nif (!priceProtected) missing.push('agreed_price_at_or_below_effective_MAO');\nif (!dateValid) missing.push('valid_closing_date');\nif (!launchKey) missing.push('launch_idempotency_key');\nif (blocked.length) missing.push('blockers_cleared');\n\nlet status = 'blocked';\nif (blocked.length) status = 'blocked';\nelse if (alreadyActive || priorLaunchState === 'active') status = launchEvidenceValid ? 'already_active' : 'human_review_required';\nelse if (missing.length) status = 'blocked';\nelse status = 'launch_ready';\n\nconst activeMilestoneState = {\n  status: status === 'launch_ready' ? 'active' : status,\n  execution_state: status === 'launch_ready' ? 'launched_pending_milestone_confirmation' : status,\n  launch_idempotency_key: launchKey || null,\n  closing_date: closingDate,\n  agreement_type: agreementType || null,\n  agreed_price: Number.isFinite(price) ? price : null,\n  effective_mao: Number.isFinite(mao) ? mao : null,\n  milestone_state: status === 'launch_ready' ? 'initialized' : null,\n  launch_evidence_required: status === 'launch_ready',\n  launch_evidence_present: launchEvidenceValid\n};\n\nconst route = status === 'launch_ready' ? 'WF-136' :\n  status === 'already_active' ? 'WF-136' :\n  status === 'human_review_required' ? 'WF-126' : 'WF-126';\n\nreturn [{\n  json: {\n    ...input,\n    workflow: 'WF-179',\n    status,\n    missing_requirements: missing,\n    active_milestone_state: activeMilestoneState,\n    routing: {\n      next_workflow: route,\n      reason: status,\n      requires_human_review: status === 'human_review_required' || status === 'blocked'\n    },\n    audit: {\n      event: 'closing_execution_launch_evaluated',\n      launch_idempotency_key: launchKey || null,\n      authorization_type: authorizationType || null,\n      price_protected: priceProtected,\n      launch_evidence_valid: launchEvidenceValid\n    }\n  }\n}];"
+      },
+      "name": "Code — Launch Safety & Milestone Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "launch-ready",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "launch_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "already-active",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "already_active",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "name": "IF — Launch / Active Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({\n  external_id: $json.audit?.launch_idempotency_key || ('wf-179:' + ($json.execution?.id || $json.deal_id || 'unknown')),\n  external_source: 'wholesale-os',\n  activity_type: 'closing_execution_launch',\n  lead_id: $json.lead_id || null,\n  property_id: $json.property_id || null,\n  deal_id: $json.deal_id || null,\n  status: $json.status,\n  notes: JSON.stringify({\n    workflow: 'WF-179',\n    routing: $json.routing,\n    active_milestone_state: $json.active_milestone_state,\n    audit: $json.audit\n  })\n})}}"
+      },
+      "name": "HTTP — Persist Closing Execution Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {\n  ...($json ?? {}),\n  workflow: 'WF-179',\n  response: {\n    ok: true,\n    workflow: 'WF-179',\n    status: $json.status,\n    next_workflow: $json.routing?.next_workflow ?? 'WF-126',\n    requires_human_review: Boolean($json.routing?.requires_human_review),\n    active_milestone_state: $json.active_milestone_state ?? null\n  }\n} }];"
+      },
+      "name": "Code — Closing Execution Launch Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Closing Execution Launch": {
+      "main": [
+        [
+          {
+            "node": "Code — Launch Safety & Milestone Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Launch Safety & Milestone Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Launch / Active Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Launch / Active Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Closing Execution Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Closing Execution Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Closing Execution Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Closing Execution Launch Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-179-v1"
+}

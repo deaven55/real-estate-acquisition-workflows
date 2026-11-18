@@ -1,0 +1,42 @@
+{
+  "name": "WF-050 Cross-Workflow Dependency & Version Registry Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-050-dependency-version-registry", "responseMode": "responseNode", "options": {} },
+      "id": "wf050-webhook",
+      "name": "Dependency Registry Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-050-dependency-version-registry"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const records=Array.isArray(input.workflows)?input.workflows:Array.isArray(input.records)?input.records:[]; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const expected={20:{requires:['canonical_records','qualified_candidate_records'],produces:['underwriting_input','crm_metadata']},30:{requires:['canonical_records'],produces:['candidate_records']},31:{requires:['source_records'],produces:['canonical_records']},32:{requires:['candidate_records','evidence'],produces:['qualified_candidate_records']},33:{requires:['underwriting_result','acquisition_decision'],produces:['crm_status_update']},34:{requires:['underwriting_status','identity','evidence'],produces:['acquisition_decision','offer_ready']},35:{requires:['acquisition_decision','identity'],produces:['offer_draft']},36:{requires:['offer_draft','buyer_response'],produces:['offer_lifecycle_state']},37:{requires:['executed_contract_id','disposition_strategy'],produces:['disposition_match_request']},38:{requires:['disposition_match_request','buyer_records'],produces:['top_matches']},39:{requires:['top_matches','buyer_status'],produces:['buyer_response_state']},40:{requires:['selected_buyer','exit_strategy','executed_contract_id'],produces:['exit_strategy_readiness']},41:{requires:['exit_strategy_readiness','executed_contract_id'],produces:['transaction_package']},42:{requires:['transaction_package'],produces:['closing_package']},43:{requires:['closing_package','realized_profit_or_costs'],produces:['profit_tracking']},44:{requires:['profit_tracking'],produces:['reporting_record']},45:{requires:['reporting_records'],produces:['performance_summary']},46:{requires:['pipeline_records'],produces:['operating_queue']},47:{requires:['pipeline_records','timestamps'],produces:['exceptions','retry_queue']},48:{requires:['execution_events'],produces:['execution_ledger']},49:{requires:['contract_records'],produces:['contract_health']},50:{requires:['workflow_registry'],produces:['dependency_registry']}}; const issues=[]; const registry=[]; const seen=new Map(); records.forEach((r,i)=>{const id=norm(r.workflow_id??r.id??r.workflow); const version=norm(r.version??r.workflow_version??r.schema_version)||'unspecified'; const status=lower(r.status||'active'); const requires=Array.isArray(r.requires)?r.requires.map(norm).filter(Boolean):[]; const produces=Array.isArray(r.produces)?r.produces.map(norm).filter(Boolean):[]; if(!id){issues.push({record_index:i,type:'missing_workflow_id',severity:'blocking',message:'Workflow identifier is required.'});return;} if(seen.has(id)){const prior=seen.get(id); if(prior.version!==version)issues.push({record_index:i,type:'duplicate_version_conflict',severity:'blocking',workflow_id:id,versions:[prior.version,version],message:'Multiple versions were supplied for the same workflow.'}); else issues.push({record_index:i,type:'duplicate_registry_entry',severity:'warning',workflow_id:id,message:'Workflow appears more than once in the registry.'});} else seen.set(id,{version,index:i}); const number=Number(String(id).replace(/^WF-?/i,'')); const exp=expected[number]; if(exp){const missingRequires=exp.requires.filter(x=>!requires.includes(x)); const missingProduces=exp.produces.filter(x=>!produces.includes(x)); if(missingRequires.length)issues.push({record_index:i,type:'missing_declared_dependency_contract',severity:'blocking',workflow_id:id,missing_requires:missingRequires}); if(missingProduces.length)issues.push({record_index:i,type:'missing_declared_output_contract',severity:'blocking',workflow_id:id,missing_produces:missingProduces});} else issues.push({record_index:i,type:'unknown_workflow_contract',severity:'warning',workflow_id:id,message:'No expected contract is registered for this workflow identifier.'}); if(!['active','deprecated','planned','disabled'].includes(status))issues.push({record_index:i,type:'invalid_registry_status',severity:'blocking',workflow_id:id,status}); registry.push({record_index:i,workflow_id:id,version,status,requires,produces,dependencies:Array.isArray(r.dependencies)?r.dependencies:[],source_commit:r.source_commit??null});}); const dependencyEdges=[]; records.forEach((r,i)=>{const id=norm(r.workflow_id??r.id??r.workflow); const deps=Array.isArray(r.dependencies)?r.dependencies:[]; deps.forEach(d=>{const dep=norm(typeof d==='string'?d:d.workflow_id??d.id); if(dep)dependencyEdges.push({from:dep,to:id}); if(dep===id)issues.push({record_index:i,type:'self_dependency',severity:'blocking',workflow_id:id,message:'Workflow cannot depend on itself.'});});}); const known=new Set(records.map(r=>norm(r.workflow_id??r.id??r.workflow)).filter(Boolean)); dependencyEdges.forEach(e=>{if(!known.has(e.from))issues.push({type:'missing_dependency_registry_entry',severity:'blocking',dependency:e.from,dependent_workflow:e.to,message:'Dependency is referenced but not present in the supplied registry.'});}); const blocking=issues.filter(x=>x.severity==='blocking'); const warnings=issues.filter(x=>x.severity==='warning'); const health=blocking.length?'blocked':warnings.length?'needs_review':'ready'; const next=health==='ready'?'Dependency registry is internally consistent; keep versions pinned and use this registry as the handoff source of truth.':health==='blocked'?'Resolve blocking registry/dependency contract issues before production orchestration.':'Review registry warnings and explicitly approve unknown or duplicate workflow entries before relying on them operationally.'; return[{json:{ok:health==='ready',registry_health:health,workflow_count:registry.length,blocking_issue_count:blocking.length,warning_count:warnings.length,workflow_registry:registry,dependency_edges:dependencyEdges,issues,blocking_contracts:blocking,compatibility_warnings:warnings,next_action:next,policy:{registry_validation_only:true,no_automatic_external_side_effects:true,no_automatic_outreach:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf050-registry",
+      "name": "Validate Dependency & Version Registry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf050-response",
+      "name": "Respond Dependency Registry",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Dependency Registry Webhook": { "main": [[{ "node": "Validate Dependency & Version Registry", "type": "main", "index": 0 }]] },
+    "Validate Dependency & Version Registry": { "main": [[{ "node": "Respond Dependency Registry", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf050-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

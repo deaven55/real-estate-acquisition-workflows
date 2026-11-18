@@ -1,0 +1,147 @@
+{
+  "name": "WF-096 Seller Follow-Up Action Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-096-seller-follow-up-action-engine",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf096-webhook",
+      "name": "Seller Follow-Up Engine Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const q=input.queue??input.follow_up??input; const s=v=>String(v??'').trim(); const state=s(q.state).toLowerCase(); const priority=s(q.priority).toLowerCase(); const action=s(q.action).toLowerCase(); const leadId=s(q.lead_id); const dealId=s(q.deal_id); const propertyId=s(q.property_id); const threadId=s(q.thread_id); const dnc=q.dnc_suppressed===true||input.dnc===true; const autonomous= q.autonomous_outbound_allowed===true && !dnc; const missing=[]; if(!leadId&&!dealId)missing.push('lead_id_or_deal_id'); if(!threadId)missing.push('thread_id'); let recommendedAction='monitor'; let reason='No immediate seller action is required.'; let urgency='normal'; if(dnc){recommendedAction='suppress';reason='DNC/opt-out is active; suppress all autonomous seller outreach.';urgency='critical';} else if(state==='seller_reply_pending'||action==='analyze_seller_response'){recommendedAction='analyze_reply';reason='Seller replied; analyze intent, motivation, objections, timing and next best action before responding.';urgency='high';} else if(state==='delivery_attention'||action==='reconcile_delivery'){recommendedAction='reconcile_delivery';reason='Communication delivery failed; reconcile the provider receipt before attempting another send.';urgency='high';} else if(state==='awaiting_response'){recommendedAction='wait_or_follow_up';reason='Outbound communication succeeded; wait for the configured response window, then create a follow-up task if unanswered.';} const actionId='seller-action:'+((threadId||leadId||dealId||'unknown'))+':'+(q.request_id||q.audit_id||state||action||'event')+':v1'; return[{json:{ok:missing.length===0,action:{action_id:actionId,recommended_action:recommendedAction,reason,urgency,lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,thread_id:threadId||null,priority:priority||urgency,autonomous_outbound_allowed:autonomous&&recommendedAction==='wait_or_follow_up',requires_ai_response_analysis:recommendedAction==='analyze_reply',requires_delivery_reconciliation:recommendedAction==='reconcile_delivery',deterministic:true},execution:{mode:recommendedAction==='analyze_reply'?'internal_ai_analysis':recommendedAction==='reconcile_delivery'?'wf-089':recommendedAction==='suppress'?'blocked':'queue',next_workflow:recommendedAction==='analyze_reply'?'wf-078-ai-seller-conversation-response-intelligence':recommendedAction==='reconcile_delivery'?'wf-089-communication-delivery-reconciliation-safe-retry-gate':null},missing_requirements:missing,next_action:missing.length?'Resolve identity before changing seller/deal state.':reason}}}];"
+      },
+      "id": "wf096-normalize",
+      "name": "Determine Seller Next Best Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf096-valid",
+      "name": "Action Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf096-response",
+      "name": "Respond Seller Action",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf096-invalid",
+      "name": "Respond Invalid Action Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Seller Follow-Up Engine Webhook": {
+      "main": [
+        [
+          {
+            "node": "Determine Seller Next Best Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Seller Next Best Action": {
+      "main": [
+        [
+          {
+            "node": "Action Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Seller Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Action Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-096-v1"
+}

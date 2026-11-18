@@ -1,0 +1,163 @@
+{
+  "name": "WF-182 — Closing Evidence Reconciliation → Final Closing Package Validation",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-182-final-closing-package-validation",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Final Closing Package Validation",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-182-final-closing-package-validation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst pkg=input.closingPackage??input.package??{};\nconst agreement=input.agreement??input.contract??{};\nconst parties=input.parties??{};\nconst docs=Array.isArray(pkg.documents)?pkg.documents:(Array.isArray(input.documents)?input.documents:[]);\nconst requiredDocs=Array.isArray(input.requiredDocuments)?input.requiredDocuments:(Array.isArray(pkg.requiredDocuments)?pkg.requiredDocuments:[]);\nconst verifiedDocs=new Set(docs.filter(d=>d.verified===true||d.status==='verified').map(d=>String(d.type??d.name??'').toLowerCase()));\nconst missingDocs=requiredDocs.map(d=>String(d.type??d.name??d).toLowerCase()).filter(d=>!verifiedDocs.has(d));\nconst executed=Boolean(input.executedAgreementVerified??agreement.executed===true);\nconst signed=Boolean(input.signedEvidenceVerified??agreement.signed===true);\nconst identity=Boolean(input.identityVerified??input.identityVerifiedAllParties??false);\nconst agreementType=String(input.agreementType??agreement.type??'').trim();\nconst closingDate=input.closingDate??pkg.closingDate??null;\nconst closingDateValid=Boolean(closingDate&&!Number.isNaN(new Date(closingDate).getTime()));\nconst price=Number(input.agreedPrice??agreement.agreedPrice??NaN);\nconst mao=Number(input.effectiveMAO??agreement.effectiveMAO??NaN);\nconst priceProtected=Number.isFinite(price)&&Number.isFinite(mao)&&price<=mao;\nconst blockerList=Array.isArray(input.blockers)?input.blockers.filter(Boolean):[];\nconst partyIds=Array.isArray(parties.required)?parties.required:[]; const suppliedPartyIds=Array.isArray(parties.verified)?parties.verified:[];\nconst missingParties=partyIds.filter(x=>!suppliedPartyIds.includes(x));\nconst gaps=[];\nif(!executed)gaps.push('executed_agreement');\nif(!signed)gaps.push('signed_evidence');\nif(!identity)gaps.push('party_identity_verification');\nif(!agreementType)gaps.push('agreement_type');\nif(!closingDateValid)gaps.push('valid_closing_date');\nif(!priceProtected)gaps.push('agreed_price_at_or_below_effective_MAO');\nif(missingDocs.length)gaps.push('required_documents');\nif(missingParties.length)gaps.push('required_parties');\nif(blockerList.length)gaps.push('blockers_cleared');\n\nlet status='package_ready';\nif(blockerList.length)status='blocked';\nelse if(gaps.length)status='package_incomplete';\n\nconst route=status==='package_ready'?'WF-177':status==='package_incomplete'?'WF-176':'WF-126';\nreturn [{json:{...input,workflow:'WF-182',closing_package_validation:{status,missing_requirements:gaps,missing_documents:missingDocs,missing_parties:missingParties,document_count:docs.length,required_document_count:requiredDocs.length,closing_date:closingDate,price_protected:priceProtected},routing:{next_workflow:route,reason:status,requires_human_review:status==='blocked'},audit:{event:'final_closing_package_validation_evaluated',status,requirement_gap_count:gaps.length}}}];"
+      },
+      "name": "Code — Final Package Validation Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.closing_package_validation.status}}",
+              "rightValue": "package_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Final Package Ready Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({\n          external_id:'wf-182:'+($json.deal_id||$json.property_id||'unknown')+':'+($json.audit?.requirement_gap_count||0),\n          external_source:'wholesale-os',\n          activity_type:'final_closing_package_validation',\n          lead_id:$json.lead_id||null,\n          property_id:$json.property_id||null,\n          deal_id:$json.deal_id||null,\n          status:$json.closing_package_validation?.status||'unknown',\n          notes:JSON.stringify({\n            workflow:'WF-182',\n            routing:$json.routing,\n            closing_package_validation:$json.closing_package_validation,\n            audit:$json.audit\n          })\n        })}}"
+      },
+      "name": "HTTP — Persist Final Package Validation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{...($json??{}),workflow:'WF-182',response:{ok:true,workflow:'WF-182',status:$json.closing_package_validation?.status??'unknown',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),closing_package_validation:$json.closing_package_validation??null}}}];"
+      },
+      "name": "Code — Final Package Validation Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Final Closing Package Validation": {
+      "main": [
+        [
+          {
+            "node": "Code — Final Package Validation Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Final Package Validation Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Final Package Ready Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Final Package Ready Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Final Package Validation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Final Package Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Final Package Validation": {
+      "main": [
+        [
+          {
+            "node": "Code — Final Package Validation Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-182-v1"
+}

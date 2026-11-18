@@ -1,0 +1,220 @@
+{
+  "name": "WF-318 — Seller Response / Timeout → Negotiation Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-318-negotiation-decision",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf318-webhook",
+      "name": "Webhook — Negotiation Decision",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst classification=String(input.classification??'').toLowerCase();\nconst status=String(input.status??'').toLowerCase();\nconst amount=Number(input.counteroffer_amount??0);\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao??0);\nconst hasMao=mao>0;\nconst near=hasMao&&amount>mao&&amount<=mao*1.10;\nconst above=hasMao&&amount>mao*1.10;\nconst accepted=['accepted','acceptance','seller_acceptance'].includes(classification)||status==='accepted';\nconst rejected=['rejected','declined'].includes(classification)||status==='rejected';\nconst timeout=['timeout','response_timeout','no_response'].includes(status)||classification==='no_response';\nconst question=['question','other_response'].includes(classification);\nconst dnc=classification==='dnc'||input.dnc===true||status==='blocked_dnc';\nlet decision='needs_review',next='WF-126',reason='insufficient negotiation evidence';\nif(dnc){decision='blocked_dnc';next='WF-126';reason='DNC or contact restriction';}\nelse if(timeout){decision='timeout_followup';next='WF-320';reason='seller response window expired';}\nelse if(rejected){decision='reengage';next='WF-320';reason='seller rejected current offer';}\nelse if(accepted&&hasMao){decision='contract_ready';next='WF-319';reason='seller accepted within protected MAO';}\nelse if(classification==='counteroffer'&&hasMao&&amount>0){\n  if(amount<=mao){decision='counteroffer_within_mao';next='WF-319';reason='counteroffer is within dynamic MAO';}\n  else if(near){decision='counteroffer_near_mao';next='WF-319';reason='counteroffer is within controlled negotiation band';}\n  else if(above){decision='counteroffer_above_mao';next='WF-320';reason='counteroffer exceeds protected negotiation band';}\n}\nelse if(question){decision='clarification_response';next='WF-319';reason='seller question requires negotiation response';}\nreturn [{json:{...input,workflow_id:'WF-318',workflow_name:'Seller Response / Timeout → Negotiation Decision Controller',negotiation_decision:decision,decision_reason:reason,mao_protected:hasMao,dynamic_mao:mao,counteroffer_amount:amount||null,mao_relationship:amount===0?'unknown':above?'above_110_percent_mao':near?'near_mao':'within_mao',next_workflow:next,human_review_required:['counteroffer_near_mao','counteroffer_above_mao','needs_review','reengage'].includes(decision),crm_activity:{activity_type:'negotiation_decision',deal_id:input.deal_id,lead_id:input.lead_id,property_id:input.property_id,status:decision,classification,counteroffer_amount:amount||null,reason}}}];"
+      },
+      "id": "wf318-controller",
+      "name": "Controller — Negotiation Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "decision-gate",
+              "leftValue": "={{ $json.negotiation_decision }}",
+              "rightValue": "blocked_dnc",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "identity-gate",
+              "leftValue": "={{ $json.deal_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf318-gate",
+      "name": "IF — Negotiation Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "classification",
+              "value": "={{ $json.crm_activity.classification }}"
+            },
+            {
+              "name": "counteroffer_amount",
+              "value": "={{ $json.crm_activity.counteroffer_amount }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf318-crm",
+      "name": "InsulaCRM — Negotiation Decision Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, negotiation_decision: $json.negotiation_decision, decision_reason: $json.decision_reason, dynamic_mao: $json.dynamic_mao, counteroffer_amount: $json.counteroffer_amount, mao_relationship: $json.mao_relationship, human_review_required: $json.human_review_required, next_workflow: $json.next_workflow, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf318-response",
+      "name": "Response — Negotiation Decision Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Negotiation Decision": {
+      "main": [
+        [
+          {
+            "node": "Controller — Negotiation Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Negotiation Decision": {
+      "main": [
+        [
+          {
+            "node": "IF — Negotiation Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Negotiation Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Negotiation Decision Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Negotiation Decision Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Negotiation Decision Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Negotiation Decision Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-318-v1",
+  "meta": {
+    "workflow_id": "WF-318",
+    "description": "Turns seller response, counteroffer, rejection, question, and timeout states into a protected negotiation decision using dynamic MAO.",
+    "safety": {
+      "dnc_protection": true,
+      "dynamic_mao_protection": true,
+      "human_review_for_sensitive_negotiation": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

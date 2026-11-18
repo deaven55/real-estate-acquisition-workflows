@@ -1,0 +1,171 @@
+{
+  "name": "WF-152 Signature Outcome → Executed Agreement Validation & Transaction Readiness",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-152-signature-outcome-executed-agreement-validation",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "152-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-152-signature-outcome-executed-agreement-validation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const contract=input.contract??{}; const signature=input.signature??{}; const outcome=String(signature.outcome??input.signature_outcome??'').toLowerCase(); const signed=signature.signed===true||outcome==='signed'||outcome==='executed'; const explicitEvidence=Boolean(signature.signed_document_url??signature.document_id??signature.execution_evidence_id); const identities=Boolean((deal.property_id??input.property_id)&&(input.seller_id??deal.seller_id??input.seller_name)); const price=Number(contract.agreed_price??input.agreed_price??0); const validType=['assignment','novation','double_close'].includes(String(contract.agreement_type??input.agreement_type??'').toLowerCase()); let status='execution_blocked'; let route='human_review'; if(outcome==='declined'||outcome==='expired'||outcome==='voided') {status='agreement_not_executed';route='WF-099 seller follow-up cadence';} else if(signed&&!explicitEvidence) status='signed_evidence_required'; else if(signed&&!identities) status='identity_validation_required'; else if(signed&&!price) status='agreed_price_required'; else if(signed&&!validType) status='agreement_type_required'; else if(signed&&explicitEvidence){status='executed_agreement_ready';route='WF-125 transaction readiness & closing coordination gate';} else status='signature_pending'; return [{json:{workflow_id:'WF-152',workflow_name:'Signature Outcome → Executed Agreement Validation & Transaction Readiness',status,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,signature:{outcome,signed,explicit_evidence:explicitEvidence,signed_document_url:signature.signed_document_url??null},contract:{agreement_type:String(contract.agreement_type??input.agreement_type??'').toLowerCase(),agreed_price:price,execution_state:signed&&explicitEvidence?'executed':'not_executed'},routing:{next_workflow:route},guardrails:{never_mark_executed_without_explicit_signed_evidence:true,declined_expired_or_voided_not_executed:true,no_transaction_readiness_without_executed_agreement:true,human_review_for_ambiguous_signature_outcomes:true},crm_activity:{event_type:'signature_outcome_executed_agreement_validation',outcome:status,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-152:signature-outcome:'+(signature.signature_id??input.message_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "152-validate",
+      "name": "Validate Signature Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "executed_agreement_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "152-ready",
+      "name": "Executed Agreement Ready?",
+      "type": "n8n-nodes-base.if",
+      "version": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,signature:$json.signature,contract:$json.contract,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "152-crm",
+      "name": "Persist Execution Validation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Validate Signature Outcome').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,next_workflow:original.routing.next_workflow,execution_state:original.contract.execution_state}}}];"
+      },
+      "id": "152-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Signature Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Signature Outcome": {
+      "main": [
+        [
+          {
+            "node": "Executed Agreement Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executed Agreement Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Execution Validation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Execution Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Execution Validation": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-152-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

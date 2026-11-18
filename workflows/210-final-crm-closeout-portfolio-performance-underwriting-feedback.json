@@ -1,0 +1,163 @@
+{
+  "name": "WF-210 — Final CRM Closeout → Portfolio Performance Record & Underwriting Feedback",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-210-final-crm-closeout-portfolio-performance-underwriting-feedback",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Final CRM Closeout",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-210-final-crm-closeout-portfolio-performance-underwriting-feedback"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const c=x.crm_closeout??{};const gross=Number(c.gross_profit),costs=Number(c.total_closing_costs),net=Number(c.net_profit),margin=Number(c.profit_margin);const identity=Boolean(c.deal_id&&c.lead_id&&c.property_id);const missing=[];if(c.status!=='closeout_ready'&&c.status!=='negative_profit_review')missing.push('closeout_status');if(!identity)missing.push('deal_lead_property_identity');for(const [k,v] of [['gross_profit',gross],['closing_costs',costs],['net_profit',net]])if(!Number.isFinite(v))missing.push(k);let status=missing.length?'blocked':'performance_record_ready';const sample=x.portfolio_sample_size??x.historical_sample_size??null;const underwritingSignal=net>0?(margin>=0.2?'strong_positive':margin>=0.1?'positive':'thin_positive'):net<0?'negative':'neutral';const next=status==='performance_record_ready'?'WF-211':'WF-126';return[{json:{...x,workflow:'WF-210',portfolio_performance:{status,deal_id:c.deal_id??null,lead_id:c.lead_id??null,property_id:c.property_id??null,gross_profit:gross,total_closing_costs:costs,net_profit:net,profit_margin:Number.isFinite(margin)?margin:(gross?net/gross:null),historical_sample_size:sample,underwriting_feedback:{profitability_signal:underwritingSignal,calibration_candidate:net!==0},missing},routing:{next_workflow:next,requires_human_review:status==='blocked'},audit:{event:'final_crm_closeout_portfolio_performance_underwriting_feedback_evaluated',status}}}];"
+      },
+      "name": "Code — Portfolio Performance Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.portfolio_performance.status}}",
+              "rightValue": "performance_record_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Portfolio Performance Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-210:'+($json.portfolio_performance?.deal_id||$json.portfolio_performance?.property_id||'unknown')+':portfolio-performance',external_source:'wholesale-os',activity_type:'final_crm_closeout_portfolio_performance_underwriting_feedback',lead_id:$json.portfolio_performance?.lead_id||null,property_id:$json.portfolio_performance?.property_id||null,deal_id:$json.portfolio_performance?.deal_id||null,status:$json.portfolio_performance?.status||'blocked',notes:JSON.stringify({workflow:'WF-210',portfolio_performance:$json.portfolio_performance,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Portfolio Performance Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-210',status:$json.portfolio_performance?.status??'blocked',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),portfolio_performance:$json.portfolio_performance??null}}}];"
+      },
+      "name": "Code — Portfolio Performance Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Final CRM Closeout": {
+      "main": [
+        [
+          {
+            "node": "Code — Portfolio Performance Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Portfolio Performance Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Portfolio Performance Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Portfolio Performance Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Portfolio Performance Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Portfolio Performance Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Portfolio Performance Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Portfolio Performance Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-210-v1"
+}

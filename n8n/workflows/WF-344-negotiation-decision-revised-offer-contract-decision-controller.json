@@ -1,0 +1,202 @@
+{
+  "name": "WF-344 — Negotiation Decision → Revised Offer / Contract Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-344-negotiation-decision-revised-offer-contract-decision",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf344-webhook",
+      "name": "WF-344 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-344-negotiation-decision-revised-offer-contract-decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst decision=String(input.decision??'').toLowerCase();\nconst strategy=String(input.strategy??'').toLowerCase();\nconst dealId=input.deal_id??null; const leadId=input.lead_id??null; const propertyId=input.property_id??null;\nconst dynamicMao=Number(input.dynamic_mao??input.adjusted_mao??input.mao);\nconst counteroffer=input.counteroffer_amount==null?null:Number(input.counteroffer_amount);\nconst dnc=Boolean(input.dnc??input.do_not_contact??false); const blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst assetType=String(input.asset_type??input.property_type??'residential').toLowerCase();\nconst identityComplete=Boolean(dealId&&leadId&&propertyId); const maoValid=Number.isFinite(dynamicMao)&&dynamicMao>0;\nconst counterValid=counteroffer==null||(Number.isFinite(counteroffer)&&counteroffer>0); const hardBlock=dnc||blockers.length>0;\nlet outcome='needs_review'; let nextWorkflow='WF-343'; let contractReady=false; let revisedOffer=false; let reengagement=false; let reason='Negotiation outcome requires review.';\nif(hardBlock){outcome=dnc?'dnc_blocked':'blocked';nextWorkflow='WF-126';reason=dnc?'Seller is on DNC; no outbound action permitted.':'Active blocker prevents negotiation action.';}\nelse if(!identityComplete||!maoValid||!counterValid){outcome='incomplete';nextWorkflow='WF-343';reason='Required deal identity, dynamic MAO, or counteroffer data is missing/invalid.';}\nelse if(decision==='acceptance_ready'){outcome='contract_decision_ready';contractReady=true;nextWorkflow='WF-201';reason='Seller acceptance is ready for human-authorized contract review.';}\nelse if(decision==='counteroffer_within_mao'){outcome='accept_counteroffer_contract_review';contractReady=true;nextWorkflow='WF-201';reason='Counteroffer is below dynamic MAO and is eligible for controlled contract review.';}\nelse if(decision==='counteroffer_near_mao'){outcome='revised_offer_or_controlled_accept';revisedOffer=true;nextWorkflow='WF-340';reason='Counteroffer is near dynamic MAO; revised offer or controlled acceptance requires human review.';}\nelse if(decision==='counteroffer_above_mao'){outcome='above_mao_revised_offer_or_walk_away';revisedOffer=true;nextWorkflow='WF-340';reason='Counteroffer exceeds dynamic MAO; autonomous acceptance is prohibited.';}\nelse if(decision==='rejection_reengagement'||decision==='no_response'){outcome='reengagement_ready';reengagement=true;nextWorkflow='WF-261';reason='Seller outcome requires controlled re-engagement.';}\nelse if(decision==='clarification_required'||strategy==='answer_and_negotiate'){outcome='clarification_response_ready';revisedOffer=true;nextWorkflow='WF-340';reason='Seller needs clarification or negotiation response before contract decision.';}\nelse {outcome='needs_review';nextWorkflow='WF-343';reason='Unsupported WF-344 negotiation decision state.';}\nconst assetStrategy={residential:'Residential wholesale economics; 70% rule is secondary reference only.',multifamily:'Multifamily economics; prioritize NOI, cap rate/value evidence, debt and buyer demand.',land:'Land economics; prioritize zoning, utilities, access, topography, flood risk, land comps and development potential.',commercial:'Commercial economics; prioritize income/value evidence, lease/tenant factors, financing and exit demand.'}[assetType]??'Asset-specific economics required; 70% rule is secondary reference only.';\nconst activity={activity_type:'negotiation_decision_revised_offer_contract_decision_controller',subject:'WF-344 '+(dealId??'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,status:outcome,decision,strategy,next_workflow:nextWorkflow,contract_ready:contractReady,revised_offer:revisedOffer,reengagement,counteroffer_amount:counteroffer,dynamic_mao:dynamicMao,asset_type:assetType,asset_strategy:assetStrategy,hard_mao_guardrail:true,human_review_required:true,dnc,blockers,reason};\nreturn [{json:{...input,wf_id:'WF-344',outcome,next_workflow:nextWorkflow,contract_ready:contractReady,revised_offer:revisedOffer,reengagement,counteroffer_amount:counteroffer,dynamic_mao:dynamicMao,asset_type:assetType,asset_strategy:assetStrategy,hard_mao_guardrail:true,human_review_required:true,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf344-controller",
+      "name": "WF-344 Revised Offer / Contract Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "contract",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "contract_decision_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "counter-contract",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "accept_counteroffer_contract_review",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "revised",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "revised_offer_or_controlled_accept",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "above",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "above_mao_revised_offer_or_walk_away",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf344-gate",
+      "name": "Contract / Revised Offer Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf344-crm",
+      "name": "Persist WF-344 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf344-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-344 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-344 Revised Offer / Contract Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-344 Revised Offer / Contract Controller": {
+      "main": [
+        [
+          {
+            "node": "Contract / Revised Offer Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contract / Revised Offer Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-344 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-344 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-344 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf344-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

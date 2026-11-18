@@ -1,0 +1,165 @@
+{
+  "name": "WF-244 — Transaction Readiness → Title/Attorney/Funding/Broker Closing Coordination",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-244-closing-coordination",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const transaction_status=String(d.transaction_status??d.status??\"\").toLowerCase();const closing_date=d.closing_date??null;const seller_name=String(d.seller_name??\"\").trim();const buyer_name=String(d.buyer_name??d.assignee_name??\"\").trim();const contacts=d.contacts&&typeof d.contacts===\"object\"?d.contacts:{};const required=[\"title\",\"attorney\",\"funding\",\"broker\"];const missing=required.filter(k=>!contacts[k]||!String(contacts[k]).trim());const blockers=Array.isArray(d.blockers)?d.blockers:[];let status=\"needs_review\",reason=\"Closing coordination requires review.\",next=\"WF-126\";if(!lead_id||!deal_id||!property_id){status=\"blocked\";reason=\"Missing lead, deal, or property identity.\";}else if(blockers.length){status=\"blocked\";reason=\"Unresolved transaction blockers prevent closing coordination.\";}else if(![\"transaction_ready\",\"closing_ready\"].includes(transaction_status)){status=\"transaction_not_ready\";reason=\"Transaction readiness has not been confirmed.\";}else if(!closing_date){status=\"incomplete\";reason=\"Closing date is required.\";}else if(!seller_name||!buyer_name){status=\"incomplete\";reason=\"Seller and buyer/assignee identities are required.\";}else if(missing.length){status=\"coordination_incomplete\";reason=\"Required closing contacts are missing: \"+missing.join(\", \")+ \".\";}else{status=\"coordination_ready\";reason=\"Title, attorney, funding, and broker coordination inputs are complete.\";next=\"WF-245\";}return[{json:{workflow:\"WF-244\",lead_id,deal_id,property_id,transaction_status,closing_date,seller_name,buyer_name,contacts,required_contacts:required,missing_contacts:missing,coordination_status:status,reason,requires_human_review:status!==\"coordination_ready\",next_workflow:next}}];"
+      },
+      "name": "Closing Coordination Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.coordination_status }}",
+              "rightValue": "coordination_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Coordination Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'closing_coordination',notes:'WF-244 status='+$json.coordination_status+' next='+$json.next_workflow+' closing_date='+$json.closing_date+' missing_contacts='+$json.missing_contacts.join(','),metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Closing Coordination",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,coordination_ready:$json.coordination_status===\"coordination_ready\",next_workflow:$json.next_workflow}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Closing Coordination Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closing Coordination Controller": {
+      "main": [
+        [
+          {
+            "node": "Coordination Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coordination Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Closing Coordination",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Closing Coordination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Closing Coordination": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-244-closing-coordination-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

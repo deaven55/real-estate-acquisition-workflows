@@ -1,0 +1,84 @@
+{
+  "name": "WF-075 Deal Scoring & Opportunity Ranking Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-075-deal-scoring-opportunity-ranking",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf075-webhook",
+      "name": "Deal Scoring Opportunity Ranking Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-075-deal-scoring-opportunity-ranking",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const n=v=>{const x=Number(v);return Number.isFinite(x)?x:null}; const id=s(input.property_id??input.parcel_id??input.deal_id??input.lead_id); const asset=s(input.asset_type??input.property_type??'residential').toLowerCase(); const factors={economics:n(input.economic_score),repair:n(input.repair_score),risk:n(input.risk_score),market:n(input.market_score),buyer_demand:n(input.buyer_demand_score),exit:n(input.exit_strategy_score),data_quality:n(input.data_quality_score)}; const supplied=Object.entries(factors).filter(([,v])=>v!==null); const weights={economics:.25,repair:.1,risk:.15,market:.15,buyer_demand:.15,exit:.15,data_quality:.05}; let score=null; if(supplied.length){let total=0,weight=0; for(const [k,v] of supplied){total+=v*weights[k];weight+=weights[k]} score=Math.round((total/weight)*10)/10;} const missing=Object.keys(factors).filter(k=>factors[k]===null); const rank=score===null?'unranked':score>=85?'tier_1_priority':score>=70?'tier_2_review':score>=55?'tier_3_watch':'tier_4_low_priority'; const blockers=[]; if(!id)blockers.push('canonical_identity'); if(missing.includes('economics'))blockers.push('economic_score'); if(missing.includes('risk'))blockers.push('risk_score'); return[{json:{ok:!!id,adapter:'wf-075',canonical_identity:id||null,asset_type:asset,scoring:{score,scale:'0-100',rank_tier:rank,weighted_factors:factors,weights,coverage_ratio:supplied.length/Object.keys(factors).length,missing_factors:missing},decision:{priority:rank,primary_principle:'rank opportunities by actual deal viability, evidence quality, risk, buyer demand, and exit potential—not a single percentage rule',next_action:blockers.length?'Resolve material scoring gaps before treating the ranking as decision-grade.':rank==='tier_1_priority'?'Prioritize for human review and next approved action.':rank==='tier_2_review'?'Review economics, risk, and buyer/exit evidence before advancing.':'Keep in queue until stronger evidence or improved economics emerge.'},provenance:{raw_inputs_preserved:true,score_is_derived_not_market_fact:true},policy:{70_percent_rule_secondary:true,deal_viability_primary:true,no_automatic_external_action:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf075-analysis",
+      "name": "Calculate Deal Score & Opportunity Rank",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf075-response",
+      "name": "Respond Deal Scoring Opportunity Ranking",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Deal Scoring Opportunity Ranking Webhook": {
+      "main": [
+        [
+          {
+            "node": "Calculate Deal Score & Opportunity Rank",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Deal Score & Opportunity Rank": {
+      "main": [
+        [
+          {
+            "node": "Respond Deal Scoring Opportunity Ranking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf075-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

@@ -1,0 +1,158 @@
+{
+  "name": "WF-291 — Seller Response → Offer / Counteroffer Classification & Negotiation Routing Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-291-seller-response-classification-negotiation-routing",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf291-webhook",
+      "name": "WF-291 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-291-seller-response-classification-negotiation-routing"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst response=input.seller_response??input.response??{};\nconst text=String(response.text||input.response_text||\"\").trim();\nconst lower=text.toLowerCase();\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst amountMatch=text.replace(/[$,]/g,\"\").match(/(?:^|\\\\s)(\\\\d{2,7}(?:\\\\.\\\\d{1,2})?)(?:\\\\s|$)/);\nconst counteroffer=amountMatch?Number(amountMatch[1]):Number(input.counteroffer_amount);\nconst accepted=/\\\\b(yes|accept|accepted|deal|agreed|sounds good|let's do it|okay|ok)\\\\b/.test(lower);\nconst rejected=/\\\\b(no|reject|rejected|pass|not interested|decline|declined)\\\\b/.test(lower);\nconst question=/\\\\?|\\\\b(why|how|what|when|where|can you|could you|explain)\\\\b/.test(lower);\nconst counter=Number.isFinite(counteroffer)&&!accepted&&!rejected;\nconst noResponse=!text&&Boolean(input.no_response);\nlet classification=counter?\"counteroffer\":accepted?\"accepted\":rejected?\"rejected\":question?\"question\":noResponse?\"no_response\":text?\"other_response\":\"unknown\";\nlet nextWorkflow=\"WF-292\",humanReview=false,reason=\"seller response classified\";\nif(blockers.length){nextWorkflow=\"WF-126\";humanReview=true;reason=\"active blockers present\";}\nelse if(classification===\"counteroffer\"){nextWorkflow=\"WF-292\";humanReview=true;reason=\"counteroffer requires negotiation evaluation\";}\nelse if(classification===\"rejected\"){nextWorkflow=\"WF-293\";humanReview=true;reason=\"seller rejected offer; route to re-engagement/walk-away logic\";}\nelse if(classification===\"accepted\"){nextWorkflow=\"WF-292\";humanReview=true;reason=\"seller acceptance requires contract/negotiation gate\";}\nelse if(classification===\"no_response\"){nextWorkflow=\"WF-290\";reason=\"no response; maintain response/timeout state\";}\nconst classificationResult={classification,response_text_present:Boolean(text),counteroffer_amount:Number.isFinite(counteroffer)?counteroffer:null,accepted,rejected,question,no_response:classification===\"no_response\",confidence:classification===\"unknown\"?\"low\":\"high\"};\nreturn [{json:{...input,workflow:\"WF-291\",workflow_name:\"Seller Response → Offer / Counteroffer Classification & Negotiation Routing Controller\",status:\"response_classified\",seller_response_classification:classificationResult,next_workflow:nextWorkflow,human_review_required:humanReview,routing_reason:reason,audit:{event_type:\"seller_response_classification_negotiation_routing\",idempotency_key:input.idempotency_key||`wf-291:${input.deal_id||\"unknown\"}:${input.dispatch_id||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf291-controller",
+      "name": "WF-291 Seller Response Classifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['accepted','counteroffer'].includes($json.seller_response_classification.classification)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf291-if",
+      "name": "WF-291 Negotiation Routing Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-291 seller response classification and negotiation routing',description:$json.routing_reason,metadata:{workflow:'WF-291',status:$json.status,seller_response_classification:$json.seller_response_classification,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf291-crm",
+      "name": "WF-291 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,seller_response_classification:$json.seller_response_classification,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf291-response",
+      "name": "WF-291 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-291 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-291 Seller Response Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-291 Seller Response Classifier": {
+      "main": [
+        [
+          {
+            "node": "WF-291 Negotiation Routing Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-291 Negotiation Routing Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-291 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-291 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-291 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-291 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-291-v1"
+}

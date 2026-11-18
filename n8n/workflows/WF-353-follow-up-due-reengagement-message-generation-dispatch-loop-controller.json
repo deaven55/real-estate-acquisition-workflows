@@ -1,0 +1,169 @@
+{
+  "name": "WF-353 — Follow-Up Due → Re-engagement Message Generation & Dispatch Loop Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-353-follow-up-due-reengagement",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf353-webhook",
+      "name": "Webhook — Follow-Up Due",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json ?? {};\nconst event = input.event ?? input;\nconst dealId = event.deal_id ?? event.dealId;\nconst leadId = event.lead_id ?? event.leadId;\nconst propertyId = event.property_id ?? event.propertyId;\nconst status = String(event.status ?? '').toLowerCase();\nconst dnc = Boolean(event.dnc ?? event.do_not_contact);\nconst blockers = Array.isArray(event.blockers) ? event.blockers : [];\nconst attempts = Number(event.attempts ?? event.outreach_attempts ?? 0);\nconst maxAttempts = Number(event.max_attempts ?? event.maxOutreachAttempts ?? 3);\nconst seller = event.seller ?? {};\nconst phone = event.phone ?? seller.phone;\nconst email = event.email ?? seller.email;\nconst followupAt = event.followup_at ?? event.followupAt ?? event.next_followup_at;\nconst baseKey = event.idempotency_key ?? event.idempotencyKey ?? [dealId, leadId, propertyId, 'seller-followup'].filter(Boolean).join(':');\nconst idempotencyKey = baseKey + ':followup:' + attempts;\nlet route = 'WF-352';\nlet decision = 'blocked';\nif (dnc) { route = 'WF-126'; decision = 'dnc_hard_stop'; }\nelse if (blockers.length) { route = 'WF-126'; decision = 'blocked'; }\nelse if (!dealId || !leadId || !propertyId || !baseKey) { route = 'WF-352'; decision = 'identity_or_idempotency_missing'; }\nelse if (!phone && !email) { route = 'WF-352'; decision = 'seller_contact_missing'; }\nelse if (attempts >= maxAttempts) { route = 'WF-126'; decision = 'human_review_max_attempts'; }\nelse if (status === 'seller_response' || event.inbound_response) { route = 'WF-342'; decision = 'seller_response'; }\nelse if (status === 'followup_due' || status === 'follow_up_due' || event.followup_due === true) { route = 'WF-346'; decision = 'followup_due'; }\nelse { route = 'WF-352'; decision = 'not_due'; }\nreturn [{json:{...event, workflow:'WF-353', decision, route, deal_id:dealId, lead_id:leadId, property_id:propertyId, seller:{...seller, phone, email}, attempts, max_attempts:maxAttempts, followup_at:followupAt, idempotency_key:idempotencyKey, audit_event:'seller_followup_due_controller'}}];"
+      },
+      "id": "wf353-controller",
+      "name": "Controller — Follow-Up Safety & Routing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchers": [],
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "followup_due",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf353-gate",
+      "name": "IF — Follow-Up Due",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY || '' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({lead_id:$json.lead_id, deal_id:$json.deal_id, property_id:$json.property_id, activity_type:'seller_followup_due', status:$json.decision, route:$json.route, idempotency_key:$json.idempotency_key, attempts:$json.attempts, followup_at:$json.followup_at, created_by:'WF-353'}) }}",
+        "options": {}
+      },
+      "id": "wf353-crm",
+      "name": "InsulaCRM — Audit Follow-Up Decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ok:true, workflow:'WF-353', decision:$json.decision, route:$json.route, idempotency_key:$json.idempotency_key, next_action:$json.route === 'WF-346' ? 'generate_reengagement_message_and_dispatch' : $json.route}) }}",
+        "options": {}
+      },
+      "id": "wf353-response",
+      "name": "Respond — Follow-Up Routing",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Follow-Up Due": {
+      "main": [
+        [
+          {
+            "node": "Controller — Follow-Up Safety & Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Follow-Up Safety & Routing": {
+      "main": [
+        [
+          {
+            "node": "IF — Follow-Up Due",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Follow-Up Due": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Audit Follow-Up Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Audit Follow-Up Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Audit Follow-Up Decision": {
+      "main": [
+        [
+          {
+            "node": "Respond — Follow-Up Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-353-v1"
+}

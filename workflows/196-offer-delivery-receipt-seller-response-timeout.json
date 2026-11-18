@@ -1,0 +1,181 @@
+{
+  "name": "WF-196 — Offer Delivery Receipt → Seller Response / Timeout Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-196-offer-delivery-receipt-seller-response-timeout",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Offer Delivery Receipt",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-196-offer-delivery-receipt-seller-response-timeout"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const d=x.offer_dispatch??{};const receipt=x.delivery_receipt??x.receipt??{};const delivered=receipt.delivered===true||['delivered','sent','accepted'].includes(String(receipt.status??'').toLowerCase());const failed=receipt.failed===true||['failed','rejected','undeliverable'].includes(String(receipt.status??'').toLowerCase());const responseReceived=x.seller_response_received===true||Boolean(x.seller_response);const timedOut=x.timeout===true||String(x.response_state??'').toLowerCase()==='timeout';let state='pending';if(responseReceived)state='response_received';else if(failed)state='delivery_failed';else if(delivered)state='awaiting_seller_response';else if(timedOut)state='response_timeout';else state='receipt_pending';const route={response_received:'WF-197',delivery_failed:'WF-195',awaiting_seller_response:'WF-198',response_timeout:'WF-198',receipt_pending:'WF-195'}[state];const review=state==='delivery_failed'||state==='receipt_pending';return[{json:{...x,workflow:'WF-196',offer_delivery_receipt:{state,delivered,failed,response_received:responseReceived,timed_out:timedOut,receipt_id:receipt.receipt_id??receipt.id??null,received_at:receipt.received_at??null},routing:{next_workflow:route,requires_human_review:review},audit:{event:'offer_delivery_receipt_seller_response_timeout_evaluated',status:state}}}];"
+      },
+      "name": "Code — Delivery Receipt Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "response",
+              "leftValue": "={{$json.offer_delivery_receipt.state}}",
+              "rightValue": "response_received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "awaiting",
+              "leftValue": "={{$json.offer_delivery_receipt.state}}",
+              "rightValue": "awaiting_seller_response",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "timeout",
+              "leftValue": "={{$json.offer_delivery_receipt.state}}",
+              "rightValue": "response_timeout",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "name": "IF — Seller Response Routing Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-196:'+($json.deal_id||$json.property_id||'unknown')+':delivery-receipt',external_source:'wholesale-os',activity_type:'offer_delivery_receipt_seller_response_timeout',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.offer_delivery_receipt?.state||'unknown',notes:JSON.stringify({workflow:'WF-196',offer_delivery_receipt:$json.offer_delivery_receipt,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Delivery Receipt Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-196',status:$json.offer_delivery_receipt?.state??'unknown',next_workflow:$json.routing?.next_workflow??'WF-195',requires_human_review:Boolean($json.routing?.requires_human_review),offer_delivery_receipt:$json.offer_delivery_receipt??null}}}];"
+      },
+      "name": "Code — Delivery Receipt Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Offer Delivery Receipt": {
+      "main": [
+        [
+          {
+            "node": "Code — Delivery Receipt Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Delivery Receipt Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Seller Response Routing Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Seller Response Routing Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Delivery Receipt Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Delivery Receipt Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Delivery Receipt Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Delivery Receipt Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-196-v1"
+}

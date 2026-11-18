@@ -1,0 +1,165 @@
+{
+  "name": "WF-238 — Seller Response → Negotiation Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-238-negotiation-decision",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const classification=String(d.classification??d.seller_response_type??\"\").toLowerCase();const counter=Number(d.counteroffer_amount??NaN),mao=Number(d.dynamic_mao??d.adjusted_mao??d.maximum_offer??NaN);const blockers=Array.isArray(d.blockers)?d.blockers:[];let decision=\"needs_review\",state=\"blocked\",route=\"WF-126\",reason=\"Negotiation inputs are incomplete or require human review.\";if(!lead_id||!deal_id||!property_id){reason=\"Missing negotiation identity.\";}else if(blockers.length){reason=\"Unresolved blockers prevent negotiation decision.\";}else if(classification===\"accepted\"){decision=\"acceptance_ready\";state=\"negotiation_ready\";route=\"WF-239\";reason=\"Seller accepted the offer; proceed to acceptance/contract decision.\";}else if(classification===\"counteroffer\"){if(!Number.isFinite(counter)||!Number.isFinite(mao)){decision=\"needs_review\";state=\"needs_evidence\";route=\"WF-237\";reason=\"Counteroffer or dynamic MAO is missing.\";}else if(counter<=mao){decision=\"counteroffer_within_mao\";state=\"negotiation_ready\";route=\"WF-239\";reason=\"Counteroffer is within the protected dynamic MAO ceiling.\";}else if(counter<=mao*1.05){decision=\"counteroffer_near_mao\";state=\"human_review\";route=\"WF-240\";reason=\"Counteroffer is above MAO but within a narrow negotiation band.\";}else{decision=\"counteroffer_above_mao\";state=\"human_review\";route=\"WF-240\";reason=\"Counteroffer materially exceeds the protected dynamic MAO ceiling.\";}}else if(classification===\"rejected\"){decision=\"rejection_reengagement\";state=\"human_review\";route=\"WF-240\";reason=\"Seller rejected the offer; re-engagement strategy is required.\";}else if(classification===\"question\"){decision=\"clarification_follow_up\";state=\"negotiation_ready\";route=\"WF-240\";reason=\"Seller question requires a targeted negotiation response.\";}else if(classification===\"no_response\"){decision=\"follow_up_needed\";state=\"negotiation_ready\";route=\"WF-240\";reason=\"Seller has not provided a substantive response.\";}else{decision=\"other_response\";state=\"human_review\";route=\"WF-240\";reason=\"Seller response requires review before further negotiation.\";}return[{json:{workflow:\"WF-238\",lead_id,deal_id,property_id,classification,counteroffer_amount:Number.isFinite(counter)?counter:null,dynamic_mao:Number.isFinite(mao)?mao:null,decision,state,route,reason,negotiation:{mao_protected:true,within_mao:Number.isFinite(counter)&&Number.isFinite(mao)?counter<=mao:null,over_mao_percent:Number.isFinite(counter)&&Number.isFinite(mao)&&mao>0?((counter/mao)-1)*100:null},requires_human_review:[\"human_review\",\"blocked\"].includes(state)}}];"
+      },
+      "name": "Negotiation Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "negotiation_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Negotiation Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'negotiation_decision',notes:'WF-238 decision='+$json.decision+' state='+$json.state+' counteroffer='+$json.counteroffer_amount+' dynamic_mao='+$json.dynamic_mao,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Negotiation Decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,next_workflow:$json.route,negotiation_decision_ready:[\"negotiation_ready\",\"human_review\"].includes($json.state)}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Negotiation Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Negotiation Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "Negotiation Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Negotiation Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Negotiation Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Negotiation Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Negotiation Decision": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-238-negotiation-decision-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

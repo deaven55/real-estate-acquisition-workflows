@@ -1,0 +1,165 @@
+{
+  "name": "WF-221 — Contract Trigger → Contract Package Validation & Signature Launch",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-221-contract-trigger",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const d=input.deal??input;\nconst lead_id=d.lead_id??null, deal_id=d.deal_id??null, property_id=d.property_id??null;\nconst contract_price=Number(d.contract_price??d.accepted_price??NaN), adjusted_mao=Number(d.adjusted_mao??d.dynamic_mao??NaN);\nconst agreement_type=String(d.agreement_type??d.contract_type??\"purchase_agreement\").trim();\nconst seller=d.seller??{}; const seller_name=String(d.seller_name??seller.name??\"\").trim();\nconst signature_required=d.signature_required!==false;\nconst blockers=Array.isArray(d.blockers)?d.blockers:[];\nlet state=\"needs_review\",route=\"WF-126\",reason=\"Contract package requires review.\";\nif(!lead_id||!deal_id||!property_id||!Number.isFinite(contract_price)||!agreement_type||!seller_name){state=\"blocked\";reason=\"Missing required contract identity, price, agreement type, or seller identity.\";}\nelse if(Number.isFinite(adjusted_mao)&&contract_price>adjusted_mao){state=\"blocked\";reason=\"Contract price exceeds dynamic MAO protection.\";}\nelse if(blockers.length){state=\"blocked\";reason=\"Unresolved deal blockers prevent contract launch.\";}\nelse if(!signature_required){state=\"package_ready\";route=\"WF-202\";reason=\"Contract package is ready; signature requirement is disabled.\";}\nelse{state=\"signature_ready\";route=\"WF-202\";reason=\"Contract package is validated and ready for controlled signature launch.\";}\nreturn [{json:{workflow:\"WF-221\",lead_id,deal_id,property_id,contract_price:Number.isFinite(contract_price)?contract_price:null,adjusted_mao:Number.isFinite(adjusted_mao)?adjusted_mao:null,agreement_type,seller_name,signature_required,blockers,state,route,reason,requires_human_review:true}}];"
+      },
+      "name": "Contract Package Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "signature_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Signature Launch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'contract_package_validation',notes:'WF-221 state='+$json.state+' route='+$json.route+' reason='+$json.reason,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Contract Readiness",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{...$json,persisted:true,next_workflow:$json.route,signature_launch_ready:$json.state===\"signature_ready\"}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Contract Package Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contract Package Validator": {
+      "main": [
+        [
+          {
+            "node": "Signature Launch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Launch Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Contract Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Contract Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Contract Readiness": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-221-contract-trigger-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "WF-054 Action Execution Policy & Side-Effect Guard",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-054-action-execution-policy", "responseMode": "responseNode", "options": {} },
+      "id": "wf054-webhook",
+      "name": "Action Policy Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-054-action-execution-policy"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const requests=Array.isArray(input.actions)?input.actions:Array.isArray(input.action_requests)?input.action_requests:input.action?[input]:[]; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const sideEffects=new Set(['seller_contact','buyer_contact','send_offer','contract_prepare','closing_schedule','crm_sync','execution_retry','external_api_write']); const approvalRequired=new Set(['seller_contact','buyer_contact','send_offer','contract_prepare','closing_schedule','crm_sync','execution_retry','external_api_write']); const allowedHealth=new Set(['ready']); const allowedContract=new Set(['ready']); const allowedControl=new Set(['ready','needs_review']); const results=[]; const violations=[]; const blocked=[]; const allowed=[]; requests.forEach((a,i)=>{const action=lower(a.action??a.action_type??a.requested_action); const id=norm(a.action_id??a.request_id??a.idempotency_key); const approval=a.authorization??a.approval??{}; const approved=Boolean(approval.approved??a.approved); const approvalId=norm(approval.approval_id??a.approval_id); const contractHealth=lower(a.contract_health??a.workflow_contract_health??''); const controlHealth=lower(a.control_plane_health??''); const auditHealth=lower(a.audit_health??''); const idempotency=norm(a.idempotency_key??a.execution_id??a.request_id); const reasons=[]; if(!action)reasons.push('missing_action'); if(!id)reasons.push('missing_action_id'); if(sideEffects.has(action)&&approvalRequired.has(action)&&(!approved||!approvalId))reasons.push('missing_human_authorization'); if(sideEffects.has(action)&&contractHealth&&!allowedContract.has(contractHealth))reasons.push('contract_health_not_ready'); if(sideEffects.has(action)&&controlHealth&&!allowedControl.has(controlHealth))reasons.push('control_plane_blocked'); if(sideEffects.has(action)&&auditHealth&&auditHealth!=='ready')reasons.push('audit_evidence_not_ready'); if(sideEffects.has(action)&&!idempotency)reasons.push('missing_idempotency_key'); const decision=reasons.length?'blocked':'allowed'; const row={record_index:i,action,action_id:id||null,idempotency_key:idempotency||null,decision,authorization:{approved,approval_id:approvalId||null},contract_health:contractHealth||null,control_plane_health:controlHealth||null,audit_health:auditHealth||null,policy_violations:reasons}; results.push(row); if(decision==='blocked'){blocked.push(row);reasons.forEach(r=>violations.push({record_index:i,action,violation:r,severity:'blocking'}));}else allowed.push(row); }); const health=violations.length?'blocked':results.length?'ready':'needs_review'; return[{json:{ok:health==='ready',execution_policy_health:health,requested_action_count:results.length,allowed_action_count:allowed.length,blocked_action_count:blocked.length,allowed_actions:allowed,blocked_actions:blocked,policy_violations:violations,audit_event:{event_type:'action_execution_policy',event_count:results.length,allowed_count:allowed.length,blocked_count:blocked.length},next_action:health==='ready'?'Proceed only through the separately authorized execution boundary using the supplied idempotency key.':health==='blocked'?'Resolve authorization, contract, control-plane, audit-evidence, or idempotency blockers before any consequential side effect.':'Supply at least one action request for policy evaluation.',policy:{human_authorization_required_for_side_effects:true,idempotency_required:true,contract_health_required:true,control_plane_health_required:true,audit_evidence_required:true,no_external_side_effects_executed:true,no_automatic_outreach:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf054-policy",
+      "name": "Evaluate Action Execution Policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf054-response",
+      "name": "Respond Action Policy",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Action Policy Webhook": { "main": [[{ "node": "Evaluate Action Execution Policy", "type": "main", "index": 0 }]] },
+    "Evaluate Action Execution Policy": { "main": [[{ "node": "Respond Action Policy", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf054-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

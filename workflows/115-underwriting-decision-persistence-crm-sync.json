@@ -1,0 +1,195 @@
+{
+  "name": "WF-115 Underwriting Decision Persistence & CRM Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-115-underwriting-decision-persistence",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf115-webhook",
+      "name": "Underwriting Decision Persistence Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??'').trim();\nconst audit=input.audit??input;\nconst identity=audit.identity??input.identity??{};\nconst leadId=s(identity.lead_id);\nconst propertyId=s(identity.property_id);\nconst dealId=s(identity.deal_id);\nconst id=s(dealId||propertyId||leadId);\nconst requestId=s(audit.request_id??input.request_id);\nconst auditId=s(audit.audit_id)||('underwriting-decision:'+(id||'unknown')+':'+(requestId||'unknown')+':v1');\nconst decision=audit.decision??input.decision??{};\nconst evidenceQuality=audit.evidence_quality??input.evidence_quality??{};\nconst risks=decision.risks??input.risks??[];\nconst assumptions=decision.assumptions??input.assumptions??{};\nconst recommendedOffer=decision.recommended_offer??null;\nconst status=s(decision.status??input.status).toLowerCase();\nconst missing=[];\nif(!leadId)missing.push('lead_id');\nif(!recommendedOffer)missing.push('recommended_offer');\nif(!status)missing.push('decision_status');\nconst activityId='underwriting-decision:'+auditId;\nconst notes=[\n'Underwriting decision persisted by Wholesaling OS.',\n'Decision status: '+status,\n'Recommended offer/MAO: '+String(recommendedOffer??'not supplied'),\n'Evidence confidence: '+String(evidenceQuality.overall_score??evidenceQuality.score??'not supplied'),\n'Risks: '+JSON.stringify(risks),\n'Assumptions: '+JSON.stringify(assumptions),\n'Audit ID: '+auditId\n].join('\\n');\nconst activity={activity_type:'underwriting_decision',subject:'AI underwriting decision '+(status||'recorded'),body:notes,lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,external_id:activityId,external_source:'wholesaling-os-underwriting',metadata:{audit_id:auditId,request_id:requestId||null,recommended_offer:recommendedOffer,evidence_quality:evidenceQuality,risks,assumptions,decision_status:status}};\nreturn[{json:{ok:missing.length===0,status:missing.length?'persistence_blocked':'persistence_ready',audit_id:auditId,request_id:requestId||null,identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null},decision:{status,recommended_offer:recommendedOffer,evidence_quality:evidenceQuality,risks,assumptions},crm_activity:activity,missing_requirements:missing,next_workflow:missing.length?'human_review':'crm_persist'}}];"
+      },
+      "id": "wf115-prepare",
+      "name": "Prepare CRM Underwriting Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "persistence_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf115-ready",
+      "name": "Persistence Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{JSON.stringify($json.crm_activity)}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf115-crm",
+      "name": "Persist Underwriting Decision to InsulaCRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf115-response",
+      "name": "Respond Persistence Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf115-blocked",
+      "name": "Respond Persistence Blocked",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Underwriting Decision Persistence Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare CRM Underwriting Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare CRM Underwriting Decision": {
+      "main": [
+        [
+          {
+            "node": "Persistence Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persistence Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Underwriting Decision to InsulaCRM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Persistence Blocked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Underwriting Decision to InsulaCRM": {
+      "main": [
+        [
+          {
+            "node": "Respond Persistence Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf115-v1"
+}

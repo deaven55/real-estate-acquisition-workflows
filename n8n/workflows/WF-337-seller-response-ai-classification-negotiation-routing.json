@@ -1,0 +1,175 @@
+{
+  "name": "WF-337 — Seller Response → AI Classification & Negotiation Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-337-seller-response-ai-classification-negotiation-routing",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf337-webhook",
+      "name": "Webhook — Seller Response Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-337-seller-response-ai-classification-negotiation-routing"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst text = String(input.seller_response_text ?? input.response_text ?? input.message ?? \"\").trim();\nconst lower = text.toLowerCase();\nconst dealId = input.deal_id;\nconst leadId = input.lead_id;\nconst propertyId = input.property_id;\nconst dispatchId = input.dispatch_id;\nconst mao = Number(input.adjusted_mao ?? input.dynamic_mao);\nconst dnc = input.dnc === true || input.do_not_contact === true;\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\n\nconst identityReady = Boolean(dealId && leadId && propertyId && dispatchId);\nconst hasText = Boolean(text);\nconst validMao = Number.isFinite(mao) && mao >= 0;\nconst blocked = dnc || blockers.length > 0;\n\nlet classification = \"other_response\";\nlet confidence = \"medium\";\nlet counteroffer = null;\nlet nextWorkflow = \"WF-338\";\nlet reason = \"Seller response requires negotiation-context routing.\";\n\nconst moneyMatches = text.match(/(?:\\$|usd\\s*)\\s*(\\d[\\d,]*(?:\\.\\d{1,2})?)/ig);\nif (moneyMatches?.length) {\n  const cleaned = moneyMatches[moneyMatches.length - 1].replace(/[^0-9.]/g, \"\");\n  const parsed = Number(cleaned);\n  if (Number.isFinite(parsed)) counteroffer = parsed;\n}\n\nif (!identityReady || !hasText || !validMao) {\n  classification = \"incomplete\";\n  confidence = \"low\";\n  nextWorkflow = \"WF-126\";\n  reason = \"Seller response, identity, or dynamic MAO is missing/invalid.\";\n} else if (blocked) {\n  classification = \"dnc_or_blocked\";\n  confidence = \"high\";\n  nextWorkflow = \"WF-126\";\n  reason = \"DNC or active blockers prevent further automated negotiation.\";\n} else if (/(do not contact|don't contact|stop texting|stop calling|remove me|unsubscribe)/i.test(lower)) {\n  classification = \"dnc\";\n  confidence = \"high\";\n  nextWorkflow = \"WF-126\";\n  reason = \"Seller explicitly requested no further contact.\";\n} else if (/(yes|sure|okay|ok|deal|accept|accepted|works for me|let's do it|lets do it)/i.test(lower) && !/(but|however|unless|only if)/i.test(lower)) {\n  classification = \"accepted\";\n  confidence = \"high\";\n  nextWorkflow = \"WF-339\";\n  reason = \"Seller response indicates acceptance without a detected countercondition.\";\n} else if (counteroffer !== null || /(offer|price|how much|can you do|would you take|come up|too low|more money|higher)/i.test(lower)) {\n  classification = counteroffer !== null ? \"counteroffer\" : \"price_question\";\n  confidence = counteroffer !== null ? \"high\" : \"medium\";\n  if (counteroffer !== null && counteroffer <= mao) {\n    nextWorkflow = \"WF-338\";\n    reason = \"Seller counteroffer is at or below dynamic MAO and can proceed through negotiation decision logic.\";\n  } else if (counteroffer !== null) {\n    nextWorkflow = \"WF-340\";\n    reason = \"Seller counteroffer exceeds dynamic MAO and requires controlled walk-away/re-engagement logic.\";\n  } else {\n    nextWorkflow = \"WF-338\";\n    reason = \"Seller is discussing price and requires negotiation strategy.\";\n  }\n} else if (/(no|no thanks|not interested|pass|decline|declined|can't|cannot|won't|not selling)/i.test(lower)) {\n  classification = \"rejected\";\n  confidence = \"high\";\n  nextWorkflow = \"WF-340\";\n  reason = \"Seller response indicates rejection or unwillingness to proceed.\";\n} else if (/(when|where|why|how|what|tell me|question|explain|details)/i.test(lower)) {\n  classification = \"question\";\n  confidence = \"medium\";\n  nextWorkflow = \"WF-338\";\n  reason = \"Seller has a question requiring negotiation-context response.\";\n}\n\nconst maoRelation = counteroffer === null || !validMao\n  ? \"unknown\"\n  : counteroffer <= mao ? \"within_or_at_mao\" : \"above_mao\";\n\nreturn [{\n  json: {\n    ...input,\n    workflow_id: \"WF-337\",\n    controller_status: classification === \"incomplete\" ? \"incomplete\" : classification === \"dnc_or_blocked\" || classification === \"dnc\" ? \"blocked\" : \"classified\",\n    response_classification: classification,\n    classification_confidence: confidence,\n    seller_response_text: text,\n    counteroffer_amount: counteroffer,\n    dynamic_mao: validMao ? mao : null,\n    mao_relation: maoRelation,\n    deal_id: dealId,\n    lead_id: leadId,\n    property_id: propertyId,\n    dispatch_id: dispatchId,\n    next_workflow: nextWorkflow,\n    reason,\n    requires_human_review: classification === \"counteroffer\" || classification === \"price_question\" || classification === \"question\" || classification === \"accepted\",\n    hard_mao_guardrail: true,\n    dnc_protection: true,\n    idempotency_key: input.idempotency_key ?? \\`wf-337:\\${dispatchId ?? \"unknown\"}:\\${classification}:\\${counteroffer ?? \"none\"}\\`\n  }\n}];"
+      },
+      "id": "wf337-controller",
+      "name": "Code — AI Seller Response Classifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.controller_status }}",
+              "rightValue": "classified",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf337-gate",
+      "name": "IF — Negotiation Routing Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL }}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({ activity_type: 'seller_response_classification', lead_id: $json.lead_id, property_id: $json.property_id, deal_id: $json.deal_id, dispatch_id: $json.dispatch_id, status: $json.controller_status, response_classification: $json.response_classification, classification_confidence: $json.classification_confidence, seller_response_text: $json.seller_response_text, counteroffer_amount: $json.counteroffer_amount, dynamic_mao: $json.dynamic_mao, mao_relation: $json.mao_relation, next_workflow: $json.next_workflow, reason: $json.reason, hard_mao_guardrail: $json.hard_mao_guardrail, dnc_protection: $json.dnc_protection, idempotency_key: $json.idempotency_key }) }}",
+        "options": {}
+      },
+      "id": "wf337-crm",
+      "name": "HTTP — InsulaCRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ workflow_id: 'WF-337', status: $json.controller_status ?? 'incomplete', response_classification: $json.response_classification, classification_confidence: $json.classification_confidence, counteroffer_amount: $json.counteroffer_amount, dynamic_mao: $json.dynamic_mao, mao_relation: $json.mao_relation, next_workflow: $json.next_workflow ?? 'WF-338', requires_human_review: $json.requires_human_review === true, crm_activity_persisted: true }) }}",
+        "options": {}
+      },
+      "id": "wf337-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Seller Response Input": {
+      "main": [
+        [
+          {
+            "node": "Code — AI Seller Response Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — AI Seller Response Classifier": {
+      "main": [
+        [
+          {
+            "node": "IF — Negotiation Routing Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Negotiation Routing Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — InsulaCRM Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-337-v1",
+  "meta": {
+    "workflow_id": "WF-337",
+    "safety": "DNC protection; dynamic MAO guardrail; seller response classification; counteroffers above MAO route to controlled re-engagement rather than autonomous over-MAO acceptance"
+  }
+}

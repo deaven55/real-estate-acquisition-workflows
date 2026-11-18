@@ -1,0 +1,184 @@
+{
+  "name": "WF-341 — Seller Dispatch → Delivery Receipt / Response Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-341-seller-dispatch-delivery-receipt",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf341-webhook",
+      "name": "WF-341 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-341-seller-dispatch-delivery-receipt"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json ?? {};\nconst action = String(input.action ?? input.decision ?? '').toLowerCase();\nconst dealId = input.deal_id ?? null;\nconst leadId = input.lead_id ?? null;\nconst propertyId = input.property_id ?? null;\nconst dispatchId = String(input.dispatch_id ?? '').trim();\nconst idempotencyKey = String(input.idempotency_key ?? '').trim();\nconst channel = String(input.channel ?? '').toLowerCase();\nconst recipient = String(input.recipient ?? input.seller_phone ?? input.seller_email ?? '').trim();\nconst message = String(input.message ?? input.seller_message ?? '').trim();\nconst dynamicMao = Number(input.dynamic_mao ?? input.adjusted_mao ?? input.mao);\nconst offerPrice = input.offer_price == null ? null : Number(input.offer_price);\nconst dnc = Boolean(input.dnc ?? input.do_not_contact ?? false);\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\nconst identityComplete = Boolean(dealId && leadId && propertyId);\nconst channelValid = ['sms','email'].includes(channel);\nconst recipientValid = Boolean(recipient);\nconst messageValid = Boolean(message);\nconst maoValid = Number.isFinite(dynamicMao) && dynamicMao > 0;\nconst offerValid = offerPrice == null || (Number.isFinite(offerPrice) && offerPrice > 0 && offerPrice <= dynamicMao);\nconst hardBlock = dnc || blockers.length > 0;\nlet status='needs_review'; let nextWorkflow='WF-340'; let dispatchReady=false; let waitingForReceipt=false; let reason='Dispatch requires review.';\nif (hardBlock) { status=dnc ? 'dnc_blocked' : 'blocked'; reason=dnc ? 'Seller is on DNC; outbound dispatch is prohibited.' : 'Active blocker prevents communication dispatch.'; nextWorkflow='WF-126'; }\nelse if (!identityComplete || !channelValid || !recipientValid || !messageValid || !maoValid || !offerValid) { status='incomplete'; reason='Required identity, channel, recipient, message, MAO, or offer data is missing/invalid.'; nextWorkflow='WF-340'; }\nelse if (['contract_review_required','revised_offer_review','reengagement_ready','dispatch_ready'].includes(action)) { status='dispatch_ready'; dispatchReady=true; waitingForReceipt=true; nextWorkflow='WF-342'; reason='Outbound communication is structurally ready; provider execution remains runtime/provider-specific and receipt-gated.'; }\nelse { status='needs_review'; reason='Unsupported WF-341 action state.'; nextWorkflow='WF-340'; }\nconst activity={activity_type:'seller_dispatch_delivery_receipt_controller',subject:'WF-341 '+(dealId ?? 'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,status,action,next_workflow:nextWorkflow,dispatch_id:dispatchId,idempotency_key:idempotencyKey,channel,recipient,offer_price:offerPrice,dynamic_mao:dynamicMao,dispatch_ready:dispatchReady,waiting_for_receipt:waitingForReceipt,dnc,blockers,hard_mao_guardrail:true,reason};\nreturn [{json:{...input,wf_id:'WF-341',status,action,next_workflow:nextWorkflow,dispatch_ready:dispatchReady,waiting_for_receipt:waitingForReceipt,dispatch_id:dispatchId,idempotency_key:idempotencyKey,channel,recipient,message,offer_price:offerPrice,dynamic_mao:dynamicMao,hard_mao_guardrail:true,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf341-controller",
+      "name": "WF-341 Dispatch Receipt Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "dispatch-ready",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "dispatch_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "waiting-receipt",
+              "leftValue": "={{ $json.waiting_for_receipt }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf341-gate",
+      "name": "Dispatch / Receipt Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf341-crm",
+      "name": "Persist WF-341 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf341-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-341 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-341 Dispatch Receipt Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-341 Dispatch Receipt Controller": {
+      "main": [
+        [
+          {
+            "node": "Dispatch / Receipt Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch / Receipt Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-341 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-341 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-341 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf341-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

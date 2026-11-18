@@ -1,0 +1,156 @@
+{
+  "name": "WF-260 Negotiation Outcome → Contract Trigger / Rejection / Re-engagement Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-260-negotiation-outcome",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf260-webhook",
+      "name": "WF-260 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst outcome = String(input.negotiation_outcome ?? input.outcome ?? '').toLowerCase();\nconst acceptedPrice = Number(input.accepted_price ?? input.counteroffer_amount ?? input.contract_price);\nconst dynamicMao = Number(input.dynamic_mao ?? input.adjusted_mao ?? input.mao);\nconst dealId = input.deal_id ?? null;\nconst leadId = input.lead_id ?? null;\nconst propertyId = input.property_id ?? null;\nconst identityOk = Boolean(dealId && leadId && propertyId);\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\nconst hardBlock = blockers.length > 0;\nconst withinMao = Number.isFinite(acceptedPrice) && Number.isFinite(dynamicMao) && acceptedPrice <= dynamicMao;\nlet decision = 'needs_review';\nlet nextWorkflow = 'WF-126';\nlet status = 'blocked';\nlet humanReview = true;\n\nif (!identityOk || hardBlock) {\n  decision = 'needs_review';\n  status = 'blocked';\n} else if (['accepted','contract_ready','accept_counteroffer','accept_offer','seller_accepted'].includes(outcome)) {\n  if (withinMao) {\n    decision = 'contract_trigger';\n    nextWorkflow = 'WF-201';\n    status = 'ready_for_contract';\n    humanReview = true;\n  } else {\n    decision = 'walk_away_or_reengage';\n    nextWorkflow = 'WF-126';\n    status = 'above_mao';\n  }\n} else if (['rejected','seller_rejected','declined'].includes(outcome)) {\n  decision = 'rejection_reengagement';\n  nextWorkflow = 'WF-261';\n  status = 'reengagement_ready';\n  humanReview = false;\n} else if (['walk_away','walkaway'].includes(outcome)) {\n  decision = 'walk_away_reengagement';\n  nextWorkflow = 'WF-261';\n  status = 'reengagement_ready';\n  humanReview = false;\n} else if (['revised_offer','counteroffer','counter'].includes(outcome)) {\n  if (withinMao) {\n    decision = 'revised_offer_follow_up';\n    nextWorkflow = 'WF-255';\n    status = 'offer_follow_up_ready';\n  } else {\n    decision = 'above_mao_reengagement';\n    nextWorkflow = 'WF-261';\n    status = 'reengagement_ready';\n    humanReview = false;\n  }\n} else if (['timeout','no_response','silence'].includes(outcome)) {\n  decision = 'reengagement';\n  nextWorkflow = 'WF-261';\n  status = 'reengagement_ready';\n  humanReview = false;\n} else {\n  decision = 'needs_review';\n  nextWorkflow = 'WF-126';\n  status = 'needs_review';\n}\n\nreturn [{\n  json: {\n    ...input,\n    workflow_id: 'WF-260',\n    workflow_name: 'Negotiation Outcome → Contract Trigger / Rejection / Re-engagement Controller',\n    decision,\n    status,\n    next_workflow: nextWorkflow,\n    human_review_required: humanReview,\n    accepted_price: Number.isFinite(acceptedPrice) ? acceptedPrice : null,\n    dynamic_mao: Number.isFinite(dynamicMao) ? dynamicMao : null,\n    mao_protected: Number.isFinite(acceptedPrice) && Number.isFinite(dynamicMao) ? acceptedPrice <= dynamicMao : false,\n    identity_valid: identityOk,\n    blockers,\n    routing_reason: decision === 'contract_trigger'\n      ? 'Seller accepted within dynamic MAO; route to contract package validation.'\n      : decision.includes('reengagement')\n        ? 'Negotiation ended without an executable agreement; route to seller re-engagement.'\n        : decision === 'revised_offer_follow_up'\n          ? 'Counter/revised offer remains within dynamic MAO; continue controlled offer follow-up.'\n          : 'Outcome requires human review or is blocked by missing identity/evidence/MAO protection.',\n    crm_activity: {\n      activity_type: 'negotiation_outcome_routing',\n      workflow_id: 'WF-260',\n      decision,\n      status,\n      next_workflow: nextWorkflow,\n      human_review_required: humanReview\n    }\n  }\n}];"
+      },
+      "id": "wf260-controller",
+      "name": "WF-260 Negotiation Outcome Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "operation": "equal",
+              "value2": "ready_for_contract"
+            }
+          ]
+        }
+      },
+      "id": "wf260-gate",
+      "name": "WF-260 Contract Trigger Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id: $json.lead_id, property_id: $json.property_id, deal_id: $json.deal_id, activity_type: 'negotiation_outcome_routing', subject: 'WF-260 negotiation outcome routing', body: JSON.stringify({workflow_id: $json.workflow_id, decision: $json.decision, status: $json.status, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, accepted_price: $json.accepted_price, dynamic_mao: $json.dynamic_mao, mao_protected: $json.mao_protected}), source: 'wholesaling-os', external_id: 'WF-260:' + ($json.deal_id ?? $json.lead_id ?? 'unknown') + ':' + ($json.idempotency_key ?? $execution.id)})}})"
+      },
+      "id": "wf260-crm",
+      "name": "WF-260 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf260-response",
+      "name": "WF-260 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-260 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-260 Negotiation Outcome Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-260 Negotiation Outcome Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-260 Contract Trigger Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-260 Contract Trigger Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-260 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-260 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-260 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-260 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

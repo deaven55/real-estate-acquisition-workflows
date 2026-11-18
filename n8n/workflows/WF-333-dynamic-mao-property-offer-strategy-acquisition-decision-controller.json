@@ -1,0 +1,183 @@
+{
+  "name": "WF-333 — Dynamic MAO → Property-Level Offer Strategy & Acquisition Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-333-dynamic-mao-offer-strategy",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf333-webhook",
+      "name": "Webhook — Dynamic MAO Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-333-dynamic-mao-offer-strategy"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };\n\nconst dealId = input.deal_id;\nconst leadId = input.lead_id;\nconst propertyId = input.property_id;\nconst adjustedMao = num(input.adjusted_mao ?? input.dynamic_mao);\nconst askingPrice = num(input.asking_price);\nconst projectedProfit = num(input.projected_assignment_profit ?? input.projected_profit);\nconst motivation = String(input.motivation ?? \"\").toLowerCase();\nconst assetClass = String(input.asset_class ?? input.asset_type ?? \"residential_wholesale\").toLowerCase();\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\nconst evidenceStatus = String(input.evidence_status ?? \"complete\").toLowerCase();\nconst dnc = input.dnc === true || input.do_not_contact === true;\nconst confidence = String(input.confidence ?? \"\").toLowerCase();\n\nconst identityReady = Boolean(dealId && leadId && propertyId);\nconst maoReady = adjustedMao !== null && adjustedMao >= 0;\nconst askingReady = askingPrice !== null && askingPrice >= 0;\nconst profitReady = projectedProfit !== null;\nconst evidenceReady = ![\"missing\", \"incomplete\", \"failed\", \"insufficient\"].includes(evidenceStatus);\nconst blocked = dnc || blockers.length > 0;\n\nconst assetAware = assetClass.includes(\"land\")\n  ? \"land_development_and_exit_economics\"\n  : assetClass.includes(\"multi\") || assetClass.includes(\"apartment\")\n    ? \"multifamily_cashflow_and_exit_economics\"\n    : \"residential_wholesale_assignment_economics\";\n\nlet decision = \"needs_evidence\";\nlet reason = \"Required evidence or underwriting inputs are incomplete.\";\nlet nextWorkflow = \"WF-332\";\n\nif (!identityReady || !maoReady || !askingReady || !profitReady || !evidenceReady) {\n  decision = \"needs_evidence\";\n  reason = \"Property identity, dynamic MAO, asking price, projected profit, or evidence is incomplete.\";\n} else if (blocked) {\n  decision = \"blocked\";\n  reason = \"DNC or active blockers prevent acquisition action.\";\n  nextWorkflow = \"WF-126\";\n} else {\n  const positiveProfit = projectedProfit > 0;\n  const atOrBelowMao = askingPrice <= adjustedMao;\n  const negotiationBand = askingPrice > adjustedMao && askingPrice <= adjustedMao * 1.10 && positiveProfit;\n\n  if (atOrBelowMao && positiveProfit) {\n    decision = \"pursue\";\n    reason = \"Asking price is at or below dynamic MAO and projected economics are profitable.\";\n    nextWorkflow = \"WF-334\";\n  } else if (negotiationBand) {\n    decision = \"negotiate\";\n    reason = \"Asking price is above dynamic MAO but within the controlled negotiation band with positive projected profit.\";\n    nextWorkflow = \"WF-334\";\n  } else if (!positiveProfit || askingPrice > adjustedMao * 1.10) {\n    decision = \"pass\";\n    reason = \"Projected economics do not support acquisition at the current asking price.\";\n    nextWorkflow = \"WF-335\";\n  }\n}\n\nconst sellerPriority =\n  motivation.includes(\"high\") || motivation.includes(\"urgent\") || motivation.includes(\"distress\")\n    ? \"high\"\n    : motivation.includes(\"medium\") || motivation.includes(\"moderate\")\n      ? \"medium\"\n      : \"standard\";\n\nreturn [{\n  json: {\n    ...input,\n    workflow_id: \"WF-333\",\n    controller_status: decision,\n    acquisition_decision: decision,\n    deal_id: dealId,\n    lead_id: leadId,\n    property_id: propertyId,\n    asset_class: assetClass,\n    asset_economics_strategy: assetAware,\n    adjusted_mao: adjustedMao,\n    asking_price: askingPrice,\n    projected_assignment_profit: projectedProfit,\n    seller_priority: sellerPriority,\n    confidence,\n    evidence_status: evidenceStatus,\n    reason,\n    next_workflow: nextWorkflow,\n    requires_human_review: decision === \"negotiate\" || decision === \"blocked\" || decision === \"needs_evidence\",\n    hard_mao_guardrail: true,\n    rule_70_percent: \"secondary_reference_only\",\n    idempotency_key: input.idempotency_key ?? \\`wf-333:\\${dealId ?? \"unknown\"}:\\${propertyId ?? \"unknown\"}:\\${adjustedMao ?? \"unknown\"}:\\${askingPrice ?? \"unknown\"}\\`\n  }\n}];"
+      },
+      "id": "wf333-controller",
+      "name": "Code — Property Offer Strategy Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.controller_status }}",
+              "rightValue": "pursue",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{ $json.controller_status }}",
+              "rightValue": "negotiate",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf333-gate",
+      "name": "IF — Acquisition Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL }}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({ activity_type: 'property_offer_strategy', lead_id: $json.lead_id, property_id: $json.property_id, deal_id: $json.deal_id, status: $json.controller_status, acquisition_decision: $json.acquisition_decision, asset_class: $json.asset_class, asset_economics_strategy: $json.asset_economics_strategy, adjusted_mao: $json.adjusted_mao, asking_price: $json.asking_price, projected_assignment_profit: $json.projected_assignment_profit, seller_priority: $json.seller_priority, confidence: $json.confidence, evidence_status: $json.evidence_status, hard_mao_guardrail: $json.hard_mao_guardrail, rule_70_percent: $json.rule_70_percent, reason: $json.reason, idempotency_key: $json.idempotency_key }) }}",
+        "options": {}
+      },
+      "id": "wf333-crm",
+      "name": "HTTP — InsulaCRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ workflow_id: 'WF-333', status: $json.controller_status ?? 'needs_evidence', acquisition_decision: $json.acquisition_decision, next_workflow: $json.next_workflow ?? 'WF-332', deal_id: $json.deal_id, lead_id: $json.lead_id, property_id: $json.property_id, adjusted_mao: $json.adjusted_mao, asking_price: $json.asking_price, projected_assignment_profit: $json.projected_assignment_profit, asset_class: $json.asset_class, requires_human_review: $json.requires_human_review === true, crm_activity_persisted: true }) }}",
+        "options": {}
+      },
+      "id": "wf333-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Dynamic MAO Input": {
+      "main": [
+        [
+          {
+            "node": "Code — Property Offer Strategy Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Property Offer Strategy Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Acquisition Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Acquisition Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — InsulaCRM Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-333-v1",
+  "meta": {
+    "workflow_id": "WF-333",
+    "safety": "dynamic MAO is hard ceiling; asset-specific economics first; 70% rule secondary; negotiation above MAO limited to 10% band and positive projected profit"
+  }
+}

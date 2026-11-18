@@ -1,0 +1,184 @@
+{
+  "name": "WF-348 — Provider Dispatch → Delivery Receipt & Callback Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-348-provider-dispatch-delivery-receipt-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf348-webhook",
+      "name": "WF-348 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-348-provider-dispatch-delivery-receipt-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst dealId=input.deal_id??null; const leadId=input.lead_id??null; const propertyId=input.property_id??null;\nconst status=String(input.status??'').toLowerCase(); const dispatchMode=String(input.dispatch_mode??input.channel??'').toLowerCase();\nconst dnc=Boolean(input.dnc??input.do_not_contact??false); const blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst idempotencyKey=String(input.idempotency_key??'').trim();\nconst phone=String(input.recipient_phone??input.seller_phone??'').trim(); const email=String(input.recipient_email??input.seller_email??'').trim();\nconst message=String(input.generated_message??input.message??'').trim();\nlet route='human_review'; let nextWorkflow='WF-347'; let reason='Provider dispatch requires review.';\nif(dnc){route='blocked';nextWorkflow='WF-126';reason='DNC protection prevents provider dispatch.';}\nelse if(blockers.length){route='blocked';nextWorkflow='WF-126';reason='Active blocker prevents provider dispatch.';}\nelse if(!dealId||!leadId||!propertyId){route='incomplete';nextWorkflow='WF-347';reason='Deal identity is incomplete.';}\nelse if(!idempotencyKey){route='invalid_idempotency';nextWorkflow='WF-347';reason='Dispatch idempotency key is missing.';}\nelse if(!message){route='message_missing';nextWorkflow='WF-347';reason='Generated seller message is missing.';}\nelse if(dispatchMode==='sms'&&!phone){route='recipient_missing';nextWorkflow='WF-347';reason='SMS recipient is missing.';}\nelse if(dispatchMode==='email'&&!email){route='recipient_missing';nextWorkflow='WF-347';reason='Email recipient is missing.';}\nelse if(!['sms','email'].includes(dispatchMode)){route='unsupported_channel';nextWorkflow='WF-347';reason='Communication channel is not supported.';}\nelse if(status!=='message_ready'){route='not_authorized';nextWorkflow='WF-347';reason='Message is not authorized for autonomous dispatch.';}\nelse{route='dispatch_ready';nextWorkflow='WF-349';reason='Provider dispatch package passed safety and identity checks.';}\nconst dispatchPackage={provider_agnostic:true,channel:dispatchMode,recipient:dispatchMode==='sms'?phone:email,message,idempotency_key:idempotencyKey,deal_id:dealId,lead_id:leadId,property_id:propertyId};\nconst activity={activity_type:'provider_dispatch_controller',subject:'WF-348 '+(dealId??'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,route,channel:dispatchMode,idempotency_key:idempotencyKey,provider_agnostic:true,dnc,blockers,dispatch_package:dispatchPackage,reason,next_workflow:nextWorkflow};\nreturn [{json:{...input,wf_id:'WF-348',route,next_workflow:nextWorkflow,dispatch_package:dispatchPackage,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf348-controller",
+      "name": "WF-348 Provider Dispatch Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "dispatch_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "blocked",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "blocked",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf348-gate",
+      "name": "Provider Dispatch / Safety Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf348-crm",
+      "name": "Persist WF-348 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf348-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-348 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-348 Provider Dispatch Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-348 Provider Dispatch Controller": {
+      "main": [
+        [
+          {
+            "node": "Provider Dispatch / Safety Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Provider Dispatch / Safety Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-348 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-348 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-348 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf348-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

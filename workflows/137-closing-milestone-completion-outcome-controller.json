@@ -1,0 +1,171 @@
+{
+  "name": "WF-137 Closing Milestone Completion → Closing Outcome Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-137-closing-milestone-completion-outcome-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "137-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-137-closing-milestone-completion-outcome-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const milestones=Array.isArray(input.milestones)?input.milestones:[]; const required=Array.isArray(input.required_milestones)?input.required_milestones:[]; const blockers=Array.isArray(input.blockers)?input.blockers:[]; const outcome=input.closing_outcome??input.outcome??null; const requiredState=required.map(r=>{const m=milestones.find(x=>(x.id&&r.id&&x.id===r.id)||x.name===r.name); return {...r,completed:Boolean(m?.completed===true),evidence_present:Boolean(m?.evidence_present===true||m?.evidence)};}); const missing=requiredState.filter(x=>!x.completed||!x.evidence_present); const openBlockers=blockers.filter(b=>b&&b.resolved!==true&&b.status!=='resolved'); const closed=['closed','funded','recorded'].includes(outcome); const failed=['failed','cancelled','terminated','voided'].includes(outcome); let route='closing_milestone_followup'; if(closed&&missing.length===0&&openBlockers.length===0) route='WF-043 post-close assignment completion/profit tracking'; else if(failed) route='human_review'; else if(missing.length||openBlockers.length) route='closing_coordination'; const status=closed&&missing.length===0&&openBlockers.length===0?'closed_ready_for_post_close':failed?'closing_failed_or_terminated':missing.length||openBlockers.length?'closing_incomplete':'milestones_in_progress'; return [{json:{workflow_id:'WF-137',workflow_name:'Closing Milestone Completion → Closing Outcome Controller',status,route,deal_id:deal.id??deal.deal_id??null,lead_id:deal.lead_id??null,property_id:deal.property_id??null,buyer_id:deal.buyer_id??null,execution_state:deal.execution_state??input.execution_state??null,closing_outcome:outcome,required_milestones:requiredState,missing_milestones:missing,open_blockers:openBlockers,completion:{all_required_complete:missing.length===0,no_open_blockers:openBlockers.length===0,closed},next_workflow:route,crm_activity:{event_type:'closing_milestone_completion_outcome',outcome:status,route,deal_id:deal.id??deal.deal_id??null},idempotency_key:'wf-137:closing-outcome:'+(deal.id??deal.deal_id??input.event_id??'unknown')}}}];"
+      },
+      "id": "137-controller",
+      "name": "Evaluate Closing Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "closed_ready_for_post_close",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "137-closed",
+      "name": "Closed Successfully?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,route:$json.route,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,buyer_id:$json.buyer_id,workflow_id:$json.workflow_id,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "137-crm",
+      "name": "Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Evaluate Closing Outcome').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,route:original.route,closing_outcome:original.closing_outcome,missing_milestones:original.missing_milestones,open_blockers:original.open_blockers,next_workflow:original.next_workflow}}}];"
+      },
+      "id": "137-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Closing Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Closing Outcome": {
+      "main": [
+        [
+          {
+            "node": "Closed Successfully?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closed Successfully?": {
+      "main": [
+        [
+          {
+            "node": "Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-137-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

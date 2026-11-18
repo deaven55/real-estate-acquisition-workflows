@@ -1,0 +1,175 @@
+{
+  "name": "WF-332 — Underwriting Calibration → Dynamic MAO & Deal Strategy Adjustment Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-332-underwriting-calibration-mao-strategy",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf332-webhook",
+      "name": "Webhook — Calibration Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-332-underwriting-calibration-mao-strategy"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst num = (v) => {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n};\nconst baseMao = num(input.base_mao ?? input.baseMAO);\nconst factor = num(input.calibration_factor ?? input.adjustment_factor);\nconst confidence = String(input.confidence ?? \"\").toLowerCase();\nconst calibrationStatus = String(input.calibration_status ?? \"\").toLowerCase();\nconst assetType = String(input.asset_type ?? input.property_type ?? \"\").toLowerCase();\nconst dealId = input.deal_id;\nconst leadId = input.lead_id;\nconst propertyId = input.property_id;\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\nconst dnc = input.dnc === true || input.do_not_contact === true;\n\nconst assetClass =\n  assetType.includes(\"land\") ? \"land\" :\n  assetType.includes(\"multi\") || assetType.includes(\"apartment\") ? \"multifamily\" :\n  \"residential_wholesale\";\n\nconst validFactor = factor !== null && factor > 0 && factor <= 1.25;\nconst validBaseMao = baseMao !== null && baseMao >= 0;\nconst identityReady = Boolean(dealId && leadId && propertyId);\nconst calibrationReady = calibrationStatus === \"calibration_ready\";\nconst confidenceReady = [\"high\", \"medium\"].includes(confidence);\nconst blocked = dnc || blockers.length > 0;\n\nlet strategy = \"asset_specific_economics\";\nif (assetClass === \"land\") strategy = \"land_development_and_exit_economics\";\nif (assetClass === \"multifamily\") strategy = \"multifamily_cashflow_and_exit_economics\";\nif (assetClass === \"residential_wholesale\") strategy = \"residential_wholesale_assignment_economics\";\n\nconst adjustedMao = validBaseMao && validFactor ? Math.round(baseMao * factor * 100) / 100 : null;\n\nlet status = \"strategy_adjusted\";\nlet nextWorkflow = \"WF-333\";\nlet reason = \"Calibration is valid and confidence is sufficient for an asset-aware MAO adjustment.\";\nif (!calibrationReady || !identityReady || !validBaseMao || !validFactor) {\n  status = \"incomplete_calibration\";\n  nextWorkflow = \"WF-331\";\n  reason = \"Required calibration identity, status, base MAO, or calibration factor is missing/invalid.\";\n} else if (blocked) {\n  status = \"blocked\";\n  nextWorkflow = \"WF-126\";\n  reason = \"DNC or active blockers prevent autonomous strategy adjustment.\";\n} else if (!confidenceReady) {\n  status = \"human_review_required\";\n  nextWorkflow = \"WF-126\";\n  reason = \"Calibration confidence is insufficient for autonomous MAO adjustment.\";\n}\n\nreturn [{\n  json: {\n    ...input,\n    workflow_id: \"WF-332\",\n    controller_status: status,\n    calibration_status: calibrationStatus,\n    deal_id: dealId,\n    lead_id: leadId,\n    property_id: propertyId,\n    asset_class: assetClass,\n    strategy,\n    base_mao: baseMao,\n    calibration_factor: factor,\n    adjusted_mao: adjustedMao,\n    confidence,\n    rule_70_percent: \"secondary_reference_only\",\n    economics_priority: \"asset_specific_first\",\n    reason,\n    next_workflow: nextWorkflow,\n    requires_human_review: status === \"human_review_required\" || status === \"blocked\",\n    idempotency_key: input.idempotency_key ?? \\`wf-332:\\${dealId ?? \"unknown\"}:\\${propertyId ?? \"unknown\"}:\\${factor ?? \"unknown\"}\\`\n  }\n}];"
+      },
+      "id": "wf332-controller",
+      "name": "Code — Dynamic MAO & Strategy Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.controller_status }}",
+              "rightValue": "strategy_adjusted",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf332-gate",
+      "name": "IF — Strategy Adjustment Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL }}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({ activity_type: 'underwriting_calibration_mao_strategy', lead_id: $json.lead_id, property_id: $json.property_id, deal_id: $json.deal_id, status: $json.controller_status, asset_class: $json.asset_class, strategy: $json.strategy, base_mao: $json.base_mao, calibration_factor: $json.calibration_factor, adjusted_mao: $json.adjusted_mao, confidence: $json.confidence, rule_70_percent: $json.rule_70_percent, economics_priority: $json.economics_priority, reason: $json.reason, idempotency_key: $json.idempotency_key }) }}",
+        "options": {}
+      },
+      "id": "wf332-crm",
+      "name": "HTTP — InsulaCRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ workflow_id: 'WF-332', status: $json.controller_status ?? 'strategy_adjusted', next_workflow: $json.next_workflow ?? 'WF-333', deal_id: $json.deal_id, lead_id: $json.lead_id, property_id: $json.property_id, adjusted_mao: $json.adjusted_mao, asset_class: $json.asset_class, strategy: $json.strategy, requires_human_review: $json.requires_human_review === true, crm_activity_persisted: true }) }}",
+        "options": {}
+      },
+      "id": "wf332-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Calibration Input": {
+      "main": [
+        [
+          {
+            "node": "Code — Dynamic MAO & Strategy Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Dynamic MAO & Strategy Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Strategy Adjustment Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Strategy Adjustment Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — InsulaCRM Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-332-v1",
+  "meta": {
+    "workflow_id": "WF-332",
+    "safety": "asset-specific economics first; 70% rule secondary; low confidence requires human review"
+  }
+}

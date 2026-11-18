@@ -1,0 +1,158 @@
+{
+  "name": "WF-280 — Active Closing Milestone Orchestrator → Milestone Update & Critical-Date Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-280-milestone-update-critical-date",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf280-webhook",
+      "name": "WF-280 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-280-milestone-update-critical-date"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst arr=v=>Array.isArray(v)?v:[];\nconst truthy=v=>v===true||v===\"true\"||v===1||v===\"1\";\nconst milestones=arr(input.milestones);\nconst blockers=arr(input.blockers);\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id);\nconst execution=input.execution??{};\nconst active=truthy(input.closing_active)||truthy(execution.active)||[\"active\",\"in_progress\",\"closing_active\"].includes(String(execution.status||\"\").toLowerCase());\nconst closingDate=input.closing_date?new Date(input.closing_date):null;\nconst closingDateValid=Boolean(input.closing_date)&&!Number.isNaN(closingDate?.getTime());\nconst now=new Date();\nconst daysRemaining=closingDateValid?Math.ceil((closingDate-now)/86400000):null;\nconst overdue=milestones.filter(m=>truthy(m.overdue)||[\"overdue\",\"failed\"].includes(String(m.status||\"\").toLowerCase()));\nconst criticalOverdue=overdue.filter(m=>truthy(m.critical)||String(m.priority||\"\").toLowerCase()===\"critical\");\nconst incomplete=milestones.filter(m=>!truthy(m.completed)&&![\"completed\",\"done\",\"verified\"].includes(String(m.status||\"\").toLowerCase()));\nconst completed=milestones.length>0&&incomplete.length===0;\nconst closingDueSoon=closingDateValid&&daysRemaining>=0&&daysRemaining<=3;\nconst blockersClear=blockers.length===0;\n\nlet status=\"milestone_update_required\",nextWorkflow=\"WF-280\",humanReview=false;\nif(!identityComplete){status=\"blocked_missing_identity\";nextWorkflow=\"WF-126\";humanReview=true;}\nelse if(!active){status=\"closing_not_active\";nextWorkflow=\"WF-279\";humanReview=true;}\nelse if(!closingDateValid||!blockersClear){status=\"blocked\";nextWorkflow=\"WF-126\";humanReview=true;}\nelse if(criticalOverdue.length>0){status=\"critical_overdue\";nextWorkflow=\"WF-281\";humanReview=true;}\nelse if(overdue.length>0){status=\"overdue\";nextWorkflow=\"WF-281\";humanReview=true;}\nelse if(completed){status=\"milestones_completed\";nextWorkflow=\"WF-281\";}\nelse if(closingDueSoon){status=\"closing_due_soon\";nextWorkflow=\"WF-281\";}\nelse{status=\"on_track\";nextWorkflow=\"WF-280\";}\n\nreturn [{json:{...input,workflow:\"WF-280\",workflow_name:\"Active Closing Milestone Orchestrator → Milestone Update & Critical-Date Controller\",status,critical_date_monitor:{identity_complete:identityComplete,closing_active:active,closing_date_valid:closingDateValid,days_remaining:daysRemaining,closing_due_soon:closingDueSoon,blockers_clear:blockersClear,milestone_count:milestones.length,incomplete_count:incomplete.length,overdue_count:overdue.length,critical_overdue_count:criticalOverdue.length,completed},next_workflow:nextWorkflow,human_review_required:humanReview,routing_reason:status,audit:{event_type:\"closing_milestone_update_critical_date_monitor\",idempotency_key:input.idempotency_key||`wf-280:${input.deal_id||\"unknown\"}:${input.milestone_update_id||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf280-controller",
+      "name": "WF-280 Critical Date Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'on_track' || $json.status === 'closing_due_soon' || $json.status === 'milestones_completed'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf280-if",
+      "name": "WF-280 Milestone Monitoring Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-280 milestone update and critical-date monitoring',description:$json.routing_reason,metadata:{workflow:'WF-280',status:$json.status,critical_date_monitor:$json.critical_date_monitor,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf280-crm",
+      "name": "WF-280 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,next_workflow:$json.next_workflow,days_remaining:$json.critical_date_monitor?.days_remaining,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf280-response",
+      "name": "WF-280 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-280 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-280 Critical Date Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-280 Critical Date Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-280 Milestone Monitoring Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-280 Milestone Monitoring Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-280 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-280 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-280 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-280 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-280-v1"
+}

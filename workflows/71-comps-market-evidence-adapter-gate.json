@@ -1,0 +1,84 @@
+{
+  "name": "WF-071 Comparable Sales & Market Evidence Adapter Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-071-comps-market-evidence",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf071-webhook",
+      "name": "Comparable Sales Evidence Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-071-comps-market-evidence",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const n=v=>Number.isFinite(Number(v))?Number(v):null; const asset=s(input.asset_type??input.property_type??'residential').toLowerCase(); const id=s(input.property_id??input.parcel_id??input.lead_id??input.deal_id); const subject=input.subject_property??{}; const comps=Array.isArray(input.comps)?input.comps:[]; const missing=[]; if(!id)missing.push('canonical_identity'); if(!subject.address&&!subject.lat&&!subject.lon&&!subject.zip&&!input.market_area)missing.push('subject_location_or_market_area'); if(!comps.length)missing.push('comparable_sales'); const normalized=comps.map((c,i)=>({rank:i+1,address:s(c.address),sale_price:n(c.sale_price??c.price),sale_date:s(c.sale_date??c.date),distance_miles:n(c.distance_miles),acres:n(c.acres),sqft:n(c.sqft),beds:n(c.beds),baths:n(c.baths),property_type:s(c.property_type??asset),source:s(c.source),verified:Boolean(c.verified)})); const prices=normalized.map(c=>c.sale_price).filter(v=>v!==null&&v>0); const avg=prices.length?prices.reduce((a,b)=>a+b,0)/prices.length:null; const median=prices.length?[...prices].sort((a,b)=>a-b)[Math.floor((prices.length-1)/2)]:null; const verified=normalized.filter(c=>c.verified).length; const evidenceQuality=!comps.length?'none':verified===comps.length?'strong':verified>0?'mixed':'unverified'; const land=asset.includes('land')||asset.includes('vacant'); return[{json:{ok:missing.length===0,adapter:'wf-071',canonical_identity:id||null,asset_type:asset,market_evidence:{subject_property:subject,market_area:s(input.market_area),comps:normalized,summary:{comp_count:normalized.length,verified_comp_count:verified,average_sale_price:avg,median_sale_price:median,evidence_quality:evidenceQuality},methodology:land?'land_sales_and_price_per_acre':'comparable_sales_and_property_similarity'},provenance:{sources:normalized.map(c=>c.source).filter(Boolean),raw_evidence_preserved:true,no_inference:true},missing_requirements:missing,next_action:missing.length?'Collect subject location and comparable sale evidence before valuation.':'Use the evidence set for valuation/MAO analysis and flag any unverified comps for review.',policy:{evidence_first:true,verified_data_preferred:true,market_value_not_guaranteed:true,70_percent_rule_secondary:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf071-normalize",
+      "name": "Normalize Comparable Sales & Market Evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf071-response",
+      "name": "Respond Market Evidence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Comparable Sales Evidence Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Comparable Sales & Market Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Comparable Sales & Market Evidence": {
+      "main": [
+        [
+          {
+            "node": "Respond Market Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf071-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

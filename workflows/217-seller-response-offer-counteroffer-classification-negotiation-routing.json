@@ -1,0 +1,163 @@
+{
+  "name": "WF-217 — Seller Response → Offer/Counteroffer Classification & Negotiation Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-217-seller-response-offer-counteroffer-classification-negotiation-routing",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Seller Response",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-217-seller-response-offer-counteroffer-classification-negotiation-routing"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const raw=String(x.seller_message??x.response_text??x.message??'').trim();const text=raw.toLowerCase();const amountMatch=raw.replace(/[$,]/g,'').match(/(?:\\$|\\b)(\\d{2,7}(?:\\.\\d{1,2})?)\\b/);const counter=amountMatch?Number(amountMatch[1]):null;let classification='other_response';if(!raw)classification='no_response';else if(/\\b(yes|accept|accepted|deal|agree|sounds good|let's do it|lets do it)\\b/.test(text)&&!/(no|can't|cannot|counter|but)/.test(text))classification='accepted';else if(/\\b(no|reject|rejected|pass|not interested|won't|will not)\\b/.test(text))classification='rejected';else if(counter!==null||/\\b(counter|lower|higher|more|less|offer|price)\\b/.test(text))classification='counteroffer';else if(/\\?|\\b(what|how|when|where|why|can you|could you)\\b/.test(text))classification='question';const status=classification==='no_response'?'needs_followup':'classified';const next=classification==='accepted'?'WF-218':classification==='counteroffer'?'WF-219':classification==='rejected'?'WF-220':'WF-218';return[{json:{...x,workflow:'WF-217',seller_response_classification:{status,classification,response_text:raw,counteroffer_amount:counter,confidence:classification==='other_response'?'low':'high'},routing:{next_workflow:next,requires_human_review:['accepted','counteroffer','rejected'].includes(classification)},audit:{event:'seller_response_offer_counteroffer_classification_negotiation_routing_evaluated',classification,status}}}];"
+      },
+      "name": "Code — Seller Response Classifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "classified",
+              "leftValue": "={{$json.seller_response_classification.status}}",
+              "rightValue": "classified",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Response Classification Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-217:'+($json.deal_id||'unknown')+':seller-response',external_source:'wholesale-os',activity_type:'seller_response_offer_counteroffer_classification_negotiation_routing',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.seller_response_classification?.status||'blocked',notes:JSON.stringify({workflow:'WF-217',seller_response_classification:$json.seller_response_classification,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Seller Response Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-217',status:$json.seller_response_classification?.status??'blocked',classification:$json.seller_response_classification?.classification??'other_response',counteroffer_amount:$json.seller_response_classification?.counteroffer_amount??null,next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review)}}}];"
+      },
+      "name": "Code — Seller Response Classification Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Seller Response": {
+      "main": [
+        [
+          {
+            "node": "Code — Seller Response Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Seller Response Classifier": {
+      "main": [
+        [
+          {
+            "node": "IF — Response Classification Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Response Classification Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Seller Response Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Seller Response Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Seller Response Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Seller Response Classification Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-217-v1"
+}

@@ -1,0 +1,158 @@
+{
+  "name": "WF-281 — Milestone Update → Closing Evidence Reconciliation & Recovery Routing Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-281-closing-evidence-reconciliation",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf281-webhook",
+      "name": "WF-281 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-281-closing-evidence-reconciliation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst arr=v=>Array.isArray(v)?v:[];\nconst truthy=v=>v===true||v===\"true\"||v===1||v===\"1\";\nconst requiredEvidence=arr(input.required_evidence);\nconst verifiedEvidence=arr(input.verified_evidence);\nconst milestones=arr(input.milestones);\nconst blockers=arr(input.blockers);\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id);\nconst execution=input.execution??{};\nconst active=truthy(input.closing_active)||truthy(execution.active)||[\"active\",\"in_progress\",\"closing_active\"].includes(String(execution.status||\"\").toLowerCase());\nconst verifiedIds=new Set(verifiedEvidence.map(e=>String(e.id??e)));\nconst evidenceComplete=requiredEvidence.length===0||requiredEvidence.every(e=>verifiedIds.has(String(e.id??e)));\nconst failedEvidence=verifiedEvidence.filter(e=>truthy(e.failed)||[\"failed\",\"rejected\",\"invalid\"].includes(String(e.status||\"\").toLowerCase()));\nconst incompleteMilestones=milestones.filter(m=>!truthy(m.completed)&&![\"completed\",\"done\",\"verified\"].includes(String(m.status||\"\").toLowerCase()));\nconst overdueMilestones=milestones.filter(m=>truthy(m.overdue)||[\"overdue\",\"failed\"].includes(String(m.status||\"\").toLowerCase()));\nconst criticalOverdue=overdueMilestones.filter(m=>truthy(m.critical)||String(m.priority||\"\").toLowerCase()===\"critical\");\nconst blockersClear=blockers.length===0;\nconst recoveryNeeded=failedEvidence.length>0||criticalOverdue.length>0||truthy(input.recovery_required);\nconst reconciliationComplete=evidenceComplete&&failedEvidence.length===0&&incompleteMilestones.length===0&&blockersClear;\n\nlet status=\"evidence_reconciliation_required\",nextWorkflow=\"WF-281\",humanReview=false;\nif(!identityComplete){status=\"blocked_missing_identity\";nextWorkflow=\"WF-126\";humanReview=true;}\nelse if(!active){status=\"closing_not_active\";nextWorkflow=\"WF-279\";humanReview=true;}\nelse if(!blockersClear){status=\"blocked\";nextWorkflow=\"WF-126\";humanReview=true;}\nelse if(recoveryNeeded){status=\"recovery_required\";nextWorkflow=\"WF-282\";humanReview=true;}\nelse if(reconciliationComplete){status=\"evidence_reconciled\";nextWorkflow=\"WF-282\";}\nelse if(!evidenceComplete||incompleteMilestones.length>0){status=\"evidence_gap\";nextWorkflow=\"WF-282\";humanReview=true;}\n\nreturn [{json:{...input,workflow:\"WF-281\",workflow_name:\"Milestone Update → Closing Evidence Reconciliation & Recovery Routing Controller\",status,evidence_reconciliation:{identity_complete:identityComplete,closing_active:active,required_evidence_count:requiredEvidence.length,verified_evidence_count:verifiedEvidence.length,evidence_complete:evidenceComplete,failed_evidence_count:failedEvidence.length,incomplete_milestone_count:incompleteMilestones.length,overdue_milestone_count:overdueMilestones.length,critical_overdue_count:criticalOverdue.length,blockers_clear:blockersClear,recovery_needed:recoveryNeeded,reconciled:reconciliationComplete},next_workflow:nextWorkflow,human_review_required:humanReview,routing_reason:status,audit:{event_type:\"closing_evidence_reconciliation_recovery_routing\",idempotency_key:input.idempotency_key||`wf-281:${input.deal_id||\"unknown\"}:${input.evidence_reconciliation_id||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf281-controller",
+      "name": "WF-281 Evidence Reconciliation Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'evidence_reconciled'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf281-if",
+      "name": "WF-281 Evidence Reconciliation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-281 closing evidence reconciliation and recovery routing',description:$json.routing_reason,metadata:{workflow:'WF-281',status:$json.status,evidence_reconciliation:$json.evidence_reconciliation,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf281-crm",
+      "name": "WF-281 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,evidence_reconciled:$json.evidence_reconciliation?.reconciled,recovery_needed:$json.evidence_reconciliation?.recovery_needed,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf281-response",
+      "name": "WF-281 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-281 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-281 Evidence Reconciliation Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-281 Evidence Reconciliation Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-281 Evidence Reconciliation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-281 Evidence Reconciliation Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-281 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-281 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-281 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-281 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-281-v1"
+}

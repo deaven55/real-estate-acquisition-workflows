@@ -1,0 +1,165 @@
+{
+  "name": "WF-222 — Contract Package → Signature Dispatch, Execution Tracking & Outcome Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-222-signature-dispatch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;const d=input.deal??input;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const package_status=String(d.contract_package_status??d.package_status??\"\").toLowerCase();const signature_status=String(d.signature_status??\"\").toLowerCase();const agreement_type=String(d.agreement_type??d.contract_type??\"\").trim();const blockers=Array.isArray(d.blockers)?d.blockers:[];const idempotency_key=String(d.signature_dispatch_idempotency_key??d.idempotency_key??\"\").trim();let state=\"blocked\",route=\"WF-126\",reason=\"Signature execution is not authorized.\";if(!lead_id||!deal_id||!property_id||!agreement_type){reason=\"Missing contract identity or agreement type.\";}else if(blockers.length){reason=\"Unresolved blockers prevent signature execution.\";}else if([\"executed\",\"signed\",\"completed\"].includes(signature_status)){state=\"executed\";route=\"WF-203\";reason=\"Signature evidence indicates the agreement is already executed.\";}else if([\"declined\",\"rejected\"].includes(signature_status)){state=\"declined\";route=\"WF-204\";reason=\"Signature was declined; recovery/re-engagement path required.\";}else if([\"expired\"].includes(signature_status)){state=\"expired\";route=\"WF-204\";reason=\"Signature request expired; controlled recovery required.\";}else if(![\"signature_ready\",\"package_ready\",\"ready\"].includes(package_status)){reason=\"Contract package is not in a signature-ready state.\";}else if(!idempotency_key){state=\"blocked\";reason=\"Missing signature dispatch idempotency key.\";}else if([\"sent\",\"dispatched\",\"awaiting_signature\",\"pending\"].includes(signature_status)){state=\"awaiting_signature\";route=\"WF-203\";reason=\"Signature request is already dispatched and awaiting outcome.\";}else{state=\"dispatch_ready\";route=\"WF-203\";reason=\"Contract package is validated and ready for controlled signature dispatch.\";}return[{json:{workflow:\"WF-222\",lead_id,deal_id,property_id,agreement_type,package_status,signature_status,blockers,idempotency_key,state,route,reason,requires_human_review:true,dispatch_id:idempotency_key||null}}];"
+      },
+      "name": "Signature Execution Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "dispatch_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Signature Dispatch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'signature_execution',notes:'WF-222 state='+$json.state+' route='+$json.route+' reason='+$json.reason,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Signature State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,next_workflow:$json.route,signature_dispatch_ready:$json.state===\"dispatch_ready\"}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Signature Execution Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Execution Controller": {
+      "main": [
+        [
+          {
+            "node": "Signature Dispatch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Dispatch Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Signature State",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Signature State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Signature State": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-222-signature-dispatch-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

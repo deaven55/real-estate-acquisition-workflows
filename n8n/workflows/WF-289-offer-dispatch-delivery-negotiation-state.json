@@ -1,0 +1,158 @@
+{
+  "name": "WF-289 — Seller Offer Package → Offer Dispatch, Delivery Receipt & Negotiation State Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-289-offer-dispatch-delivery-negotiation-state",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf289-webhook",
+      "name": "WF-289 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-289-offer-dispatch-delivery-negotiation-state"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst offer=input.offer_package??{};\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst channel=String(input.channel||input.communication_channel||\"\").toLowerCase();\nconst recipient=String(input.recipient||input.seller_phone||input.seller_email||\"\").trim();\nconst message=String(input.message||input.offer_message||\"\").trim();\nconst offerPrice=Number(offer.opening_offer??input.offer_price);\nconst mao=Number(offer.dynamic_mao??input.dynamic_mao);\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id);\nconst channelValid=[\"sms\",\"email\"].includes(channel);\nconst recipientValid=recipient.length>0;\nconst offerValid=Number.isFinite(offerPrice)&&Number.isFinite(mao)&&offerPrice<=mao;\nconst eligible=input.status===\"offer_package_ready\"||input.offer_package_ready===true;\nconst dnc=Boolean(input.dnc||input.do_not_contact);\nconst ready=identityComplete&&eligible&&channelValid&&recipientValid&&message.length>0&&offerValid&&!dnc&&blockers.length===0;\nconst dispatchId=input.dispatch_id||`wf289-${input.deal_id||\"unknown\"}-${input.property_id||\"none\"}-${input.version||1}`;\nconst idempotencyKey=input.idempotency_key||`offer-dispatch:${dispatchId}`;\nlet status=\"dispatch_ready\",nextWorkflow=\"WF-290\",humanReview=true,reason=\"offer is prepared for controlled dispatch\";\nif(!identityComplete){status=\"blocked_missing_identity\";nextWorkflow=\"WF-126\";reason=\"missing deal/lead/property identity\";}\nelse if(dnc){status=\"dnc_blocked\";nextWorkflow=\"WF-126\";reason=\"seller is marked do-not-contact\";}\nelse if(blockers.length){status=\"dispatch_blocked\";nextWorkflow=\"WF-126\";reason=\"active blockers present\";}\nelse if(!eligible){status=\"offer_package_required\";nextWorkflow=\"WF-288\";reason=\"offer package is not ready\";}\nelse if(!channelValid||!recipientValid||!message.length){status=\"dispatch_data_missing\";nextWorkflow=\"WF-288\";reason=\"channel, recipient, or message is missing\";}\nelse if(!offerValid){status=\"mao_guardrail_violation\";nextWorkflow=\"WF-287\";reason=\"offer price exceeds dynamic MAO\";}\nconst dispatch={dispatch_id:dispatchId,idempotency_key:idempotencyKey,channel,recipient,offer_price:offerPrice,dynamic_mao:mao,message_present:Boolean(message.length),delivery_receipt_required:true,provider_execution_required:true,provider_credentials_runtime_only:true};\nreturn [{json:{...input,workflow:\"WF-289\",workflow_name:\"Seller Offer Package → Offer Dispatch, Delivery Receipt & Negotiation State Controller\",status,dispatch,next_workflow:nextWorkflow,human_review_required:humanReview,audit:{event_type:\"offer_dispatch_delivery_negotiation_state\",idempotency_key:idempotencyKey,dispatch_id:dispatchId}}}];"
+      },
+      "id": "wf289-controller",
+      "name": "WF-289 Offer Dispatch Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'dispatch_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf289-if",
+      "name": "WF-289 Dispatch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-289 offer dispatch and delivery receipt state',description:$json.status,metadata:{workflow:'WF-289',status:$json.status,dispatch:$json.dispatch,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf289-crm",
+      "name": "WF-289 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,dispatch:$json.dispatch,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf289-response",
+      "name": "WF-289 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-289 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-289 Offer Dispatch Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-289 Offer Dispatch Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-289 Dispatch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-289 Dispatch Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-289 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-289 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-289 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-289 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-289-v1"
+}

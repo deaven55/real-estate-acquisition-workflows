@@ -1,0 +1,79 @@
+{
+  "name": "WF-127 — Buyer/Assignee & Funding Readiness Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-127-buyer-assignee-funding-readiness-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf127-webhook",
+      "name": "WF-127 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-900, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b=$json.body || $json;\nconst requestId=String(b.request_id || ('wf127-'+Date.now()));\nconst dealId=b.deal_id || null, leadId=b.lead_id || null, propertyId=b.property_id || null;\nconst agreementType=String(b.agreement_type || '').toLowerCase();\nconst exitStrategy=String(b.exit_strategy || b.disposition_strategy || '').toLowerCase();\nconst buyerId=b.buyer_id || b.assignee_id || null;\nconst buyerStatus=String(b.buyer_status || b.assignee_status || '').toLowerCase();\nconst pofStatus=String(b.proof_of_funds_status || b.funding_status || '').toLowerCase();\nconst fundingStatus=String(b.funding_readiness || b.funding_status || '').toLowerCase();\nconst assignmentStatus=String(b.assignment_status || '').toLowerCase();\nconst novationStatus=String(b.novation_status || '').toLowerCase();\nconst doubleCloseFundingStatus=String(b.double_close_funding_status || '').toLowerCase();\nconst dnc=Boolean(b.dnc), missing=[];\nif(!dealId) missing.push('deal_id'); if(!leadId) missing.push('lead_id'); if(!propertyId) missing.push('property_id'); if(!agreementType) missing.push('agreement_type'); if(!exitStrategy) missing.push('exit_strategy');\nconst blockers=[];\nconst bad=['failed','issue','blocked','rejected','expired'];\nfor(const [label,value] of [['buyer_or_assignee',buyerStatus],['proof_of_funds',pofStatus],['funding',fundingStatus],['assignment',assignmentStatus],['novation',novationStatus],['double_close_funding',doubleCloseFundingStatus]]) if(value && bad.includes(value)) blockers.push(label);\nconst buyerRequired=['assignment','novation','double_close'].includes(exitStrategy) || ['assignment','novation','double_close'].includes(agreementType);\nconst fundingRequired=['double_close','double close','double-close'].includes(exitStrategy) || ['double_close','double close','double-close'].includes(agreementType);\nif(buyerRequired && !buyerId) blockers.push('buyer_or_assignee_identity');\nif(buyerRequired && !['ready','selected','confirmed'].includes(buyerStatus)) blockers.push('buyer_or_assignee_not_ready');\nif(buyerRequired && !['verified','ready','confirmed','complete'].includes(pofStatus)) blockers.push('proof_of_funds_not_verified');\nif(fundingRequired && !['ready','verified','confirmed','funded','complete'].includes(fundingStatus)) blockers.push('funding_not_ready');\nif(exitStrategy==='assignment' && !['ready','confirmed','complete'].includes(assignmentStatus)) blockers.push('assignment_not_ready');\nif(exitStrategy==='novation' && !['ready','confirmed','complete'].includes(novationStatus)) blockers.push('novation_not_ready');\nif(fundingRequired && !['ready','verified','confirmed','funded','complete'].includes(doubleCloseFundingStatus)) blockers.push('double_close_funding_not_confirmed');\nlet status='blocked',nextState='human_review',route='human_review',reason='Buyer, assignee, or funding readiness requires review';\nif(dnc){status='suppressed';nextState='disposition_readiness';route='none';reason='DNC suppresses communication only; disposition readiness is retained';}\nelse if(missing.length){status='blocked';nextState='missing_disposition_inputs';reason='Required disposition identity or exit strategy is missing';}\nelse if([...new Set(blockers)].length){status='blocked';nextState='disposition_blocked';reason='One or more buyer, funding, or exit-strategy conditions are unresolved';}\nelse{status='ready';nextState='closing_coordination';route='wf-126-closing-coordination-critical-date-controller';reason='Buyer/assignee and funding readiness satisfy the selected exit strategy';}\nconst id='buyer-funding-readiness:'+dealId+':'+requestId+':v1';\nconst uniqueBlockers=[...new Set(blockers)];\nreturn [{json:{workflow:'WF-127',workflow_version:'1.0',request_id:requestId,buyer_funding_readiness_id:id,lead_id:leadId,property_id:propertyId,deal_id:dealId,agreement_type:agreementType,exit_strategy:exitStrategy,buyer_id:buyerId,buyer_status:buyerStatus,proof_of_funds_status:pofStatus,funding_status:fundingStatus,assignment_status:assignmentStatus,novation_status:novationStatus,double_close_funding_status:doubleCloseFundingStatus,buyer_required:buyerRequired,funding_required:fundingRequired,status,next_state:nextState,route,reason,blockers:uniqueBlockers,requirements:['selected buyer or assignee when required','buyer/assignee readiness confirmation','proof-of-funds or funding evidence when required','assignment/novation readiness when selected','double-close funding confirmation when selected'],guardrails:{buyer_required_for_disposition_exit:true,proof_of_funds_required_when_exit_requires_buyer:true,double_close_requires_funding_confirmation:true,no_invented_buyer_or_funding_evidence:true,unresolved_disposition_blockers_prevent_ready:true,dnc_suppresses_communication_not_transaction_state:true},crm_activity:{activity_type:'buyer_funding_readiness',subject:'WF-127 buyer/assignee and funding readiness - '+status,lead_id:leadId,property_id:propertyId,deal_id:dealId,external_id:id,external_source:'wholesaling-os-disposition',metadata:{status,next_state,route,reason,exit_strategy,buyer_id:buyerId,buyer_status:buyerStatus,proof_of_funds_status:pofStatus,funding_status:fundingStatus,assignment_status:assignmentStatus,novation_status:novationStatus,double_close_funding_status:doubleCloseFundingStatus,blockers:uniqueBlockers}}}}];"
+      },
+      "id": "wf127-eval",
+      "name": "Evaluate Buyer & Funding Readiness",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-600, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;let valid=true,reason='validated';if(!r.buyer_funding_readiness_id||!r.deal_id||!r.lead_id||!r.property_id){valid=false;reason='missing_disposition_identity';}if(r.status==='ready'&&(!r.route||r.next_state!=='closing_coordination')){valid=false;reason='ready_route_mismatch';}if(r.status==='blocked'&&(!r.blockers||!r.blockers.length)){valid=false;reason='blocked_without_reason';}if(r.dnc&&r.route!=='none'){valid=false;reason='dnc_route_mismatch';}if(r.funding_required&&!['ready','verified','confirmed','funded','complete'].includes(r.funding_status)){valid=false;reason='funding_requirement_not_satisfied';}return [{json:{...r,validation_status:valid?'validated':'blocked',validation_reason:reason,status:valid?r.status:'blocked',next_state:valid?r.next_state:'human_review',route:valid?r.route:'human_review'}}];"
+      },
+      "id": "wf127-validate",
+      "name": "Validate Disposition Guardrails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-300, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "X-API-Key", "value": "={{$env.INSULA_CRM_API_KEY}}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({activity_type:$json.crm_activity.activity_type,subject:$json.crm_activity.subject,body:JSON.stringify({buyer_funding_readiness_id:$json.buyer_funding_readiness_id,status:$json.status,next_state:$json.next_state,route:$json.route,reason:$json.reason,exit_strategy:$json.exit_strategy,buyer_id:$json.buyer_id,buyer_status:$json.buyer_status,proof_of_funds_status:$json.proof_of_funds_status,funding_status:$json.funding_status,assignment_status:$json.assignment_status,novation_status:$json.novation_status,double_close_funding_status:$json.double_close_funding_status,blockers:$json.blockers,guardrails:$json.guardrails}),lead_id:$json.crm_activity.lead_id,property_id:$json.crm_activity.property_id,deal_id:$json.crm_activity.deal_id,external_id:$json.crm_activity.external_id,external_source:$json.crm_activity.external_source,metadata:$json.crm_activity.metadata}) }}",
+        "options": {"response": {"response": {"neverError": true}}}
+      },
+      "id": "wf127-crm",
+      "name": "Persist Buyer/Funding Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json;return [{json:{...r,crm_persistence_attempted:true,crm_persistence_status:$json.statusCode>=200&&$json.statusCode<300?'persisted':'failed',next_action:{route:r.route,next_state:r.next_state,request_id:r.request_id,buyer_funding_readiness_id:r.buyer_funding_readiness_id}}}];"
+      },
+      "id": "wf127-return",
+      "name": "Return Buyer/Funding Readiness",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    }
+  ],
+  "connections": {
+    "WF-127 Webhook": {"main": [[{"node": "Evaluate Buyer & Funding Readiness", "type": "main", "index": 0}]]},
+    "Evaluate Buyer & Funding Readiness": {"main": [[{"node": "Validate Disposition Guardrails", "type": "main", "index": 0}]]},
+    "Validate Disposition Guardrails": {"main": [[{"node": "Persist Buyer/Funding Audit", "type": "main", "index": 0}]]},
+    "Persist Buyer/Funding Audit": {"main": [[{"node": "Return Buyer/Funding Readiness", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "wf127-v1"
+}

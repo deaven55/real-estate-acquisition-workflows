@@ -1,0 +1,84 @@
+{
+  "name": "WF-064 AI Assistant Unified Response Composer Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-064-ai-assistant-response-composer",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf064-webhook",
+      "name": "AI Assistant Response Composer Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "wf-064-ai-assistant-response-composer"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const arr=v=>Array.isArray(v)?v:[]; const result=input.tool_result??input.result??{}; const ctx=input.operating_context??{}; const session=input.session_context??{}; const approval=input.approval??input.authorization??{}; const command=norm(input.command??input.message??session.command); const intent=norm(input.intent??result.interpreted_intent??''); const ok=result.ok!==false&&input.ok!==false; const blockers=[...arr(result.blockers),...arr(result.exceptions),...arr(ctx.priority_focus?.blocking_exceptions)].slice(0,10); const missing=[...arr(result.missing_context),...arr(ctx.decision_context?.data_gaps)].slice(0,10); const next=norm(result.next_action??ctx.decision_context?.highest_priority_action?.next_action); const actions=arr(result.next_actions??ctx.recommended_operating_queue).slice(0,10); const approvals=arr(ctx.priority_focus?.pending_approvals??approval.pending).slice(0,10); const risk=['send_offer','contact_seller','contact_buyer','prepare_contract','schedule_closing'].includes(lower(intent)); const approved=lower(approval.approval_state??approval.status)==='approved'; const needsApproval=risk&&!approved; const status=blockers.length?'blocked':missing.length?'needs_context':needsApproval?'approval_required':ok?'ready':'error'; let headline=status==='blocked'?'Action is blocked by operating exceptions.':status==='needs_context'?'I need more context before I can act.':status==='approval_required'?'Human approval is required before this action can be dispatched.':status==='ready'?'Request processed and ready for the next step.':'Request could not be completed safely.'; const summary=command?'Command: '+command:'Operating assistant response'; const response={ok:status==='ready',assistant:'AI Virtual Wholesaling Assistant',response_version:'1',status,headline,summary,intent:intent||null,session:{session_id:session.session_id??null,active_focus:session.continuity?.active_focus??session.active_focus??null},what_matters:{context_health:ctx.context_health??null,blockers,missing_context:missing,pending_approvals:approvals},result:result,prioritized_actions:actions,decision:{needs_human_approval:needsApproval,approval_state:approval.approval_state??approval.status??'not_required',approved,can_dispatch:status==='ready'&&!needsApproval,next_action:next||'Review the prioritized actions and operating context.'},assistant_message:headline+(next?' Next: '+next:''),policy:{compose_only:true,no_external_side_effects:true,no_fabricated_state:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true,audit_request_and_response:true}}; return[{json:response}];"
+      },
+      "id": "wf064-compose",
+      "name": "Compose Unified AI Assistant Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf064-response",
+      "name": "Respond Unified AI Assistant Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        600,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "AI Assistant Response Composer Webhook": {
+      "main": [
+        [
+          {
+            "node": "Compose Unified AI Assistant Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Unified AI Assistant Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Unified AI Assistant Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf064-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

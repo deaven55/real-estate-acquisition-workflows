@@ -1,0 +1,84 @@
+{
+  "name": "WF-078 Seller Conversation & Response Intelligence Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-078-seller-conversation-intelligence",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf078-webhook",
+      "name": "Seller Conversation Intelligence Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-078-seller-conversation-intelligence",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const text=s(input.message??input.seller_message??input.response_text); const low=text.toLowerCase(); const hits=(arr)=>arr.filter(x=>low.includes(x)); const objections=hits(['price','too low','lowball','not interested','commission','closing date','inspection','financing','cash','proof of funds','tenant','repairs','condition','need time','think about it']); const intents=hits(['accept','accepted','agree','yes','counter','counteroffer','reject','rejected','not interested','call me','text me','send offer','how much','when can you close']); const extracted={price_mentions:(text.match(/\\$\\s?\\d[\\d,]*(?:\\.\\d+)?/g)||[]),closing_mentions:hits(['close','closing']),property_condition_mentions:hits(['repair','condition','roof','foundation','hvac','plumbing','electrical']),timeline_mentions:hits(['today','tomorrow','this week','next week','30 days','60 days','90 days'])}; let classification='needs_review'; if(hits(['accepted','accept your offer','yes, i agree']).length)classification='offer_accepted_signal'; else if(hits(['counter','counteroffer','i need','would take']).length)classification='counteroffer_signal'; else if(hits(['not interested','no thanks','reject','rejected']).length)classification='rejection_signal'; else if(hits(['how much','send offer','make an offer']).length)classification='offer_request_signal'; else if(hits(['call me','text me','when can you close']).length)classification='engagement_signal'; const risk=hits(['lawsuit','attorney','lawyer','threat','complaint','fraud','scam']); return[{json:{ok:!!text,adapter:'wf-078',conversation:{message_received:true,message_length:text.length,classifications:{primary:classification,signals:intents,objections},extracted, risk_signals:risk},assistant_recommendation:{next_action:risk.length?'Escalate for human review before responding.':classification==='counteroffer_signal'?'Review seller counteroffer against MAO, deal viability, and target profit before proposing terms.':classification==='offer_accepted_signal'?'Verify acceptance details and obtain required human approval for contract workflow.':classification==='rejection_signal'?'Record rejection and determine whether a compliant future follow-up is appropriate.':classification==='offer_request_signal'?'Prepare an offer analysis using current verified underwriting inputs; do not send automatically.':'Review conversation context and determine the next approved seller action.',response_mode:risk.length?'human_escalation':'human_approval_required',no_automatic_send:true},provenance:{raw_message_preserved:true,classification_is_derived:true,no_intent_certainty_claim:true},policy:{no_automatic_outreach:true,human_approval_required_for_contact:true,no_legal_advice:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf078-analysis",
+      "name": "Analyze Seller Conversation & Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf078-response",
+      "name": "Respond Seller Conversation Intelligence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Seller Conversation Intelligence Webhook": {
+      "main": [
+        [
+          {
+            "node": "Analyze Seller Conversation & Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Seller Conversation & Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Seller Conversation Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf078-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

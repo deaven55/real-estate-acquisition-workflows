@@ -1,0 +1,175 @@
+{
+  "name": "WF-335 — Seller Offer Package → Offer Dispatch, Delivery Receipt & Negotiation State",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-335-offer-dispatch-delivery-negotiation-state",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf335-webhook",
+      "name": "Webhook — Seller Offer Package Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-335-offer-dispatch-delivery-negotiation-state"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };\n\nconst dealId = input.deal_id;\nconst leadId = input.lead_id;\nconst propertyId = input.property_id;\nconst packageStatus = String(input.offer_package_status ?? input.controller_status ?? \"\").toLowerCase();\nconst channel = String(input.preferred_channel ?? input.channel ?? \"sms\").toLowerCase();\nconst recipient = String(input.recipient ?? input.seller_phone ?? input.seller_email ?? \"\").trim();\nconst message = String(input.seller_message ?? input.message ?? \"\").trim();\nconst openingOffer = num(input.opening_offer);\nconst adjustedMao = num(input.adjusted_mao ?? input.dynamic_mao);\nconst sellerReviewRequired = input.seller_review_required === true;\nconst sellerAuthorized = input.seller_authorized === true || input.human_authorized === true;\nconst dnc = input.dnc === true || input.do_not_contact === true;\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\n\nconst identityReady = Boolean(dealId && leadId && propertyId);\nconst channelReady = channel === \"sms\" || channel === \"email\";\nconst recipientReady = Boolean(recipient);\nconst messageReady = Boolean(message);\nconst priceReady = openingOffer !== null && openingOffer >= 0 && adjustedMao !== null && openingOffer <= adjustedMao;\nconst authorizationReady = !sellerReviewRequired || sellerAuthorized;\nconst blocked = dnc || blockers.length > 0;\n\nlet status = \"dispatch_ready\";\nlet nextWorkflow = \"WF-336\";\nlet reason = \"Offer package is valid, authorized, and ready for provider dispatch.\";\n\nif (!identityReady || !channelReady || !recipientReady || !messageReady || !priceReady || !authorizationReady) {\n  status = sellerReviewRequired && !sellerAuthorized ? \"awaiting_human_authorization\" : \"incomplete\";\n  nextWorkflow = sellerReviewRequired && !sellerAuthorized ? \"WF-126\" : \"WF-334\";\n  reason = sellerReviewRequired && !sellerAuthorized\n    ? \"Seller outreach requires explicit human authorization before dispatch.\"\n    : \"Offer dispatch identity, channel, recipient, message, price, or authorization inputs are incomplete.\";\n} else if (blocked) {\n  status = \"blocked\";\n  nextWorkflow = \"WF-126\";\n  reason = \"DNC or active blockers prevent seller outreach.\";\n}\n\nconst dispatchId = input.dispatch_id ?? \\`wf335-\\${dealId ?? \"unknown\"}-\\${propertyId ?? \"unknown\"}-\\${Date.now()}\\`;\nconst idempotencyKey = input.idempotency_key ?? \\`wf-335:\\${dealId ?? \"unknown\"}:\\${propertyId ?? \"unknown\"}:\\${openingOffer ?? \"unknown\"}:\\${channel}\\`;\n\nreturn [{\n  json: {\n    ...input,\n    workflow_id: \"WF-335\",\n    controller_status: status,\n    dispatch_status: status,\n    deal_id: dealId,\n    lead_id: leadId,\n    property_id: propertyId,\n    channel: channel === \"email\" ? \"email\" : \"sms\",\n    recipient,\n    message,\n    opening_offer: openingOffer,\n    adjusted_mao: adjustedMao,\n    seller_review_required: sellerReviewRequired,\n    seller_authorized: sellerAuthorized,\n    dnc,\n    dispatch_id: dispatchId,\n    idempotency_key: idempotencyKey,\n    delivery_receipt_required: true,\n    provider_execution: \"runtime_provider_adapter\",\n    provider_credentials: \"runtime_only_not_committed\",\n    next_workflow: nextWorkflow,\n    reason,\n    requires_human_review: status === \"awaiting_human_authorization\" || status === \"blocked\"\n  }\n}];"
+      },
+      "id": "wf335-controller",
+      "name": "Code — Offer Dispatch Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.controller_status }}",
+              "rightValue": "dispatch_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf335-gate",
+      "name": "IF — Offer Dispatch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL }}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({ activity_type: 'seller_offer_dispatch', lead_id: $json.lead_id, property_id: $json.property_id, deal_id: $json.deal_id, status: $json.controller_status, dispatch_status: $json.dispatch_status, dispatch_id: $json.dispatch_id, idempotency_key: $json.idempotency_key, channel: $json.channel, recipient: $json.recipient, opening_offer: $json.opening_offer, adjusted_mao: $json.adjusted_mao, delivery_receipt_required: $json.delivery_receipt_required, provider_execution: $json.provider_execution, reason: $json.reason }) }}",
+        "options": {}
+      },
+      "id": "wf335-crm",
+      "name": "HTTP — InsulaCRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ workflow_id: 'WF-335', status: $json.controller_status ?? 'incomplete', next_workflow: $json.next_workflow ?? 'WF-334', dispatch_id: $json.dispatch_id, idempotency_key: $json.idempotency_key, channel: $json.channel, recipient: $json.recipient, opening_offer: $json.opening_offer, adjusted_mao: $json.adjusted_mao, delivery_receipt_required: $json.delivery_receipt_required === true, provider_execution: $json.provider_execution, requires_human_review: $json.requires_human_review === true, crm_activity_persisted: true }) }}",
+        "options": {}
+      },
+      "id": "wf335-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Seller Offer Package Input": {
+      "main": [
+        [
+          {
+            "node": "Code — Offer Dispatch Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Offer Dispatch Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Offer Dispatch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Offer Dispatch Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — InsulaCRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — InsulaCRM Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-335-v1",
+  "meta": {
+    "workflow_id": "WF-335",
+    "safety": "provider-agnostic runtime dispatch; explicit seller authorization when required; DNC/blocker gate; dynamic MAO price ceiling; delivery receipt required"
+  }
+}

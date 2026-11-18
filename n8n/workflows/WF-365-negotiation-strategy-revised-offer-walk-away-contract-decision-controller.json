@@ -1,0 +1,226 @@
+{
+  "name": "WF-365 — Negotiation Strategy → Revised Offer / Walk-Away / Contract Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-365-negotiation-strategy-decision",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "365-webhook",
+      "name": "Webhook — Negotiation Strategy",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const i=$input.first().json||{};const now=new Date().toISOString();const dealId=i.deal_id||i.dealId;const leadId=i.lead_id||i.leadId;const propertyId=i.property_id||i.propertyId;const strategy=i.negotiation_strategy||{};const decision=String(i.decision||strategy.decision||'review_required').toLowerCase();const mao=Number(i.adjusted_mao??strategy.adjusted_mao??i.current_mao??0);const ask=Number(i.seller_ask??strategy.seller_ask??i.counteroffer_amount??0);const dnc=Boolean(i.dnc||i.do_not_contact);const blockers=Array.isArray(i.blockers)?i.blockers:[];const signed=Boolean(i.contract_signed||i.executed_agreement||i.signature_completed);let route='human_control',outcome='review_required',reason='decision_requires_review',revisedOffer=0;if(dnc){outcome='stop';reason='dnc';}else if(blockers.length){outcome='blocked';reason='deal_blocker';}else if(!dealId||!leadId||!propertyId){route='reconciliation';reason='missing_identity';}else if(signed){route='contract';outcome='contract_ready';reason='agreement_already_executed';}else if(decision==='advance_negotiation'||decision==='evaluate_counteroffer'||decision==='negotiate_within_mao'){if(mao>0&&ask>0){revisedOffer=Number(Math.min(ask,mao).toFixed(2));route='offer';outcome=revisedOffer>=ask?'accept_or_contract':'revised_offer';reason=revisedOffer>=ask?'ask_within_mao':'protect_mao';}else{route='offer';outcome='request_underwriting';reason='missing_mao_or_ask';}}else if(decision==='protect_mao_or_walk'){route='walk_away';outcome='walk_away_or_reengage';reason='counteroffer_exceeds_strategy';}else if(decision==='reengage_or_close'){route='reengagement';outcome='reengage';reason='seller_rejection';}else if(decision==='schedule_or_human_call'){route='human_control';outcome='human_negotiation';reason='seller_requested_call';}else{route='human_control';outcome='review_required';}const key=(i.strategy_idempotency_key||[dealId,leadId,propertyId,decision,mao,ask].join(':'))+':decision';return[{json:{...i,workflow_id:'WF-365',status:'decision_ready',route,outcome,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,base_mao:Number(i.base_mao||0),adjusted_mao:mao,seller_ask:ask,revised_offer:revisedOffer,offer_strategy:{outcome,reason,revised_offer:revisedOffer,ma_o_protected:true,walk_away_threshold:mao,requires_human_approval:route==='human_control'},decision_idempotency_key:key,processed_at:now,crm_activity:{type:'negotiation_offer_contract_decision',workflow_id:'WF-365',outcome,reason,revised_offer:revisedOffer,adjusted_mao:mao,seller_ask:ask}}}];"
+      },
+      "id": "365-controller",
+      "name": "Controller — Revised Offer / Walk-Away / Contract Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchWholeWord": false,
+            "operator": "or",
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.route}}",
+              "rightValue": "offer",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{$json.route}}",
+              "rightValue": "contract",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{$json.route}}",
+              "rightValue": "reengagement",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{$json.route}}",
+              "rightValue": "walk_away",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "365-gate",
+      "name": "IF — Offer / Contract / Re-engagement Routing",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{$json.lead_id}}"
+            },
+            {
+              "name": "activity_type",
+              "value": "={{$json.crm_activity.type}}"
+            },
+            {
+              "name": "notes",
+              "value": "={{JSON.stringify($json.crm_activity)}}"
+            },
+            {
+              "name": "external_id",
+              "value": "={{$json.decision_idempotency_key}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "365-crm",
+      "name": "InsulaCRM — Persist Offer / Contract Decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "365-response",
+      "name": "Respond — Decision State",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Negotiation Strategy": {
+      "main": [
+        [
+          {
+            "node": "Controller — Revised Offer / Walk-Away / Contract Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Revised Offer / Walk-Away / Contract Decision": {
+      "main": [
+        [
+          {
+            "node": "IF — Offer / Contract / Re-engagement Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Offer / Contract / Re-engagement Routing": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Persist Offer / Contract Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Persist Offer / Contract Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Persist Offer / Contract Decision": {
+      "main": [
+        [
+          {
+            "node": "Respond — Decision State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-365-v1",
+  "meta": {
+    "workflow_id": "WF-365",
+    "purpose": "Convert negotiation strategy into revised offer, walk-away, re-engagement, or contract decision",
+    "routes": {
+      "offer": "WF-339",
+      "contract": "WF-150",
+      "reengagement": "WF-345",
+      "walk_away": "WF-345",
+      "reconciliation": "WF-360",
+      "human_control": "WF-126"
+    }
+  }
+}

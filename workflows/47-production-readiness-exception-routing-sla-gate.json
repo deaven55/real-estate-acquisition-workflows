@@ -1,0 +1,42 @@
+{
+  "name": "WF-047 Production Readiness & Exception Routing SLA Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-047-production-readiness-exception-sla", "responseMode": "responseNode", "options": {} },
+      "id": "wf047-webhook",
+      "name": "Production Readiness Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-047-production-readiness-exception-sla"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const records=Array.isArray(input.records)?input.records:Array.isArray(input.pipeline_records)?input.pipeline_records:[]; const now=input.now?new Date(input.now):new Date(); const norm=v=>String(v??'').toLowerCase().trim(); const stages={new:24,normalized:24,qualified:48,underwriting:48,offer_ready:24,offer_sent:24,seller_countered:24,contracted:24,buyer_matching:24,buyer_selected:24,transaction_pending:48,closing_pending:72,closed:24,closed_out:48,reopened:24,failed:24,cancelled:24}; const retryable=new Set(['timeout','rate_limit','429','502','503','504','temporary','network','dependency_unavailable','upstream_unavailable']); const terminal=new Set(['closed','closed_out','cancelled']); const active=r=>!terminal.has(norm(r.pipeline_stage??r.stage??r.status)); const ageHours=r=>{const d=r.updated_at??r.last_activity_at??r.created_at; if(!d)return null; const t=new Date(d); return Number.isNaN(t.getTime())?null:Math.max(0,(now-t)/36e5);}; const identity=r=>({candidate_key:r.candidate_key??null,normalized_identity_key:r.normalized_identity_key??null,lead_id:r.lead_id??r.leadId??null,deal_id:r.deal_id??r.dealId??null,property_id:r.property_id??r.propertyId??null,parcel_id:r.parcel_id??null}); const exceptions=[]; const sla=[]; const retry=[]; const deps=[]; records.forEach((r,idx)=>{const id=identity(r); const stage=norm(r.pipeline_stage??r.stage??r.status); const age=ageHours(r); const severity=norm(r.severity); const err=norm(r.error_code??r.failure_code??r.error_type); if(!stage||!stages[stage])exceptions.push({record_index:idx,identity:id,type:'invalid_stage',severity:'high',message:'Missing or unsupported pipeline stage.'}); if(active(r)&&!id.candidate_key&&!id.normalized_identity_key&&!id.property_id&&!id.parcel_id)exceptions.push({record_index:idx,identity:id,type:'missing_identity',severity:'high',message:'Canonical property identity is required for production routing.'}); if(active(r)&&age!==null&&age>stages[stage]){const item={record_index:idx,identity:id,stage,age_hours:Math.round(age*100)/100,sla_hours:stages[stage],severity:age>stages[stage]*2?'critical':age>stages[stage]*1.5?'high':'medium'};sla.push(item);exceptions.push({record_index:idx,identity:id,type:'sla_breach',severity:item.severity,message:'Active record exceeded the stage SLA.',details:item});} if(err&&retryable.has(err)){retry.push({record_index:idx,identity:id,stage,error_code:err,retry_safe:r.idempotency_key||r.request_id||r.execution_id?true:false,reason:'Retryable dependency or transient failure code supplied upstream.'});} const d=r.dependencies; if(d&&typeof d==='object')Object.entries(d).forEach(([name,v])=>{const status=norm(typeof v==='object'?v.status:v); if(['failed','unavailable','blocked','unknown'].includes(status))deps.push({record_index:idx,identity:id,dependency:name,status,message:typeof v==='object'?(v.message??null):null});}); if(severity==='critical')exceptions.push({record_index:idx,identity:id,type:'critical_record',severity:'critical',message:'Upstream record marked critical.'});}); const severityRank={critical:4,high:3,medium:2,low:1}; exceptions.sort((a,b)=>(severityRank[b.severity]??0)-(severityRank[a.severity]??0)); const retrySafe=retry.filter(x=>x.retry_safe).length; const retryNeedsIdempotency=retry.filter(x=>!x.retry_safe).length; const health=exceptions.some(x=>x.severity==='critical')?'critical':exceptions.some(x=>x.severity==='high')?'degraded':exceptions.length?'warning':'healthy'; const next=health==='healthy'?'Continue normal operations and monitor stage SLAs and dependency health.':health==='critical'?'Stop relying on affected records until critical exceptions and dependencies are resolved.':'Resolve highest-severity exceptions, then re-run the readiness snapshot.'; return[{json:{ok:health==='healthy',health_status:health,record_count:records.length,active_record_count:records.filter(active).length,exception_count:exceptions.length,exceptions,sla_breaches:sla,retry_queue:retry,retry_summary:{retryable_count:retry.length,retry_safe_count:retrySafe,retry_requires_idempotency_count:retryNeedsIdempotency},dependency_status:{blocked_or_failed_count:deps.length,issues:deps},dependency_checks:input.dependency_status??null,sla_policy_hours:stages,health_summary:{critical:exceptions.filter(x=>x.severity==='critical').length,high:exceptions.filter(x=>x.severity==='high').length,medium:exceptions.filter(x=>x.severity==='medium').length,low:exceptions.filter(x=>x.severity==='low').length},next_action:next,policy:{production_readiness_and_exception_routing_only:true,no_automatic_retry:true,no_automatic_outreach:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true,no_fabricated_execution_state:true}}}];"
+      },
+      "id": "wf047-control",
+      "name": "Normalize Production Readiness & Exceptions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf047-response",
+      "name": "Respond Production Readiness",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Production Readiness Webhook": { "main": [[{ "node": "Normalize Production Readiness & Exceptions", "type": "main", "index": 0 }]] },
+    "Normalize Production Readiness & Exceptions": { "main": [[{ "node": "Respond Production Readiness", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf047-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

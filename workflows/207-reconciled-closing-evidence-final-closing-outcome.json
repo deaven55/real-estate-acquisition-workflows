@@ -1,0 +1,163 @@
+{
+  "name": "WF-207 — Reconciled Closing Evidence → Final Closing Outcome & Completion Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-207-reconciled-closing-evidence-final-closing-outcome",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Reconciled Evidence",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-207-reconciled-closing-evidence-final-closing-outcome"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const r=x.closing_evidence_reconciliation??{};const e=x.closing_evidence??x.evidence??{};const m=x.milestones??[];const executed=x.executed_agreement===true||x.signature_execution?.signed===true||String(x.agreement_status??'').toLowerCase()==='executed';const identity=Boolean(x.deal_id&&x.lead_id&&x.property_id);const blockers=Array.isArray(x.blockers)?x.blockers:(Array.isArray(r.blockers)?r.blockers:[]);const missing=Array.isArray(r.missing)?r.missing:[];const verified=Boolean(r.status==='reconciled'&&missing.length===0);const allComplete=!Array.isArray(m)||m.length===0||m.every(v=>['completed','verified','closed'].includes(String(v?.status??'').toLowerCase()));let status='outcome_confirmation_required';if(!identity)status='blocked';else if(blockers.length)status='blocked';else if(!executed)status='execution_evidence_missing';else if(!verified)status='evidence_incomplete';else if(!allComplete)status='completion_incomplete';else status='closing_outcome_ready';const next={closing_outcome_ready:'WF-208',execution_evidence_missing:'WF-206',evidence_incomplete:'WF-206',completion_incomplete:'WF-205',blocked:'WF-126',outcome_confirmation_required:'WF-126'}[status];return[{json:{...x,workflow:'WF-207',final_closing_outcome:{status,deal_id:x.deal_id??null,lead_id:x.lead_id??null,property_id:x.property_id??null,executed_agreement:executed,evidence_reconciled:verified,milestones_complete:allComplete,blockers,missing_evidence:missing},routing:{next_workflow:next,requires_human_review:status!=='closing_outcome_ready'},audit:{event:'reconciled_closing_evidence_final_outcome_evaluated',status}}}];"
+      },
+      "name": "Code — Final Closing Outcome Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.final_closing_outcome.status}}",
+              "rightValue": "closing_outcome_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Final Closing Outcome Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-207:'+($json.deal_id||$json.property_id||'unknown')+':final-closing-outcome',external_source:'wholesale-os',activity_type:'reconciled_closing_evidence_final_outcome',lead_id:$json.final_closing_outcome?.lead_id||null,property_id:$json.final_closing_outcome?.property_id||null,deal_id:$json.final_closing_outcome?.deal_id||null,status:$json.final_closing_outcome?.status||'blocked',notes:JSON.stringify({workflow:'WF-207',final_closing_outcome:$json.final_closing_outcome,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Final Closing Outcome Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-207',status:$json.final_closing_outcome?.status??'blocked',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),final_closing_outcome:$json.final_closing_outcome??null}}}];"
+      },
+      "name": "Code — Final Closing Outcome Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Reconciled Evidence": {
+      "main": [
+        [
+          {
+            "node": "Code — Final Closing Outcome Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Final Closing Outcome Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Final Closing Outcome Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Final Closing Outcome Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Final Closing Outcome Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Final Closing Outcome Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Final Closing Outcome Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Final Closing Outcome Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-207-v1"
+}

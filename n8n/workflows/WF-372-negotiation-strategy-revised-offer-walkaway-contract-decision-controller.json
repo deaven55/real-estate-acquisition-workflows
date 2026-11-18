@@ -1,0 +1,177 @@
+{
+  "name": "WF-372 — Negotiation Strategy → Revised Offer / Walk-Away / Contract Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-372-negotiation-decision",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst strategy=String(input.strategy??'').toLowerCase();\nconst classification=String(input.classification??'').toLowerCase();\nconst dealId=input.deal_id??input.dealId,leadId=input.lead_id??input.leadId,propertyId=input.property_id??input.propertyId;\nconst protectedMao=Number(input.protected_mao??input.dynamic_mao??input.mao??0);\nconst sellerAsk=Number(input.seller_ask??input.counteroffer_amount??0);\nconst currentOffer=Number(input.current_offer??input.offer_amount??0);\nconst sourceKey=input.decision_idempotency_key??input.idempotency_key;\nconst dnc=Boolean(input.dnc||input.do_not_contact||input.opted_out);\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nlet decision='human_review',route='WF-126',reason='Insufficient evidence for an automated negotiation decision.',revisedOffer=0;\nif(strategy==='stop'||dnc){decision='stop';route='WF-126';reason='DNC/opt-out or stop strategy overrides automated negotiation.'}\nelse if(blockers.length){decision='human_review';route='WF-126';reason='Operational blockers require controlled human handling.'}\nelse if(strategy==='reengage'||classification==='rejection'){decision='reengage';route='WF-345';reason='Seller is not ready to accept; return to controlled re-engagement.'}\nelse if(strategy==='prepare_acceptance_or_contract'&&sellerAsk>0&&protectedMao>0&&sellerAsk<=protectedMao){decision='contract_ready';route='WF-150';reason='Seller position is within protected MAO; prepare contract package.'}\nelse if((strategy==='evaluate_near_mao_counter'||strategy==='hold_mao'||strategy==='continue_negotiation')&&protectedMao>0){\n if(sellerAsk>0&&sellerAsk<=protectedMao){decision='accept_or_contract';route='WF-150';reason='Seller ask is within protected MAO.'}\n else if(currentOffer>0&&currentOffer<=protectedMao){revisedOffer=Math.round(Math.min(currentOffer,protectedMao)*100)/100;decision='revised_offer';route='WF-366';reason='Seller ask exceeds protected MAO; maintain an offer within protected economics.'}\n else if(sellerAsk>protectedMao){decision='walk_away';route='WF-345';reason='Seller ask exceeds protected MAO and no safe revised offer is available.'}\n}\nelse if(strategy==='respond_and_continue'){decision='respond';route='WF-365';reason='Seller needs clarification or a call before an economic decision.'}\nconst valid=Boolean(dealId&&leadId&&propertyId&&sourceKey);\nif(!valid&&decision!=='stop'&&decision!=='human_review'){decision='reconcile';route='WF-360';reason='Required identity/idempotency fields are missing.'}\nconst key=sourceKey?\\`${sourceKey}:decision:${decision}:${revisedOffer}\\`:null;\nreturn [{json:{workflow:'WF-372',decision,route,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,strategy,classification,seller_ask:sellerAsk,current_offer:currentOffer,protected_mao:protectedMao,revised_offer:revisedOffer,mao_protected:true,identity_valid:valid,decision_idempotency_key:key,audit_event:'negotiation_decision_revised_offer_walkaway_contract'}}];"
+      },
+      "name": "Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchWholeWord": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.decision}}",
+              "rightValue": "human_review",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "leftValue": "={{$json.decision}}",
+              "rightValue": "reconcile",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({activity_type:'negotiation_decision',deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,decision:$json.decision,route:$json.route,protected_mao:$json.protected_mao,revised_offer:$json.revised_offer,idempotency_key:$json.decision_idempotency_key,metadata:{workflow:'WF-372',reason:$json.reason}})}}",
+        "options": {}
+      },
+      "name": "InsulaCRM Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({ok:true,workflow:'WF-372',decision:$json.decision,route:$json.route,revised_offer:$json.revised_offer,protected_mao:$json.protected_mao,reason:$json.reason,decision_idempotency_key:$json.decision_idempotency_key})}}",
+        "options": {}
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM Audit": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-372-v1",
+  "meta": {
+    "workflow_id": "WF-372",
+    "purpose": "Convert protected negotiation strategy into revised offer, walk-away, re-engagement, or contract-ready decision",
+    "provider_agnostic": true,
+    "secrets_source": "n8n environment variables only"
+  }
+}

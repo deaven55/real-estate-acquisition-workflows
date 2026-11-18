@@ -1,0 +1,163 @@
+{
+  "name": "WF-213 — Dynamic MAO → Property-Level Offer Strategy & Acquisition Decision",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-213-dynamic-mao-property-level-offer-strategy-acquisition-decision",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Dynamic MAO",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-213-dynamic-mao-property-level-offer-strategy-acquisition-decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const s=x.dynamic_mao_strategy??{};const asking=Number(x.asking_price);const mao=Number(s.adjusted_mao??x.adjusted_mao??x.dynamic_mao);const projected=Number(x.projected_assignment_profit??x.projected_profit);const motivation=Number(x.motivation_score??0);const blockers=Array.isArray(x.blockers)?x.blockers:[];const missing=[];if(s.status!=='strategy_adjusted')missing.push('strategy_adjusted_status');if(!Number.isFinite(mao)||mao<=0)missing.push('adjusted_mao');if(!Number.isFinite(asking)||asking<=0)missing.push('asking_price');let decision='needs_evidence',reason='insufficient_evidence';if(!missing.length){if(blockers.length)decision='pass',reason='blocking_risks';else if(asking<=mao&&projected>0)decision='pursue',reason='asking_price_within_mao_and_positive_profit';else if(asking>mao&&asking<=mao*1.08)decision='negotiate',reason='asking_price_near_mao';else if(asking>mao)decision='pass',reason='asking_price_above_viable_range';else decision='pursue',reason='viable_economics';}const status=missing.length?'blocked':decision==='needs_evidence'?'needs_evidence':'decision_ready';const next=status==='decision_ready'&&(decision==='pursue'||decision==='negotiate')?'WF-214':status==='decision_ready'?'WF-215':'WF-126';return[{json:{...x,workflow:'WF-213',property_offer_strategy:{status,decision,reason,asking_price:asking,adjusted_mao:mao,projected_assignment_profit:Number.isFinite(projected)?projected:null,motivation_score:motivation,blockers,negotiation_band:mao>0?{target:Math.round(mao*.92*100)/100,ceiling:mao}:null},routing:{next_workflow:next,requires_human_review:decision!=='pursue'},audit:{event:'dynamic_mao_property_level_offer_strategy_acquisition_decision_evaluated',status}}}];"
+      },
+      "name": "Code — Property Offer Strategy Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.property_offer_strategy.status}}",
+              "rightValue": "decision_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Acquisition Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-213:'+($json.deal_id||'unknown')+':offer-strategy',external_source:'wholesale-os',activity_type:'dynamic_mao_property_level_offer_strategy_acquisition_decision',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.property_offer_strategy?.status||'blocked',notes:JSON.stringify({workflow:'WF-213',property_offer_strategy:$json.property_offer_strategy,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Offer Strategy Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-213',status:$json.property_offer_strategy?.status??'blocked',decision:$json.property_offer_strategy?.decision??'needs_evidence',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),adjusted_mao:$json.property_offer_strategy?.adjusted_mao??null}}}];"
+      },
+      "name": "Code — Offer Strategy Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Dynamic MAO": {
+      "main": [
+        [
+          {
+            "node": "Code — Property Offer Strategy Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Property Offer Strategy Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Acquisition Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Acquisition Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Offer Strategy Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Offer Strategy Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Offer Strategy Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Offer Strategy Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-213-v1"
+}

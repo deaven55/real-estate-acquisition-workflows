@@ -1,0 +1,172 @@
+{
+  "name": "WF-181 — Milestone Update → Closing Evidence & Completion Reconciliation",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-181-closing-evidence-reconciliation",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Closing Evidence Reconciliation",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-181-closing-evidence-reconciliation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst state=input.activeMilestoneState??input.milestoneState??{};\nconst evidence=input.evidence??input.closingEvidence??{};\nconst milestones=Array.isArray(input.milestones)?input.milestones:[];\nconst required=Array.isArray(input.requiredEvidence)?input.requiredEvidence:[];\nconst supplied=Array.isArray(input.suppliedEvidence)?input.suppliedEvidence:[];\nconst suppliedSet=new Set(supplied.map(x=>String(x).toLowerCase()));\nconst evidenceMap=Array.isArray(evidence.items)?evidence.items:evidence;\nconst normalizedEvidence=Array.isArray(evidenceMap)?evidenceMap.map(x=>({type:String(x.type??x.name??'').toLowerCase(),verified:Boolean(x.verified??x.confirmed??false),id:x.id??null})):[];\n\nconst requiredResults=required.map(r=>{\n  const key=String(r.type??r.name??r).toLowerCase();\n  const found=normalizedEvidence.find(e=>e.type===key&&e.verified)||suppliedSet.has(key);\n  return {type:key,verified:found};\n});\nconst missingEvidence=requiredResults.filter(x=>!x.verified).map(x=>x.type);\n\nconst incompleteMilestones=milestones.filter(m=>!['completed','complete','closed'].includes(String(m.status??'pending').toLowerCase())).map(m=>m.sequence??m.id??null);\nconst executionState=String(state.execution_state??input.executionState??'').toLowerCase();\nconst blockers=Array.isArray(input.blockers)?input.blockers.filter(Boolean):[];\n\nlet status='reconciled';\nif(blockers.length) status='blocked';\nelse if(missingEvidence.length||incompleteMilestones.length) status='reconciliation_gap';\nelse if(executionState && !['active','launched_pending_milestone_confirmation','completed','closed'].includes(executionState)) status='attention_required';\n\nconst route=status==='blocked'?'WF-126':status==='reconciliation_gap'?'WF-155':status==='attention_required'?'WF-155':'WF-137';\n\nreturn [{json:{\n  ...input,\n  workflow:'WF-181',\n  evidence_reconciliation:{\n    status,\n    required_evidence_count:requiredResults.length,\n    verified_evidence_count:requiredResults.filter(x=>x.verified).length,\n    missing_evidence:missingEvidence,\n    incomplete_milestones:incompleteMilestones,\n    blockers,\n    execution_state:executionState||null\n  },\n  routing:{\n    next_workflow:route,\n    reason:status,\n    requires_human_review:status==='blocked'\n  },\n  audit:{\n    event:'closing_evidence_reconciliation_evaluated',\n    status,\n    missing_evidence_count:missingEvidence.length,\n    incomplete_milestone_count:incompleteMilestones.length\n  }\n}}];"
+      },
+      "name": "Code — Evidence & Completion Reconciliation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "reconciled",
+              "leftValue": "={{$json.evidence_reconciliation.status}}",
+              "rightValue": "reconciled",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "attention",
+              "leftValue": "={{$json.evidence_reconciliation.status}}",
+              "rightValue": "attention_required",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "name": "IF — Evidence Reconciliation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({\n  external_id:$json.audit?.event+':'+($json.deal_id||$json.property_id||'unknown')+':'+($json.audit?.missing_evidence_count||0)+':'+($json.audit?.incomplete_milestone_count||0),\n  external_source:'wholesale-os',\n  activity_type:'closing_evidence_reconciliation',\n  lead_id:$json.lead_id||null,\n  property_id:$json.property_id||null,\n  deal_id:$json.deal_id||null,\n  status:$json.evidence_reconciliation?.status||'unknown',\n  notes:JSON.stringify({\n    workflow:'WF-181',\n    routing:$json.routing,\n    evidence_reconciliation:$json.evidence_reconciliation,\n    audit:$json.audit\n  })\n})}}"
+      },
+      "name": "HTTP — Persist Evidence Reconciliation Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{\n  ...($json??{}),\n  workflow:'WF-181',\n  response:{\n    ok:true,\n    workflow:'WF-181',\n    status:$json.evidence_reconciliation?.status??'unknown',\n    next_workflow:$json.routing?.next_workflow??'WF-126',\n    requires_human_review:Boolean($json.routing?.requires_human_review),\n    evidence_reconciliation:$json.evidence_reconciliation??null\n  }\n}}];"
+      },
+      "name": "Code — Evidence Reconciliation Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Closing Evidence Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "Code — Evidence & Completion Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Evidence & Completion Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "IF — Evidence Reconciliation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Evidence Reconciliation Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Evidence Reconciliation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Evidence Reconciliation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Evidence Reconciliation Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Evidence Reconciliation Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-181-v1"
+}

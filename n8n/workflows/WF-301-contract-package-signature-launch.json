@@ -1,0 +1,158 @@
+{
+  "name": "WF-301 — Contract-Ready Decision → Contract Package Validation & Signature Launch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-301-contract-package-signature-launch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf301-webhook",
+      "name": "WF-301 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-301-contract-package-signature-launch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst dnc=Boolean(input.dnc||input.do_not_contact);\nconst leadId=input.lead_id, dealId=input.deal_id, propertyId=input.property_id;\nconst contractPrice=Number(input.contract_price??input.offer_price??input.accepted_price);\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao);\nconst agreementType=String(input.agreement_type??input.contract_type??\"\").trim();\nconst sellerName=String(input.seller_name??input.seller?.name??\"\").trim();\nconst sellerEmail=String(input.seller_email??input.seller?.email??\"\").trim();\nconst sellerPhone=String(input.seller_phone??input.seller?.phone??\"\").trim();\nconst signatureRequired=input.signature_required!==false;\nconst signatureProvider=String(input.signature_provider??\"\").trim();\nconst identityReady=Boolean(leadId&&dealId&&propertyId&&sellerName&&(sellerEmail||sellerPhone));\nconst priceReady=Number.isFinite(contractPrice)&&contractPrice>0&&Number.isFinite(mao)&&mao>0&&contractPrice<=mao;\nconst agreementReady=Boolean(agreementType);\nlet status=\"blocked\",decision=\"blocked\",nextWorkflow=\"WF-126\",human=true,reason=\"\";\nif(dnc){reason=\"seller is marked DNC; contract launch blocked\";}\nelse if(blockers.length){reason=\"active blockers prevent contract launch\";}\nelse if(!identityReady){reason=\"lead/deal/property identity or seller contact evidence is incomplete\";}\nelse if(!priceReady){reason=\"contract price is invalid or exceeds protected dynamic MAO\";}\nelse if(!agreementReady){reason=\"agreement type is missing\";}\nelse if(!signatureRequired){status=\"contract_ready\";decision=\"contract_ready\";nextWorkflow=\"WF-302\";human=true;reason=\"contract package is validated and ready for execution path\";}\nelse if(!signatureProvider){status=\"signature_provider_required\";decision=\"signature_provider_required\";nextWorkflow=\"WF-126\";reason=\"signature is required but no signature provider is configured\";}\nelse{status=\"signature_launch_ready\";decision=\"signature_launch_ready\";nextWorkflow=\"WF-302\";human=true;reason=\"contract package validated; signature launch requires human authorization\";}\nconst idempotencyKey=input.idempotency_key||`wf-301:${dealId||\"unknown\"}:${input.contract_version||input.version||1}`;\nreturn [{json:{...input,workflow:\"WF-301\",workflow_name:\"Contract-Ready Decision → Contract Package Validation & Signature Launch Controller\",status,contract_package:{decision,contract_price:Number.isFinite(contractPrice)?contractPrice:null,dynamic_mao:Number.isFinite(mao)?mao:null,agreement_type:agreementType||null,seller:{name:sellerName||null,email:sellerEmail||null,phone:sellerPhone||null},signature_required:signatureRequired,signature_provider:signatureProvider||null,identity_ready:identityReady,price_protected:priceReady},next_workflow:nextWorkflow,human_review_required:human,audit:{event_type:\"contract_package_validation\",idempotency_key:idempotencyKey,reason}}}];"
+      },
+      "id": "wf301-controller",
+      "name": "WF-301 Contract Package Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{['contract_ready','signature_launch_ready'].includes($json.status)}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf301-if",
+      "name": "WF-301 Signature Launch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-301 contract package validation',description:$json.audit.reason,metadata:{workflow:'WF-301',status:$json.status,contract_package:$json.contract_package,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf301-crm",
+      "name": "WF-301 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,contract_package:$json.contract_package,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf301-response",
+      "name": "WF-301 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-301 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-301 Contract Package Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-301 Contract Package Validator": {
+      "main": [
+        [
+          {
+            "node": "WF-301 Signature Launch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-301 Signature Launch Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-301 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-301 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-301 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-301 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-301-v1"
+}

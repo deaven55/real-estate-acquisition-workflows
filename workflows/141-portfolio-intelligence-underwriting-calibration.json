@@ -1,0 +1,171 @@
+{
+  "name": "WF-141 Portfolio Intelligence → Underwriting Calibration & Strategy Feedback",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-141-portfolio-intelligence-underwriting-calibration",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "141-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-141-portfolio-intelligence-underwriting-calibration"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deals=Array.isArray(input.closed_deals)?input.closed_deals:(Array.isArray(input.deals)?input.deals:[]); const rows=deals.map(d=>{const e=d.economics??d.performance??{}; const expected=Number(e.expected_net_profit??e.projected_net_profit??d.expected_net_profit??0); const actual=Number(e.actual_net_profit??e.realized_net_profit??e.net_profit??d.actual_net_profit??0); const days=Number(d.days_to_close??e.days_to_close??0); return {...d,variance:actual-expected,variance_pct:expected?((actual-expected)/Math.abs(expected)):null,actual_net_profit:actual,days_to_close:days};}); const count=rows.length; const avgProfit=count?rows.reduce((s,r)=>s+r.actual_net_profit,0)/count:0; const avgVariance=count?rows.reduce((s,r)=>s+r.variance,0)/count:0; const avgDays=count?rows.reduce((s,r)=>s+r.days_to_close,0)/count:0; const profitable=rows.filter(r=>r.actual_net_profit>0).length; const lossRate=count?1-profitable/count:null; const calibration={sample_size:count,average_realized_profit:avgProfit,average_profit_variance:avgVariance,average_days_to_close:avgDays,loss_rate:lossRate,profitability_rate:count?profitable/count:null}; const recommendations=[]; if(avgVariance<0) recommendations.push('Review projected profit assumptions and cost buffers'); if(avgDays>45) recommendations.push('Review closing timeline assumptions and milestone buffers'); if(lossRate!==null&&lossRate>0.25) recommendations.push('Tighten acquisition and exit qualification thresholds'); if(!recommendations.length) recommendations.push('Maintain current underwriting guardrails and continue collecting realized outcomes'); const status=count?'calibration_ready':'insufficient_sample'; const route=count?'underwriting_calibration_update':'data_collection'; return [{json:{workflow_id:'WF-141',workflow_name:'Portfolio Intelligence → Underwriting Calibration & Strategy Feedback',status,route,calibration,recommendations,deal_observations:rows.slice(0,100),next_workflow:route==='underwriting_calibration_update'?'WF-069 deal viability/MAO strategy gate':'WF-140 portfolio performance intelligence',crm_activity:{event_type:'portfolio_underwriting_calibration',outcome:status,route,sample_size:count},idempotency_key:'wf-141:underwriting-calibration:'+(input.portfolio_id??input.event_id??'default')}}}];"
+      },
+      "id": "141-calibration",
+      "name": "Calibrate Underwriting",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "calibration_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "141-ready",
+      "name": "Calibration Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,route:$json.route,workflow_id:$json.workflow_id,calibration:$json.calibration,recommendations:$json.recommendations,sample_size:$json.calibration.sample_size,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "141-crm",
+      "name": "Persist Calibration Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Calibrate Underwriting').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,route:original.route,calibration:original.calibration,recommendations:original.recommendations,next_workflow:original.next_workflow}}}];"
+      },
+      "id": "141-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Calibrate Underwriting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calibrate Underwriting": {
+      "main": [
+        [
+          {
+            "node": "Calibration Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calibration Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Calibration Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Calibration Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Calibration Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-141-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

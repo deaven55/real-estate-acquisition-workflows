@@ -1,0 +1,156 @@
+{
+  "name": "WF-267 Acceptable Counteroffer / Acceptance → Revised Offer or Contract Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-267-counteroffer-acceptance-contract-decision",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf267-webhook",
+      "name": "WF-267 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst classification = String(input.classification ?? input.seller_response_classification ?? '').toLowerCase();\nconst decision = String(input.decision ?? '').toLowerCase();\nconst counteroffer = Number(input.counteroffer_amount ?? input.counteroffer ?? input.accepted_price);\nconst dynamicMao = Number(input.dynamic_mao ?? input.adjusted_mao ?? input.mao);\nconst lastOffer = Number(input.last_offer_price ?? input.offer_price);\nconst dealId = input.deal_id ?? null;\nconst leadId = input.lead_id ?? null;\nconst propertyId = input.property_id ?? null;\nconst blockers = Array.isArray(input.blockers) ? input.blockers : [];\nconst identityOk = Boolean(dealId && leadId && propertyId);\nconst price = Number.isFinite(counteroffer) ? counteroffer : Number.isFinite(lastOffer) ? lastOffer : null;\nconst withinMao = Number.isFinite(price) && Number.isFinite(dynamicMao) && price <= dynamicMao;\nconst nearMao = Number.isFinite(price) && Number.isFinite(dynamicMao) && price > dynamicMao && price <= dynamicMao * 1.05;\nconst materiallyAbove = Number.isFinite(price) && Number.isFinite(dynamicMao) && price > dynamicMao * 1.05;\n\nlet action = 'needs_review';\nlet status = 'needs_review';\nlet nextWorkflow = 'WF-126';\nlet humanReview = true;\nlet contractPrice = price;\n\nif (!identityOk || blockers.length) {\n  status = 'blocked';\n  action = 'human_review';\n} else if ((classification === 'accepted' || decision === 'acceptance_ready') && withinMao) {\n  action = 'contract_decision_ready';\n  status = 'contract_ready';\n  nextWorkflow = 'WF-268';\n  humanReview = true;\n} else if (classification === 'counteroffer' && withinMao) {\n  action = 'accept_counteroffer_or_revise';\n  status = 'counteroffer_acceptable';\n  nextWorkflow = 'WF-268';\n  humanReview = true;\n} else if (classification === 'counteroffer' && nearMao) {\n  action = 'revised_offer_or_walk_away';\n  status = 'counteroffer_near_mao';\n  nextWorkflow = 'WF-268';\n  humanReview = true;\n} else if (classification === 'counteroffer' && materiallyAbove) {\n  action = 'walk_away_or_reengage';\n  status = 'counteroffer_above_mao';\n  nextWorkflow = 'WF-261';\n  humanReview = true;\n} else {\n  action = 'reassess_negotiation';\n  status = 'needs_review';\n  nextWorkflow = 'WF-126';\n}\n\nconst guardrail = {\n  dynamic_mao_protected: true,\n  contract_price: Number.isFinite(contractPrice) ? contractPrice : null,\n  dynamic_mao: Number.isFinite(dynamicMao) ? dynamicMao : null,\n  within_mao: withinMao,\n  near_mao: nearMao,\n  materially_above_mao: materiallyAbove\n};\n\nreturn [{ json: {\n  ...input,\n  workflow_id: 'WF-267',\n  workflow_name: 'Acceptable Counteroffer / Acceptance → Revised Offer or Contract Decision Controller',\n  action,\n  status,\n  next_workflow: nextWorkflow,\n  human_review_required: humanReview,\n  guardrail,\n  contract_decision: {\n    ready: status === 'contract_ready',\n    contract_price: Number.isFinite(contractPrice) ? contractPrice : null,\n    seller_response_classification: classification,\n    recommendation: action\n  },\n  identity_valid: identityOk,\n  blockers,\n  crm_activity: {\n    activity_type: 'counteroffer_contract_decision',\n    workflow_id: 'WF-267',\n    action,\n    status,\n    next_workflow: nextWorkflow,\n    human_review_required: humanReview,\n    guardrail\n  }\n} }];"
+      },
+      "id": "wf267-controller",
+      "name": "WF-267 Contract / Revised Offer Decision Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "operation": "equal",
+              "value2": "contract_ready"
+            }
+          ]
+        }
+      },
+      "id": "wf267-gate",
+      "name": "WF-267 Contract Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'counteroffer_contract_decision',subject:'WF-267 contract or revised offer decision',body:JSON.stringify({workflow_id:$json.workflow_id,action:$json.action,status:$json.status,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,guardrail:$json.guardrail,contract_decision:$json.contract_decision}),source:'wholesaling-os',external_id:'WF-267:'+($json.deal_id ?? $json.lead_id ?? 'unknown')+':'+($json.dispatch_id ?? $execution.id)})}})"
+      },
+      "id": "wf267-crm",
+      "name": "WF-267 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf267-response",
+      "name": "WF-267 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-267 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-267 Contract / Revised Offer Decision Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-267 Contract / Revised Offer Decision Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-267 Contract Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-267 Contract Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-267 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-267 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-267 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-267 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

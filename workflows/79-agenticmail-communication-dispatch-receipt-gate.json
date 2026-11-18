@@ -1,0 +1,84 @@
+{
+  "name": "WF-079 AgenticMail Communication Dispatch & Receipt Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-079-agenticmail-communication-dispatch",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf079-webhook",
+      "name": "AgenticMail Communication Dispatch Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "wf-079-agenticmail-communication-dispatch",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const s=v=>String(v??'').trim(); const channel=s(input.channel??'sms').toLowerCase(); const recipient=s(input.recipient??input.phone??input.email); const message=s(input.message); const approved=input.approval_state==='approved'; const action=channel==='email'?'send_email':channel==='sms'?'send_sms':channel==='voice'?'place_call':'unsupported'; const configured=!!s(input.agenticmail_api_url??''); const allowed=approved&&!!recipient&&!!message&&configured&&action!=='unsupported'; return[{json:{ok:allowed,adapter:'wf-079',communication:{channel,action,recipient_present:!!recipient,message_present:!!message,agenticmail_configured:configured},authorization:{approval_state:input.approval_state??'not_approved',required:true,allowed},dispatch:{status:allowed?'ready_for_agenticmail':'blocked',requires_receipt:true,idempotency_key:s(input.idempotency_key??('comm:'+action+':'+s(input.request_id??input.lead_id??input.deal_id)))},identity:{business_email:s(input.business_email??'dravendealsnc@gmail.com'),personal_number_not_required:true},next_action:allowed?'Dispatch through AgenticMail and store provider receipt in CRM.':approved?'Configure AgenticMail and supply recipient/message before dispatch.':'Obtain human approval before external communication.',policy:{human_approval_required:true,no_automatic_outreach:true,no_personal_number_required:true,no_secret_storage_in_workflow:true}}}];"
+      },
+      "id": "wf079-analysis",
+      "name": "Authorize AgenticMail Communication",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf079-response",
+      "name": "Respond AgenticMail Dispatch Gate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "AgenticMail Communication Dispatch Webhook": {
+      "main": [
+        [
+          {
+            "node": "Authorize AgenticMail Communication",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authorize AgenticMail Communication": {
+      "main": [
+        [
+          {
+            "node": "Respond AgenticMail Dispatch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf079-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

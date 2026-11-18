@@ -736,7 +736,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Combine all pages into single DNC lead list\nconst allItems = $input.all();\nconst allLeads = [];\n\nfor (const item of allItems) {\n  const leads = item.json.data || [];\n  allLeads.push(...leads);\n}\n\nif (allLeads.length === 0) {\n  return [{ json: { noLeads: true } }];\n}\n\nconsole.log(`Found ${allLeads.length} total DNC leads`);\n\nreturn allLeads.map(lead => ({\n  json: {\n    leadId: lead.id,\n    leadName: lead.display_name\n  }\n}));"
+        "jsCode": "// Combine all pages into single DNC lead list\nconst allItems = $input.all();\nconst allLeads = [];\n\nfor (const item of allItems) {\n  const leads = item.json.data || [];\n  allLeads.push(...leads);\n}\n\nif (allLeads.length === 0) {\n  return [{ json: { noLeads: true } }];\n}\n\nconsole.log(`Found ${allLeads.length} total DNC leads`);\n\nreturn allLeads.map(lead => ({\n  json: {\n    leadId: lead.id,\n    leadName: lead.display_name,\n    phone: lead.contacts?.[0]?.phones?.[0]?.phone || lead.contacts?.[0]?.phone || '',\n    email: lead.contacts?.[0]?.emails?.[0]?.email || lead.contacts?.[0]?.email || ''\n  }\n}));"
       },
       "id": "0e88848f-ad4b-4f20-880b-89ef1311dc98",
       "name": "Extract DNC Leads",
@@ -795,6 +795,20 @@
         80,
         -3376
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Sync Close DNC state into InsulaCRM before the legacy Close record is deleted.\nconst items = $input.all();\nconst apiBase = ($env.INSULA_CRM_BASE_URL || '').replace(/\\\\/$/, '');\nconst apiKey = $env.INSULA_CRM_API_KEY;\n\nif (!apiBase || !apiKey) {\n  return items.map(item => ({ json: { ...item.json, insulaDncSync: { skipped: true, reason: 'missing_config' } } }));\n}\n\nconst normalizePhone = (phone) => {\n  const digits = String(phone || '').replace(/\\\\D/g, '');\n  if (digits.length === 11 && digits.startsWith('1')) return '+1' + digits.slice(1);\n  if (digits.length === 10) return '+1' + digits;\n  return String(phone || '').trim();\n};\n\nconst results=[];\nfor (const item of items) {\n  const d=item.json;\n  const phone=normalizePhone(d.phone);\n  let leadId=null;\n  let matchedBy=null;\n  try {\n    if (phone) {\n      const byPhone=await this.helpers.httpRequest({method:'GET',url:apiBase+'/api/v1/leads?phone='+encodeURIComponent(phone)+'&per_page=1',headers:{'X-API-Key':apiKey},json:true,returnFullResponse:false,timeout:30000});\n      leadId=byPhone?.data?.[0]?.id || byPhone?.[0]?.id || null;\n      if(leadId) matchedBy='phone';\n    }\n    if(!leadId && d.email){\n      const byEmail=await this.helpers.httpRequest({method:'GET',url:apiBase+'/api/v1/leads?email='+encodeURIComponent(d.email)+'&per_page=1',headers:{'X-API-Key':apiKey},json:true,returnFullResponse:false,timeout:30000});\n      leadId=byEmail?.data?.[0]?.id || byEmail?.[0]?.id || null;\n      if(leadId) matchedBy='email';\n    }\n    if(leadId){\n      await this.helpers.httpRequest({method:'PUT',url:apiBase+'/api/v1/leads/'+leadId,headers:{'X-API-Key':apiKey,'Content-Type':'application/json'},body:{do_not_contact:true},json:true,returnFullResponse:false,timeout:30000});\n      await this.helpers.httpRequest({method:'POST',url:apiBase+'/api/v1/activities',headers:{'X-API-Key':apiKey,'Content-Type':'application/json','Idempotency-Key':'acquisition:dnc-cleanup:'+d.leadId+':v1'},body:{lead_id:leadId,type:'stage_change',subject:'DNC cleanup sync',body:'Lead was already marked DNC in the legacy CRM and is being removed from the legacy CRM record.',metadata:{source:'lead-cleanup-sms-dnc',legacy_lead_id:d.leadId,match_method:matchedBy},logged_at:new Date().toISOString()},json:true,returnFullResponse:false,timeout:30000});\n      results.push({status:'synced',insulaLeadId:leadId,matchedBy,legacyLeadId:d.leadId});\n    } else {\n      results.push({status:'not_found',legacyLeadId:d.leadId});\n    }\n  }catch(error){\n    console.log('InsulaCRM DNC sync failed for legacy lead '+d.leadId+': '+error.message);\n    results.push({status:'error',legacyLeadId:d.leadId,error:error.message});\n  }\n}\nreturn items.map((item,index)=>({json:{...item.json,insulaDncSync:results[index]}}));"
+      },
+      "id": "insula-dnc-sync",
+      "name": "Sync DNC to InsulaCRM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        -3248
+      ],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -1489,7 +1503,7 @@
         ],
         [
           {
-            "node": "Wait DNC",
+            "node": "Sync DNC to InsulaCRM",
             "type": "main",
             "index": 0
           }
@@ -1606,6 +1620,17 @@
         [
           {
             "node": "Loop DNC Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync DNC to InsulaCRM": {
+      "main": [
+        [
+          {
+            "node": "Wait DNC",
             "type": "main",
             "index": 0
           }

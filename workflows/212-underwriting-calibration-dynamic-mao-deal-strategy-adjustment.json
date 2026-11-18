@@ -1,0 +1,163 @@
+{
+  "name": "WF-212 — Underwriting Calibration → Dynamic MAO & Deal Strategy Adjustment",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-212-underwriting-calibration-dynamic-mao-deal-strategy-adjustment",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Calibration Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-212-underwriting-calibration-dynamic-mao-deal-strategy-adjustment"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const c=x.underwriting_calibration??{};const base=Number(x.base_mao??x.dynamic_mao??x.mao??0);const factor=Number(c.mao_adjustment_factor??x.mao_adjustment_factor??1);const missing=[];if(c.status!=='calibration_ready')missing.push('calibration_ready_status');if(!Number.isFinite(base)||base<=0)missing.push('base_mao');if(!Number.isFinite(factor)||factor<=0)missing.push('mao_adjustment_factor');const adjusted=missing.length?null:Math.round(base*factor*100)/100;const confidence=c.confidence??'low';const status=missing.length?'blocked':confidence==='low'?'human_review_required':'strategy_adjusted';const next=status==='strategy_adjusted'?'WF-213':'WF-126';return[{json:{...x,workflow:'WF-212',dynamic_mao_strategy:{status,base_mao:base,adjustment_factor:factor,adjusted_mao:adjusted,confidence,rationale:c.rationale??'calibration_signal',historical_sample_size:c.historical_sample_size??0},routing:{next_workflow:next,requires_human_review:status!=='strategy_adjusted'},audit:{event:'underwriting_calibration_dynamic_mao_strategy_adjustment_evaluated',status}}}];"
+      },
+      "name": "Code — Dynamic MAO Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.dynamic_mao_strategy.status}}",
+              "rightValue": "strategy_adjusted",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Dynamic MAO Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-212:'+($json.deal_id||'unknown')+':dynamic-mao',external_source:'wholesale-os',activity_type:'underwriting_calibration_dynamic_mao_strategy_adjustment',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.dynamic_mao_strategy?.status||'blocked',notes:JSON.stringify({workflow:'WF-212',dynamic_mao_strategy:$json.dynamic_mao_strategy,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Dynamic MAO Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-212',status:$json.dynamic_mao_strategy?.status??'blocked',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),adjusted_mao:$json.dynamic_mao_strategy?.adjusted_mao??null}}}];"
+      },
+      "name": "Code — Dynamic MAO Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Calibration Input": {
+      "main": [
+        [
+          {
+            "node": "Code — Dynamic MAO Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Dynamic MAO Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Dynamic MAO Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Dynamic MAO Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Dynamic MAO Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Dynamic MAO Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Dynamic MAO Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Dynamic MAO Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-212-v1"
+}

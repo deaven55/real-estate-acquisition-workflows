@@ -1,0 +1,169 @@
+{
+  "name": "WF-356 — Delivery Receipt → Seller Response Timeout / Follow-Up State Reconciliation Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-356-delivery-response-timeout",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf356-webhook",
+      "name": "Webhook — Delivery / Response State",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{}; const event=input.event??input;\nconst dealId=event.deal_id??event.dealId, leadId=event.lead_id??event.leadId, propertyId=event.property_id??event.propertyId;\nconst status=String(event.status??event.delivery_status??'').toLowerCase();\nconst responseStatus=String(event.response_status??'').toLowerCase();\nconst dnc=Boolean(event.dnc??event.do_not_contact), blockers=Array.isArray(event.blockers)?event.blockers:[];\nconst attempts=Number(event.attempts??event.outreach_attempts??0), maxAttempts=Number(event.max_attempts??3);\nconst deliveredAt=event.delivered_at??event.delivery_timestamp;\nconst timeoutHours=Number(event.response_timeout_hours??24);\nconst timeoutAt=event.response_timeout_at??(deliveredAt?new Date(new Date(deliveredAt).getTime()+timeoutHours*3600000).toISOString():null);\nconst now=event.now??new Date().toISOString();\nconst responded=Boolean(event.inbound_response||event.seller_response||['seller_response','received','reply'].includes(responseStatus));\nconst timedOut=Boolean(event.response_timeout||event.timeout_due||(timeoutAt&&new Date(now).getTime()>=new Date(timeoutAt).getTime()));\nconst baseKey=event.idempotency_key??[dealId,leadId,propertyId,'seller-followup'].filter(Boolean).join(':');\nconst stateKey=baseKey+':response-state:'+attempts;\nlet route='WF-351',decision='waiting_for_seller_response';\nif(dnc){route='WF-126';decision='dnc_hard_stop';}\nelse if(blockers.length){route='WF-126';decision='blocked';}\nelse if(!dealId||!leadId||!propertyId||!baseKey){route='WF-352';decision='identity_or_idempotency_missing';}\nelse if(responded){route='WF-342';decision='seller_response_received';}\nelse if(status==='failed'||status==='bounced'||status==='rejected'||status==='undeliverable'){route='WF-350';decision='delivery_failure';}\nelse if(timedOut&&attempts>=maxAttempts){route='WF-126';decision='human_review_max_attempts';}\nelse if(timedOut){route='WF-352';decision='seller_response_timeout_followup_due';}\nelse if(['delivered','sent','accepted'].includes(status)||deliveredAt){route='WF-351';decision='waiting_for_seller_response';}\nelse {route='WF-355';decision='awaiting_delivery_receipt';}\nreturn [{json:{...event,workflow:'WF-356',decision,route,deal_id:dealId,lead_id:leadId,property_id:propertyId,attempts,max_attempts:maxAttempts,delivered_at:deliveredAt,response_timeout_at:timeoutAt,response_timeout_hours:timeoutHours,idempotency_key:baseKey,state_idempotency_key:stateKey,audit_event:'delivery_receipt_seller_response_timeout_reconciliation'}}];"
+      },
+      "id": "wf356-controller",
+      "name": "Controller — Response Timeout / State Reconciliation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchers": [],
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "seller_response_received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf356-gate",
+      "name": "IF — Seller Response Reconciled",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY || '' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({lead_id:$json.lead_id,deal_id:$json.deal_id,property_id:$json.property_id,activity_type:'delivery_response_timeout_reconciliation',status:$json.decision,route:$json.route,delivery_status:$json.status,delivered_at:$json.delivered_at,response_timeout_at:$json.response_timeout_at,attempts:$json.attempts,idempotency_key:$json.state_idempotency_key,created_by:'WF-356'}) }}",
+        "options": {}
+      },
+      "id": "wf356-crm",
+      "name": "InsulaCRM — Audit Response State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ok:true,workflow:'WF-356',decision:$json.decision,route:$json.route,attempts:$json.attempts,response_timeout_at:$json.response_timeout_at,idempotency_key:$json.state_idempotency_key,next_action:$json.route}) }}",
+        "options": {}
+      },
+      "id": "wf356-response",
+      "name": "Respond — Response State Routing",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Delivery / Response State": {
+      "main": [
+        [
+          {
+            "node": "Controller — Response Timeout / State Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Response Timeout / State Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "IF — Seller Response Reconciled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Seller Response Reconciled": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Audit Response State",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Audit Response State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Audit Response State": {
+      "main": [
+        [
+          {
+            "node": "Respond — Response State Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-356-v1"
+}

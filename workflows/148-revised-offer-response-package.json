@@ -1,0 +1,171 @@
+{
+  "name": "WF-148 Revised Offer Generation → Seller Negotiation Response Package",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-148-revised-offer-response-package",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "148-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-148-revised-offer-response-package"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const offer=input.offer??{}; const counter=input.counteroffer??{}; const decision=String(input.decision??'').toLowerCase(); const mao=Number(offer.maximum_offer??offer.negotiation_ceiling??0); const current=Number(offer.current_offer??offer.initial_offer??0); const counterAmount=Number(counter.amount??0); let revised=current; if(decision.includes('counter')&&counterAmount>0&&mao>0) revised=Math.min(mao,Math.max(current,Math.round((counterAmount+current)/2))); const seller=input.seller??{}; const name=seller.name??[seller.first_name,seller.last_name].filter(Boolean).join(' ')??'there'; const response=decision==='accept_or_finalize'?'I’m comfortable moving forward with the terms we discussed. Let’s get the agreement and next steps lined up.':decision.includes('counter')&&revised>0?'Hi '+name+', I can improve our offer to $'+revised.toLocaleString()+'. That would be our revised position based on the property and the terms we reviewed. If that works for you, we can move toward getting everything documented.':decision.includes('walk_away')?'I understand. I may not be able to make the numbers work at that price, but I’m happy to stay in touch if your situation or expectations change.':'I’d like to review a few details before giving you a revised number.'; const route=decision==='accept_or_finalize'?'WF-122 contract readiness':decision.includes('counter')?'WF-120 negotiation response generator':decision.includes('walk_away')?'WF-099 seller follow-up cadence':'human_review'; const approved=input.approval?.approved===true||input.human_approval===true; const autonomous=input.autonomous_communication_authorized===true; const sendAllowed=(approved||autonomous)&&route!=='human_review'&&input.dnc!==true; return [{json:{workflow_id:'WF-148',workflow_name:'Revised Offer Generation → Seller Negotiation Response Package',status:sendAllowed?'response_ready':'approval_required',deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,seller,response:{decision,revised_offer:revised,maximum_offer:mao,current_offer:current,message:response},authorization:{human_approval:approved,autonomous_communication_authorized:autonomous,send_allowed:sendAllowed},routing:{next_workflow:route},guardrails:{revised_offer_never_exceeds_mao:true,no_invented_facts:true,no_binding_commitment_without_executed_agreement:true,dnc_overrides_outbound:true},crm_activity:{event_type:'revised_offer_response_package_created',outcome:sendAllowed?'response_ready':'approval_required',deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-148:response-package:'+(input.message_id??input.external_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "148-build",
+      "name": "Build Revised Offer Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "response_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "148-ready",
+      "name": "Response Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,response:$json.response,authorization:$json.authorization,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "148-crm",
+      "name": "Persist Revised Offer Package",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Build Revised Offer Response').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,response:original.response,routing:original.routing}}}];"
+      },
+      "id": "148-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Revised Offer Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Revised Offer Response": {
+      "main": [
+        [
+          {
+            "node": "Response Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Response Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Revised Offer Package",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Revised Offer Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Revised Offer Package": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-148-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

@@ -1,0 +1,165 @@
+{
+  "name": "WF-247 — Reconciled Closing Evidence → Final Closing Outcome & Completion Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-247-final-closing-outcome",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const reconciliation_status=String(d.reconciliation_status??d.status??\"\").toLowerCase();const required=Array.isArray(d.required_evidence)?d.required_evidence:[];const verified=Array.isArray(d.verified_evidence)?d.verified_evidence:[];const milestones=Array.isArray(d.milestones)?d.milestones:[];const blockers=Array.isArray(d.blockers)?d.blockers:[];const execution_identity=String(d.execution_identity??d.signature_id??\"\").trim();const signed_evidence=Boolean(d.signed_evidence??d.executed_agreement??false);const missing=required.map(x=>typeof x===\"string\"?x:String(x?.key??x?.type??\"\")).filter(Boolean).filter(k=>!new Set(verified.map(x=>typeof x===\"string\"?x:String(x?.key??x?.type??\"\")).filter(Boolean)).has(k));const incomplete=milestones.filter(m=>m&&m.status!==\"completed\");let status=\"needs_review\",reason=\"Final closing outcome requires review.\",next=\"WF-126\";if(!lead_id||!deal_id||!property_id){status=\"blocked\";reason=\"Missing lead, deal, or property identity.\";}else if(blockers.length){status=\"blocked\";reason=\"Unresolved closing blockers remain.\";}else if(reconciliation_status!==\"reconciled\"){status=\"evidence_reconciliation_incomplete\";reason=\"Closing evidence has not been fully reconciled.\";next=\"WF-246\";}else if(missing.length){status=\"evidence_incomplete\";reason=\"Required closing evidence remains missing: \"+missing.join(\", \")+ \".\";next=\"WF-246\";}else if(incomplete.length){status=\"completion_incomplete\";reason=\"Closing milestones remain incomplete.\";next=\"WF-245\";}else if(!execution_identity||!signed_evidence){status=\"execution_evidence_missing\";reason=\"Executed agreement/signature evidence is not sufficiently confirmed.\";next=\"WF-242\";}else{status=\"closing_outcome_ready\";reason=\"Closing evidence, execution identity, and milestones are reconciled; final close verification may proceed.\";next=\"WF-248\";}return[{json:{workflow:\"WF-247\",lead_id,deal_id,property_id,reconciliation_status,missing_evidence:missing,incomplete_milestones:incomplete,execution_identity,signed_evidence,final_outcome_status:status,reason,requires_human_review:status!==\"closing_outcome_ready\",next_workflow:next}}];"
+      },
+      "name": "Final Closing Outcome Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.final_outcome_status }}",
+              "rightValue": "closing_outcome_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Final Outcome Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'final_closing_outcome',notes:'WF-247 status='+$json.final_outcome_status+' next='+$json.next_workflow+' execution_identity='+$json.execution_identity,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Final Closing Outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,final_closing_outcome_ready:$json.final_outcome_status===\"closing_outcome_ready\",next_workflow:$json.next_workflow}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Final Closing Outcome Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Closing Outcome Controller": {
+      "main": [
+        [
+          {
+            "node": "Final Outcome Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Outcome Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Final Closing Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Final Closing Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Final Closing Outcome": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-247-final-closing-outcome-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

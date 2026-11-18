@@ -1,0 +1,171 @@
+{
+  "name": "WF-153 Executed Agreement → Transaction Readiness Package & Closing Launch",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-153-executed-agreement-transaction-readiness",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "153-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-153-executed-agreement-transaction-readiness"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const contract=input.contract??{}; const execution=input.execution??{}; const identity=Boolean(deal.property_id??input.property_id)&&Boolean(deal.lead_id??input.lead_id??input.seller_id); const executed=execution.executed===true||contract.execution_state==='executed'; const type=String(contract.agreement_type??input.agreement_type??'').toLowerCase(); const validType=['assignment','novation','double_close'].includes(type); const price=Number(contract.agreed_price??input.agreed_price??0); const docs=input.required_documents??contract.required_documents??[]; const supplied=input.supplied_documents??contract.supplied_documents??{}; const missing=Array.isArray(docs)?docs.filter(d=>!(supplied[d]===true||input[d]!==undefined)):[]; const dates=input.critical_dates??{}; const blockers=Array.isArray(input.blockers)?input.blockers:[]; let status='readiness_blocked'; let route='human_review'; if(!executed) status='executed_agreement_required'; else if(!identity) status='identity_required'; else if(!validType) status='agreement_type_required'; else if(!price) status='agreed_price_required'; else if(missing.length) status='documents_missing'; else if(blockers.length) status='blockers_present'; else {status='transaction_ready';route='WF-125 transaction readiness & closing coordination gate';} return [{json:{workflow_id:'WF-153',workflow_name:'Executed Agreement → Transaction Readiness Package & Closing Launch',status,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,execution:{executed,execution_evidence_id:execution.execution_evidence_id??null},contract:{agreement_type:type,agreed_price:price,execution_state:executed?'executed':'not_executed'},readiness:{missing_documents:missing,blockers,critical_dates:dates,identity_verified:identity},routing:{next_workflow:route},guardrails:{no_closing_launch_without_executed_agreement:true,missing_documents_block_readiness:true,blockers_block_closing:true,no_price_change_without_reunderwriting:true,human_review_for_critical_exceptions:true},crm_activity:{event_type:'executed_agreement_transaction_readiness',outcome:status,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-153:transaction-ready:'+(execution.execution_evidence_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "153-package",
+      "name": "Build Transaction Readiness Package",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "transaction_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "153-ready",
+      "name": "Transaction Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,execution:$json.execution,contract:$json.contract,readiness:$json.readiness,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "153-crm",
+      "name": "Persist Transaction Readiness",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Build Transaction Readiness Package').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,next_workflow:original.routing.next_workflow,readiness:original.readiness}}}];"
+      },
+      "id": "153-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Transaction Readiness Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Transaction Readiness Package": {
+      "main": [
+        [
+          {
+            "node": "Transaction Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transaction Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Transaction Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Transaction Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Transaction Readiness": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-153-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

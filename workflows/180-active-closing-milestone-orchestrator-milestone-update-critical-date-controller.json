@@ -1,0 +1,181 @@
+{
+  "name": "WF-180 — Active Closing Milestone Orchestrator → Milestone Update & Critical-Date Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-180-active-closing-milestone-update",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Active Closing Milestone Update",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-180-active-closing-milestone-update"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{}; const state=input.activeMilestoneState??input.milestoneState??{}; const milestones=Array.isArray(input.milestones)?input.milestones:[]; const now=input.now?new Date(input.now):new Date(); const closingDate=input.closingDate??state.closing_date??null; const closingMs=closingDate?new Date(closingDate).getTime():NaN; const hoursToClose=Number.isFinite(closingMs)?(closingMs-now.getTime())/3600000:null;\nconst normalized=milestones.map((m,i)=>{const due=m.dueAt??m.due_at??m.dueDate??null;const dueMs=due?new Date(due).getTime():NaN;const status=String(m.status??'pending').toLowerCase();const overdue=Number.isFinite(dueMs)&&dueMs<now.getTime()&&!['completed','complete','closed'].includes(status);return {...m,sequence:m.sequence??i+1,status,due_at:due,overdue,critical:Boolean(m.critical??m.isCritical),evidence_present:Boolean(m.evidencePresent??m.evidence_present)};});\nconst blockers=[...(Array.isArray(input.blockers)?input.blockers.filter(Boolean):[]),...normalized.filter(m=>m.overdue&&m.critical).map(m=>'critical_milestone_overdue:'+m.sequence)];\nconst completed=normalized.filter(m=>['completed','complete','closed'].includes(m.status)).length;const pending=normalized.length-completed;const overdue=normalized.filter(m=>m.overdue).length;const criticalOverdue=normalized.filter(m=>m.overdue&&m.critical).length;\nlet status='on_track'; if(blockers.length||criticalOverdue>0)status='blocked'; else if(overdue>0||(hoursToClose!==null&&hoursToClose<=24&&pending>0))status='attention_required'; else if(pending===0&&normalized.length>0)status='completed';\nconst route=status==='blocked'?'WF-126':status==='attention_required'?'WF-155':status==='completed'?'WF-137':'WF-136';\nreturn [{json:{...input,workflow:'WF-180',milestone_update:{status,completed_count:completed,pending_count:pending,overdue_count:overdue,critical_overdue_count:criticalOverdue,hours_to_closing:hoursToClose,milestones:normalized,blockers},routing:{next_workflow:route,reason:status,requires_human_review:status==='blocked'},audit:{event:'active_closing_milestone_update_evaluated',evaluated_at:now.toISOString(),closing_date:closingDate,status}}}];"
+      },
+      "name": "Code — Milestone & Critical-Date Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "on-track",
+              "leftValue": "={{$json.milestone_update.status}}",
+              "rightValue": "on_track",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "attention",
+              "leftValue": "={{$json.milestone_update.status}}",
+              "rightValue": "attention_required",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "completed",
+              "leftValue": "={{$json.milestone_update.status}}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "name": "IF — Milestone State Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:$json.audit?.event+':'+($json.deal_id||$json.property_id||'unknown')+':'+($json.audit?.evaluated_at||''),external_source:'wholesale-os',activity_type:'closing_milestone_update',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.milestone_update?.status||'unknown',notes:JSON.stringify({workflow:'WF-180',routing:$json.routing,milestone_update:$json.milestone_update,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Milestone Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{...($json??{}),workflow:'WF-180',response:{ok:true,workflow:'WF-180',status:$json.milestone_update?.status??'unknown',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),milestone_update:$json.milestone_update??null}}}];"
+      },
+      "name": "Code — Milestone Update Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Active Closing Milestone Update": {
+      "main": [
+        [
+          {
+            "node": "Code — Milestone & Critical-Date Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Milestone & Critical-Date Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Milestone State Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Milestone State Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Milestone Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Milestone Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Milestone Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Milestone Update Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-180-v1"
+}

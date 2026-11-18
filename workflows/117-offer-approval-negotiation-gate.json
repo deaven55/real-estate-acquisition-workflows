@@ -1,0 +1,195 @@
+{
+  "name": "WF-117 Offer Approval & Negotiation Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-117-offer-approval-negotiation-gate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf117-webhook",
+      "name": "Offer Approval Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??'').trim();\nconst strategy=input.offer_strategy??input.strategy??{};\nconst identity=input.identity??{};\nconst leadId=s(identity.lead_id);\nconst propertyId=s(identity.property_id);\nconst dealId=s(identity.deal_id);\nconst requestId=s(input.request_id??strategy.request_id);\nconst offer=Number(strategy.target_offer??strategy.recommended_offer??input.target_offer??input.recommended_offer);\nconst mao=Number(strategy.mao_ceiling??input.mao_ceiling??input.mao);\nconst underwritingStatus=s(input.underwriting_status??input.underwriting?.status??strategy.underwriting_status).toLowerCase();\nconst strategyStatus=s(strategy.status??input.strategy_status).toLowerCase();\nconst autonomous=input.autonomous_opt_in===true;\nconst humanApproval=input.human_approval===true||input.approval_granted===true;\nconst deliveryMode=s(input.delivery_mode??'review_then_send').toLowerCase();\nconst missing=[];\nif(!leadId)missing.push('lead_id');\nif(!propertyId&&!dealId)missing.push('property_or_deal_id');\nif(!Number.isFinite(offer)||offer<=0)missing.push('offer_amount');\nif(!Number.isFinite(mao)||mao<=0)missing.push('mao_ceiling');\nif(Number.isFinite(offer)&&Number.isFinite(mao)&&offer>mao)missing.push('offer_exceeds_mao');\nif(!['approved','ready','proceed','approved_with_conditions'].includes(underwritingStatus))missing.push('approved_underwriting');\nif(strategyStatus!=='ready')missing.push('offer_strategy_ready');\nconst approvalRequired=deliveryMode!=='draft_only';\nconst dispatchAllowed=missing.length===0&&(!approvalRequired||humanApproval)&&autonomous;\nconst status=missing.length?'blocked':dispatchAllowed?'dispatch_ready':approvalRequired&&!humanApproval?'approval_required':'ready_for_review';\nconst guardrails={never_exceed_mao:true,approved_underwriting_required:true,human_approval_required_for_delivery:approvalRequired,autonomous_opt_in_required:true};\nconst approvalId='offer-approval:'+s(dealId||propertyId||leadId||'unknown')+':'+s(requestId||'unknown')+':v1';\nconst activity={activity_type:'offer_approval_gate',subject:'AI offer approval gate '+status,body:[\n'Offer approval gate evaluated by Wholesaling OS.',\n'Offer amount: '+String(offer),\n'MAO ceiling: '+String(mao),\n'Underwriting status: '+underwritingStatus,\n'Strategy status: '+strategyStatus,\n'Delivery mode: '+deliveryMode,\n'Human approval: '+String(humanApproval),\n'Autonomous opt-in: '+String(autonomous),\n'Dispatch allowed: '+String(dispatchAllowed)\n].join('\\n'),lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,external_id:approvalId,external_source:'wholesaling-os-offer-approval',metadata:{approval_id:approvalId,request_id:requestId||null,offer_amount:offer,mao_ceiling:mao,delivery_mode:deliveryMode,dispatch_allowed:dispatchAllowed,guardrails}};\nreturn[{json:{ok:status==='dispatch_ready'||status==='ready_for_review',status,approval_id:approvalId,request_id:requestId||null,identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null},offer:{amount:offer,mao_ceiling:mao,within_mao:Number.isFinite(offer)&&Number.isFinite(mao)&&offer<=mao},approval:{required:approvalRequired,human_approval:humanApproval,autonomous_opt_in:autonomous,dispatch_allowed:dispatchAllowed,delivery_mode:deliveryMode},guardrails,crm_activity:activity,missing_requirements:[...new Set(missing)],next_workflow:status==='dispatch_ready'?'wf-036-offer-lifecycle':status==='approval_required'?'human_approval':'offer_review'}}];"
+      },
+      "id": "wf117-gate",
+      "name": "Evaluate Offer Approval Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "dispatch_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf117-ready",
+      "name": "Dispatch Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{JSON.stringify($json.crm_activity)}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf117-crm",
+      "name": "Persist Offer Approval Gate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf117-response",
+      "name": "Respond Offer Approval",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf117-blocked",
+      "name": "Respond Offer Approval Blocked",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Offer Approval Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Offer Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Offer Approval Gate": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Offer Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Offer Approval Blocked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Offer Approval Gate": {
+      "main": [
+        [
+          {
+            "node": "Respond Offer Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf117-v1"
+}

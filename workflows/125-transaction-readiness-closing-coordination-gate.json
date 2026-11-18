@@ -1,0 +1,148 @@
+{
+  "name": "WF-125 — Transaction Readiness & Closing Coordination Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-125-transaction-readiness-closing-coordination",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf125-webhook",
+      "name": "WF-125 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b=$json.body || $json;\nconst requestId=String(b.request_id || ('wf125-'+Date.now()));\nconst leadId=b.lead_id || null;\nconst propertyId=b.property_id || null;\nconst dealId=b.deal_id || null;\nconst agreementType=String(b.agreement_type || '').toLowerCase();\nconst executionState=String(b.execution_state || '').toLowerCase();\nconst agreedPrice=Number(b.agreed_price);\nconst mao=Number(b.mao_ceiling);\nconst evidence=b.acceptance_evidence || b.signed_evidence || null;\nconst dnc=Boolean(b.dnc);\nconst missing=[];\nif(!leadId) missing.push('lead_id');\nif(!propertyId) missing.push('property_id');\nif(!dealId) missing.push('deal_id');\nif(!agreementType) missing.push('agreement_type');\nif(!executionState) missing.push('execution_state');\nlet status='blocked',nextState='blocked',route='human_review',reason='Transaction readiness requires review';\nif(dnc){status='suppressed';nextState='suppressed';route='none';reason='DNC suppression applies to communication; transaction record is retained';}\nelse if(missing.length){status='blocked';nextState='missing_transaction_inputs';reason='Required transaction identity or execution fields are missing';}\nelse if(executionState!=='executed' && executionState!=='contract_executed'){status='blocked';nextState='contract_not_executed';reason='Agreement is not confirmed executed';}\nelse if(!evidence){status='human_review';nextState='execution_evidence_review';reason='Executed state lacks sufficient acceptance or signature evidence';}\nelse if(isFinite(mao) && (!isFinite(agreedPrice) || agreedPrice>mao)){status='blocked';nextState='economics_violation';reason='Agreed price exceeds MAO ceiling';}\nelse{status='ready_for_closing_review';nextState='closing_coordination';route='wf-042-closing-coordination';reason='Executed transaction passed core readiness gates and is ready for closing coordination';}\nconst id='transaction-readiness:'+dealId+':'+requestId+':v1';\nconst requirements=['title/ownership verification','closing attorney/title company confirmation','executed agreement copy','seller identity verification','property identity verification'];\nif(agreementType==='assignment') requirements.push('assignee or buyer confirmation','assignment fee confirmation');\nif(agreementType==='novation') requirements.push('novation or replacement agreement requirements');\nif(agreementType==='double_close') requirements.push('funding source and closing-to-closing coordination');\nif(b.closing_date || b.target_closing_date) requirements.push('critical closing date tracking');\nconst execState=status==='ready_for_closing_review'?'executed':executionState;\nreturn [{json:{workflow:'WF-125',workflow_version:'1.0',request_id:requestId,transaction_readiness_id:id,lead_id:leadId,property_id:propertyId,deal_id:dealId,agreement_type:agreementType,execution_state:execState,status:status,next_state:nextState,route:route,reason:reason,agreed_price:isFinite(agreedPrice)?agreedPrice:null,mao_ceiling:isFinite(mao)?mao:null,spread_to_mao:isFinite(mao)&&isFinite(agreedPrice)?mao-agreedPrice:null,closing_date:b.closing_date || b.target_closing_date || null,buyer_id:b.buyer_id || b.assignee_id || null,requirements:requirements,missing_items:missing,guardrails:{executed_agreement_required:true,never_exceed_mao:true,no_invented_title_or_legal_facts:true,human_closing_review_required:true,dnc_suppresses_communication_not_transaction_record:true},crm_activity:{activity_type:'transaction_readiness',subject:'WF-125 transaction readiness - '+status,lead_id:leadId,property_id:propertyId,deal_id:dealId,external_id:id,external_source:'wholesaling-os-transaction',metadata:{status:status,next_state:nextState,route:route,reason:reason,agreement_type:agreementType,execution_state:execState}}}}];"
+      },
+      "id": "wf125-eval",
+      "name": "Evaluate Transaction Readiness",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json; let valid=true,validationReason='validated';\nif(!r.transaction_readiness_id||!r.status||!r.next_state||!r.route){valid=false;validationReason='invalid_transaction_readiness_contract';}\nif(r.status==='ready_for_closing_review'&&r.execution_state!=='executed'){valid=false;validationReason='executed_state_required';}\nif(r.status==='ready_for_closing_review'&&r.route!=='wf-042-closing-coordination'){valid=false;validationReason='closing_route_mismatch';}\nif(r.status==='ready_for_closing_review'&&Number.isFinite(Number(r.mao_ceiling))&&Number(r.agreed_price)>Number(r.mao_ceiling)){valid=false;validationReason='mao_violation';}\nif(r.dnc&&r.route!=='none'){valid=false;validationReason='dnc_route_mismatch';}\nreturn [{json:{...r,validation_status:valid?'validated':'blocked',validation_reason:validationReason,status:valid?r.status:'blocked',next_state:valid?r.next_state:'human_review',route:valid?r.route:'human_review'}}];"
+      },
+      "id": "wf125-validate",
+      "name": "Validate Transaction Guardrails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({activity_type:$json.crm_activity.activity_type,subject:$json.crm_activity.subject,body:JSON.stringify({transaction_readiness_id:$json.transaction_readiness_id,status:$json.status,next_state:$json.next_state,route:$json.route,reason:$json.reason,agreement_type:$json.agreement_type,execution_state:$json.execution_state,agreed_price:$json.agreed_price,mao_ceiling:$json.mao_ceiling,spread_to_mao:$json.spread_to_mao,closing_date:$json.closing_date,buyer_id:$json.buyer_id,requirements:$json.requirements,missing_items:$json.missing_items,guardrails:$json.guardrails}),lead_id:$json.crm_activity.lead_id,property_id:$json.crm_activity.property_id,deal_id:$json.crm_activity.deal_id,external_id:$json.crm_activity.external_id,external_source:$json.crm_activity.external_source,metadata:$json.crm_activity.metadata}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf125-crm",
+      "name": "Persist Transaction Readiness Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$json; return [{json:{...r,crm_persistence_attempted:true,crm_persistence_status:$json.statusCode>=200&&$json.statusCode<300?'persisted':'failed',next_action:{route:r.route,next_state:r.next_state,request_id:r.request_id,transaction_readiness_id:r.transaction_readiness_id}}}];"
+      },
+      "id": "wf125-return",
+      "name": "Return Transaction Readiness",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-125 Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Transaction Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Transaction Readiness": {
+      "main": [
+        [
+          {
+            "node": "Validate Transaction Guardrails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Transaction Guardrails": {
+      "main": [
+        [
+          {
+            "node": "Persist Transaction Readiness Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Transaction Readiness Audit": {
+      "main": [
+        [
+          {
+            "node": "Return Transaction Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf125-v1"
+}

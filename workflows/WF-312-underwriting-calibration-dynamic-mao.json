@@ -1,0 +1,194 @@
+{
+  "name": "WF-312 — Underwriting Calibration → Dynamic MAO & Deal Strategy Adjustment",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-312-underwriting-calibration-dynamic-mao",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf312-webhook",
+      "name": "Webhook — Underwriting Calibration",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const calibration=input.calibration??deal.calibration??{}; const baseMao=Number(deal.base_mao??deal.mao??deal.max_allowable_offer); const factor=Number(calibration.adjustment_factor??1); const confidence=String(calibration.confidence??'low').toLowerCase(); const assetType=String(calibration.asset_type??deal.asset_type??deal.property_type??'unknown').toLowerCase(); const dealType=String(calibration.deal_type??deal.deal_type??'wholesale').toLowerCase(); const blockers=Array.isArray(deal.blockers)?deal.blockers:[]; const validBase=Number.isFinite(baseMao)&&baseMao>=0; const validFactor=Number.isFinite(factor)&&factor>0; const adjustedMao=validBase&&validFactor?Math.round(baseMao*factor*100)/100:null; const strategy=assetType.includes('land')?'land_specific_economics':assetType.includes('multi')||dealType.includes('multifamily')?'multifamily_specific_economics':'residential_wholesale_economics'; const status=blockers.length?'blocked':!validBase?'incomplete':!validFactor?'invalid_calibration':'low'===confidence?'human_review_required':'strategy_adjusted'; const dynamicMao={base_mao:baseMao,adjustment_factor:factor,adjusted_mao:adjustedMao,confidence,asset_type:assetType,deal_type:dealType,strategy,ma_rule:'secondary_reference_only',economics_priority:'asset_specific_first'}; return [{json:{...deal,workflow_id:'WF-312',workflow_name:'Underwriting Calibration → Dynamic MAO & Deal Strategy Adjustment',status,dynamic_mao:dynamicMao,adjusted_mao:adjustedMao,next_workflow:status==='strategy_adjusted'?'WF-313':status==='human_review_required'?'WF-126':status==='blocked'?'WF-126':'WF-311',crm_activity:{activity_type:'dynamic_mao_strategy_adjustment',deal_id:deal.deal_id??deal.id,status,dynamic_mao:dynamicMao}}}];"
+      },
+      "id": "wf312-controller",
+      "name": "Controller — Dynamic MAO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "strategy-adjusted",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "strategy_adjusted",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf312-gate",
+      "name": "IF — Strategy Adjustment Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "dynamic_mao",
+              "value": "={{ JSON.stringify($json.crm_activity.dynamic_mao) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf312-crm",
+      "name": "InsulaCRM — Dynamic MAO Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, status: $json.status, next_workflow: $json.next_workflow, dynamic_mao: $json.dynamic_mao, adjusted_mao: $json.adjusted_mao, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf312-response",
+      "name": "Response — Dynamic MAO Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Underwriting Calibration": {
+      "main": [
+        [
+          {
+            "node": "Controller — Dynamic MAO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Dynamic MAO": {
+      "main": [
+        [
+          {
+            "node": "IF — Strategy Adjustment Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Strategy Adjustment Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Dynamic MAO Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Dynamic MAO Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Dynamic MAO Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Dynamic MAO Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-312-v1",
+  "meta": {
+    "workflow_id": "WF-312",
+    "description": "Applies confidence-weighted underwriting calibration to create an asset-aware dynamic MAO and deal strategy adjustment.",
+    "safety": {
+      "ma_rule_secondary_reference_only": true,
+      "low_confidence_human_review": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

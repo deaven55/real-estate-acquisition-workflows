@@ -1,0 +1,156 @@
+{
+  "name": "WF-273 Closing Coordination → Critical Dates & Milestone Monitoring Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-273-closing-critical-dates-milestones",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf273-webhook",
+      "name": "WF-273 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;const dealId=input.deal_id??null,leadId=input.lead_id??null,propertyId=input.property_id??null;const closingDate=input.closing_date??input.target_closing_date??null;const milestones=Array.isArray(input.milestones)?input.milestones:[];const blockers=Array.isArray(input.blockers)?input.blockers:[];const coordinationStatus=String(input.coordination_status??input.status??'').toLowerCase();const now=input.now?new Date(input.now):new Date();const close=new Date(closingDate);const validDate=Boolean(closingDate)&&!Number.isNaN(close.getTime());const daysRemaining=validDate?Math.ceil((close.getTime()-now.getTime())/86400000):null;const overdue=milestones.filter(m=>m&&String(m.status??'').toLowerCase()!=='completed'&&m.due_date&&new Date(m.due_date)<now);const criticalOverdue=overdue.filter(m=>m.critical===true||String(m.priority??'').toLowerCase()==='critical');const incomplete=milestones.filter(m=>String(m.status??'').toLowerCase()!=='completed');const identityOk=Boolean(dealId&&leadId&&propertyId);let status='blocked',next='WF-126',human=true;if(!identityOk||!validDate||blockers.length){status='monitoring_blocked';}else if(coordinationStatus!=='coordination_ready'&&coordinationStatus!=='ready'){status='coordination_not_ready';next='WF-272';}else if(criticalOverdue.length){status='critical_overdue';next='WF-274';}else if(overdue.length){status='attention_required';next='WF-274';}else if(incomplete.length&&daysRemaining!==null&&daysRemaining<=3){status='closing_due_soon';next='WF-274';}else if(incomplete.length){status='on_track';next='WF-274';}else{status='milestones_completed';next='WF-275';}return[{json:{...input,workflow_id:'WF-273',workflow_name:'Closing Coordination → Critical Dates & Milestone Monitoring Controller',status,next_workflow:next,human_review_required:human,identity_valid:identityOk,closing_date_valid:validDate,monitoring:{closing_date:closingDate,days_remaining:daysRemaining,total_milestones:milestones.length,incomplete_milestones:incomplete.length,overdue_milestones:overdue.length,critical_overdue_milestones:criticalOverdue.length,completed_milestones:milestones.length-incomplete.length},escalation:{required:status==='critical_overdue'||status==='attention_required',reason:status},crm_activity:{activity_type:'closing_critical_date_milestone_monitoring',workflow_id:'WF-273',status,next_workflow:next,human_review_required:human,monitoring:{days_remaining:daysRemaining,overdue:overdue.length,critical_overdue:criticalOverdue.length,incomplete:incomplete.length}}}}];"
+      },
+      "id": "wf273-controller",
+      "name": "WF-273 Milestone Monitoring Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "operation": "in",
+              "value2": "on_track,closing_due_soon,milestones_completed"
+            }
+          ]
+        }
+      },
+      "id": "wf273-gate",
+      "name": "WF-273 Milestone Monitoring Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'closing_critical_date_milestone_monitoring',subject:'WF-273 closing critical date and milestone monitoring',body:JSON.stringify({workflow_id:$json.workflow_id,status:$json.status,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,monitoring:$json.monitoring,escalation:$json.escalation}),source:'wholesaling-os',external_id:'WF-273:'+($json.deal_id??$json.lead_id??'unknown')+':'+($execution.id)})}})"
+      },
+      "id": "wf273-crm",
+      "name": "WF-273 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf273-response",
+      "name": "WF-273 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-273 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-273 Milestone Monitoring Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-273 Milestone Monitoring Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-273 Milestone Monitoring Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-273 Milestone Monitoring Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-273 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-273 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-273 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-273 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

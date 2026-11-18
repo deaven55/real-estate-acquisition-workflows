@@ -1,0 +1,171 @@
+{
+  "name": "WF-160 CRM Closeout → Portfolio Performance Record & Underwriting Feedback",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-160-portfolio-performance-feedback",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "160-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-160-portfolio-performance-feedback"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const economics=input.economics??input.profit_verification??{}; const closeout=input.closeout??{}; const closing=String(input.closing_outcome??'').toLowerCase(); const realized=Number(economics.realized_net_profit??economics.reported_realized_profit??input.realized_profit??0); const expected=Number(economics.expected_net_profit??economics.calculated_net_profit??input.expected_net_profit??0); const discrepancy=Number(economics.discrepancy??(realized-expected)); const daysToClose=Number(input.days_to_close??input.close_duration_days??0); const exitStrategy=String(input.exit_strategy??input.strategy??'').toLowerCase(); const costs=Number(input.total_costs??(Number(economics.closing_costs??0)+Number(economics.marketing_costs??0)+Number(economics.other_costs??0))); const identity=Boolean(deal.property_id??input.property_id)&&Boolean(deal.lead_id??input.lead_id??input.seller_id); const verified=Boolean(input.profit_verified??closeout.ready) && ['closed','funded','recorded'].includes(closing); let status='portfolio_feedback_blocked',route='human_review'; if(!identity) status='identity_required'; else if(!verified) status='verified_closeout_required'; else {status='portfolio_record_ready';route='WF-141 portfolio intelligence → underwriting calibration & strategy feedback';} return [{json:{workflow_id:'WF-160',workflow_name:'CRM Closeout → Portfolio Performance Record & Underwriting Feedback',status,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,performance:{closing_outcome:closing,realized_net_profit:realized,expected_net_profit:expected,profit_discrepancy:discrepancy,total_costs:costs,days_to_close:daysToClose,exit_strategy:exitStrategy,profitability_status:realized>0?'profitable':realized<0?'loss':'breakeven'},feedback_inputs:{profit_variance:discrepancy,closing_speed_days:daysToClose,exit_strategy:exitStrategy,cost_profile:costs},routing:{next_route:route,next_workflow:route.startsWith('WF-141')?'WF-141':null},guardrails:{verified_closeout_required:true,no_invented_performance_metrics:true,performance_record_must_be_traceable_to_closed_deal:true,material_exceptions_require_review:true},crm_activity:{event_type:'portfolio_performance_recorded',outcome:status,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-160:portfolio-performance:'+(input.event_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "160-record",
+      "name": "Build Portfolio Performance Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "portfolio_record_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "160-ready",
+      "name": "Performance Record Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,performance:$json.performance,feedback_inputs:$json.feedback_inputs,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "160-crm",
+      "name": "Persist Portfolio Performance Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Build Portfolio Performance Record').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,next_route:original.routing.next_route,next_workflow:original.routing.next_workflow}}}];"
+      },
+      "id": "160-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Portfolio Performance Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Portfolio Performance Record": {
+      "main": [
+        [
+          {
+            "node": "Performance Record Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Performance Record Ready?": {
+      "main": [
+        [
+          {
+            "node": "Persist Portfolio Performance Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Portfolio Performance Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Portfolio Performance Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-160-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

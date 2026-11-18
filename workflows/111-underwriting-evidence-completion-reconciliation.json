@@ -1,0 +1,191 @@
+{
+  "name": "WF-111 Underwriting Evidence Completion Reconciliation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-111-underwriting-evidence-reconciliation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf111-webhook",
+      "name": "Evidence Reconciliation Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??'').trim();\nconst leadId=s(input.lead_id??input.identity?.lead_id);\nconst propertyId=s(input.property_id??input.identity?.property_id);\nconst dealId=s(input.deal_id??input.identity?.deal_id);\nconst id=s(dealId||propertyId||leadId);\nconst requestId=s(input.request_id)||('evidence-reconcile:'+(id||'unknown')+':v1');\nconst results=Array.isArray(input.evidence_results)?input.evidence_results:[];\nconst byTask={};\nfor(const r of results){const k=s(r.task_key);if(k)byTask[k]=r;}\nconst required=['comps','repairs','risk','buyer_demand'];\nconst missing=required.filter(k=>!byTask[k]||byTask[k].ok!==true);\nconst successful=required.filter(k=>byTask[k]?.ok===true);\nconst failed=required.filter(k=>byTask[k]&&byTask[k].ok!==true);\nconst duplicateTasks=results.map(r=>s(r.task_key)).filter((k,i,a)=>k&&a.indexOf(k)!==i);\nconst conflictSignals=[];\nfor(const k of required){\n const r=byTask[k];\n if(r?.provider_response?.conflict===true||r?.provider_response?.status==='conflict') conflictSignals.push(k);\n}\nconst complete=missing.length===0&&conflictSignals.length===0&&duplicateTasks.length===0;\nconst status=!id?'needs_context':conflictSignals.length?'evidence_conflict':missing.length?'evidence_incomplete':'evidence_complete';\nconst packetId='underwriting-reconciliation:'+(id||'unknown')+':v1';\nreturn[{json:{ok:status==='evidence_complete',status,packet_id:packetId,request_id:requestId,identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null},required_evidence:required,successful_tasks:successful,missing_tasks:missing,failed_tasks:failed,conflict_tasks:conflictSignals,duplicate_tasks:[...new Set(duplicateTasks)],completion:{complete,ready_for_aggregation:complete},routing:{next_workflow:complete?'wf-109-underwriting-evidence-aggregator':conflictSignals.length?'human_review':'wf-110-underwriting-evidence-fanout-fanin-controller',reason:complete?'all_required_evidence_reconciled':conflictSignals.length?'conflicting_evidence_requires_review':'missing_or_failed_evidence'}}}];"
+      },
+      "id": "wf111-reconcile",
+      "name": "Reconcile Evidence Completeness",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "evidence_complete",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf111-ready",
+      "name": "Evidence Reconciled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.ACQUISITION_WORKFLOW_BASE_URL}}/webhook/wf-109-underwriting-evidence-aggregator",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{JSON.stringify({request_id:$json.request_id,lead_id:$json.identity.lead_id,property_id:$json.identity.property_id,deal_id:$json.identity.deal_id,evidence_results:$json,source_workflow:'wf-111'})}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "wf111-aggregate",
+      "name": "Send Reconciled Evidence to WF-109",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf111-response",
+      "name": "Respond Reconciliation Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf111-blocked",
+      "name": "Respond Evidence Blocked",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Evidence Reconciliation Webhook": {
+      "main": [
+        [
+          {
+            "node": "Reconcile Evidence Completeness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconcile Evidence Completeness": {
+      "main": [
+        [
+          {
+            "node": "Evidence Reconciled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evidence Reconciled?": {
+      "main": [
+        [
+          {
+            "node": "Send Reconciled Evidence to WF-109",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Evidence Blocked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Reconciled Evidence to WF-109": {
+      "main": [
+        [
+          {
+            "node": "Respond Reconciliation Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf111-v1"
+}

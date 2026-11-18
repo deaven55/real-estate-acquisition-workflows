@@ -1,0 +1,163 @@
+{
+  "name": "WF-203 — Signature Execution → Transaction Readiness & Closing Launch",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-203-signature-execution-transaction-readiness-closing-launch",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Signature Outcome",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-203-signature-execution-transaction-readiness-closing-launch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const s=x.signature_execution??x.signature??{};const p=x.contract_package?.package??{};const executed=s.signed===true||['signed','executed','completed'].includes(String(s.status??'').toLowerCase())||s.execution_confirmed===true;const missing=[];if(!executed)missing.push('executed_signature');for(const k of ['deal_id','lead_id','property_id'])if(!(x[k]??p[k]))missing.push(k);if(!p.agreement_type&& !x.agreement_type)missing.push('agreement_type');if(!(p.contract_price??x.contract_price))missing.push('contract_price');const readiness=missing.length?'blocked':'transaction_ready';const next=readiness==='transaction_ready'?'WF-204':'WF-126';return[{json:{...x,workflow:'WF-203',transaction_readiness:{status:readiness,executed_signature:executed,deal_id:x.deal_id??p.deal_id??null,lead_id:x.lead_id??p.lead_id??null,property_id:x.property_id??p.property_id??null,agreement_type:x.agreement_type??p.agreement_type??null,contract_price:x.contract_price??p.contract_price??null,missing},routing:{next_workflow:next,requires_human_review:readiness!=='transaction_ready'},audit:{event:'signature_execution_transaction_readiness_evaluated',status:readiness}}}];"
+      },
+      "name": "Code — Transaction Readiness Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.transaction_readiness.status}}",
+              "rightValue": "transaction_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Transaction Readiness Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-203:'+($json.deal_id||$json.property_id||'unknown')+':transaction-readiness',external_source:'wholesale-os',activity_type:'signature_execution_transaction_readiness',lead_id:$json.transaction_readiness?.lead_id||null,property_id:$json.transaction_readiness?.property_id||null,deal_id:$json.transaction_readiness?.deal_id||null,status:$json.transaction_readiness?.status||'blocked',notes:JSON.stringify({workflow:'WF-203',transaction_readiness:$json.transaction_readiness,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Transaction Readiness Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-203',status:$json.transaction_readiness?.status??'blocked',next_workflow:$json.routing?.next_workflow??'WF-126',requires_human_review:Boolean($json.routing?.requires_human_review),transaction_readiness:$json.transaction_readiness??null}}}];"
+      },
+      "name": "Code — Transaction Readiness Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Signature Outcome": {
+      "main": [
+        [
+          {
+            "node": "Code — Transaction Readiness Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Transaction Readiness Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Transaction Readiness Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Transaction Readiness Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Transaction Readiness Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Transaction Readiness Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Transaction Readiness Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Transaction Readiness Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-203-v1"
+}

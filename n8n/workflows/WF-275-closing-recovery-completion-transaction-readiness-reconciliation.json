@@ -1,0 +1,158 @@
+{
+  "name": "WF-275 — Closing Recovery Completion → Transaction Readiness Reconciliation Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-275-closing-recovery-completion",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf275-webhook",
+      "name": "WF-275 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-275-closing-recovery-completion"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst truthy = v => v === true || v === \"true\" || v === 1 || v === \"1\";\nconst arr = v => Array.isArray(v) ? v : [];\nconst blockers = arr(input.blockers);\nconst requiredDocs = arr(input.required_documents);\nconst suppliedDocs = arr(input.supplied_documents);\nconst requiredMilestones = arr(input.required_milestones);\nconst completedMilestones = arr(input.completed_milestones);\nconst failedMilestones = arr(input.failed_milestones);\nconst recovery = input.recovery ?? {};\nconst readiness = input.transaction_readiness ?? {};\n\nconst identityComplete = Boolean(input.deal_id && input.lead_id && input.property_id);\nconst recoveryComplete = truthy(input.recovery_completed) || [\"completed\",\"recovered\",\"resolved\"].includes(String(recovery.status || \"\").toLowerCase());\nconst noActiveRecovery = !truthy(input.recovery_required) && !truthy(recovery.active) && ![\"pending\",\"in_progress\",\"failed\",\"blocked\"].includes(String(recovery.status || \"\").toLowerCase());\nconst milestonesComplete = requiredMilestones.length === 0 || requiredMilestones.every(req => completedMilestones.some(done => String(done.id ?? done) === String(req.id ?? req)));\nconst noFailedMilestones = failedMilestones.length === 0;\nconst docsComplete = requiredDocs.length === 0 || requiredDocs.every(req => suppliedDocs.some(doc => String(doc.id ?? doc) === String(req.id ?? req)));\nconst readinessComplete = truthy(input.transaction_ready) || [\"ready\",\"reconciled\",\"transaction_ready\"].includes(String(readiness.status || \"\").toLowerCase());\nconst blockersClear = blockers.length === 0;\nconst closingDate = input.closing_date ? new Date(input.closing_date) : null;\nconst closingDateValid = !input.closing_date || !Number.isNaN(closingDate.getTime());\nconst closingDateNotPassed = !closingDateValid || closingDate >= new Date();\nconst reconciliationReady = identityComplete && recoveryComplete && noActiveRecovery && milestonesComplete && noFailedMilestones && docsComplete && readinessComplete && blockersClear && closingDateValid;\n\nlet status = \"reconciliation_required\";\nlet nextWorkflow = \"WF-276\";\nlet humanReview = false;\n\nif (!identityComplete) {\n  status = \"blocked_missing_identity\";\n  nextWorkflow = \"WF-126\";\n  humanReview = true;\n} else if (!recoveryComplete || !noActiveRecovery) {\n  status = \"recovery_incomplete\";\n  nextWorkflow = \"WF-274\";\n  humanReview = true;\n} else if (!noFailedMilestones || !milestonesComplete || !docsComplete) {\n  status = \"readiness_evidence_gap\";\n  nextWorkflow = \"WF-275\";\n  humanReview = true;\n} else if (!blockersClear || !closingDateValid) {\n  status = \"blocked\";\n  nextWorkflow = \"WF-126\";\n  humanReview = true;\n} else if (!readinessComplete) {\n  status = \"transaction_readiness_reconciliation_required\";\n  nextWorkflow = \"WF-276\";\n  humanReview = true;\n} else if (closingDateNotPassed && reconciliationReady) {\n  status = \"transaction_readiness_reconciled\";\n  nextWorkflow = \"WF-276\";\n}\n\nreturn [{\n  json: {\n    ...input,\n    workflow: \"WF-275\",\n    workflow_name: \"Closing Recovery Completion → Transaction Readiness Reconciliation Controller\",\n    status,\n    recovery_completion: {\n      recovery_complete: recoveryComplete,\n      no_active_recovery: noActiveRecovery,\n      failed_milestones_clear: noFailedMilestones\n    },\n    reconciliation: {\n      identity_complete: identityComplete,\n      milestones_complete: milestonesComplete,\n      required_documents_complete: docsComplete,\n      blockers_clear: blockersClear,\n      closing_date_valid: closingDateValid,\n      closing_date_not_passed: closingDateNotPassed,\n      transaction_readiness_complete: readinessComplete,\n      reconciled: reconciliationReady\n    },\n    next_workflow: nextWorkflow,\n    human_review_required: humanReview,\n    routing_reason: status,\n    audit: {\n      event_type: \"closing_recovery_completion_reconciliation\",\n      idempotency_key: input.idempotency_key || `wf-275:${input.deal_id || \"unknown\"}:${input.recovery_id || \"none\"}:${input.version || 1}`\n    }\n  }\n}];"
+      },
+      "id": "wf275-controller",
+      "name": "WF-275 Recovery Completion Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'transaction_readiness_reconciled'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf275-if",
+      "name": "WF-275 Reconciliation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id: $json.deal_id || $json.lead_id || $json.property_id, external_source: 'wholesale-os', activity_type: 'workflow_event', subject: 'WF-275 closing recovery completion reconciliation', description: $json.routing_reason, metadata: {workflow: 'WF-275', status: $json.status, reconciliation: $json.reconciliation, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, idempotency_key: $json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf275-crm",
+      "name": "WF-275 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow: $json.workflow, status: $json.status, reconciled: $json.reconciliation?.reconciled, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, audit: $json.audit})}}",
+        "options": {}
+      },
+      "id": "wf275-response",
+      "name": "WF-275 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-275 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-275 Recovery Completion Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-275 Recovery Completion Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-275 Reconciliation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-275 Reconciliation Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-275 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-275 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-275 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-275 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-275-v1"
+}

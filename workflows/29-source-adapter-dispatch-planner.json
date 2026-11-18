@@ -1,0 +1,82 @@
+{
+  "name": "WholeStack WF-029: Source Adapter Dispatch Planner",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "wholestack-source-adapter-dispatch-v1",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "plan",
+      "name": "Build Adapter Dispatch Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input=$('Webhook').first().json.body||$('Webhook').first().json; const sources=Array.isArray(input.official_sources)?input.official_sources:[]; const normalizeType=s=>String(s||'').trim().toLowerCase(); const arcgis=[]; const nonArcgis=[]; const criterion=[]; const unsupported=[]; const restricted=[]; for(const source of sources){const type=normalizeType(source.type||source.source_type); if(source.commercial_live_query_allowed===false){restricted.push({...source,dispatch_status:'restricted'}); continue;} if(['state_parcel','county_gis'].includes(type)||/arcgis|featureserver|mapserver/i.test(String(source.url||''))){arcgis.push({...source,adapter:'WF-021',adapter_webhook:'wholestack-official-arcgis-source-v1'}); continue;} if(['county_property','county_tax','county_land','county_open_data','rest_json','json_api','csv_download','open_data','official_download'].includes(type)){nonArcgis.push({...source,adapter:'WF-022',adapter_webhook:'wholestack-official-non-arcgis-source-v1'}); continue;} if(['court_probate','foreclosure','permit_code_enforcement','tax_delinquency','permit_record','code_enforcement','probate_record','estate_record','court_record','land_record'].includes(type)){criterion.push({...source,adapter:'WF-026',adapter_webhook:'wholestack-criterion-evidence-orchestrator-v1'}); continue;} if(type) unsupported.push({...source,dispatch_status:'unsupported_source_type'}); } const criteria=Array.isArray(input.criteria)?input.criteria:[]; return [{json:{request_id:input.request_id||null,state:input.state||null,county:input.county||null,city:input.city||null,zip:input.zip||null,criteria,property_type:input.property_type||null,limit:input.limit||10,official_sources:sources,adapter_plan:{arcgis,non_arcgis:nonArcgis,criterion_evidence:criterion,restricted,unsupported},adapter_counts:{arcgis:arcgis.length,non_arcgis:nonArcgis.length,criterion_evidence:criterion.length,restricted:restricted.length,unsupported:unsupported.length,total:sources.length},dispatch_policy:'source type selects the provider-neutral adapter; commercially restricted live sources are never dispatched; unknown source types are surfaced for review rather than guessed'}}];"
+      }
+    },
+    {
+      "id": "response",
+      "name": "Respond Dispatch Plan",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        540,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Adapter Dispatch Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Adapter Dispatch Plan": {
+      "main": [
+        [
+          {
+            "node": "Respond Dispatch Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false
+}

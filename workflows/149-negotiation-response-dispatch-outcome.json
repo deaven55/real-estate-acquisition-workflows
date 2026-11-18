@@ -1,0 +1,171 @@
+{
+  "name": "WF-149 Negotiation Response Dispatch → Seller Outcome & Contract Trigger",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-149-negotiation-response-dispatch-outcome",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "149-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-149-negotiation-response-dispatch-outcome"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const response=input.response??{}; const auth=input.authorization??{}; const outcome=String(input.delivery_outcome??input.outcome??'').toLowerCase(); const accepted=['delivered','sent','accepted','seller_accepted','agreement_reached'].includes(outcome); const failed=['failed','bounced','rejected'].includes(outcome); const dnc=input.dnc===true||input.dnc_requested===true; let next='awaiting_seller_response'; if(dnc) next='DNC/stop communication'; else if(input.seller_accepted===true||outcome==='seller_accepted') next='WF-122 contract readiness'; else if(failed) next='WF-089 delivery reconciliation'; else if(input.seller_declined===true) next='WF-099 seller follow-up cadence'; else if(input.counteroffer_received===true) next='WF-146 seller response intake'; else if(accepted) next='awaiting_seller_response'; return [{json:{workflow_id:'WF-149',workflow_name:'Negotiation Response Dispatch → Seller Outcome & Contract Trigger',status:dnc?'dnc_stop':failed?'delivery_failed':input.seller_accepted===true||outcome==='seller_accepted'?'seller_accepted':'awaiting_response',deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,response,delivery:{outcome,accepted,failed},seller_outcome:{accepted:input.seller_accepted===true,declined:input.seller_declined===true,counteroffer_received:input.counteroffer_received===true},routing:{next_workflow:next},authorization:auth,guardrails:{dnc_overrides_all_outbound:true,no_contract_trigger_without_explicit_acceptance:true,no_binding_commitment_without_executed_agreement:true},crm_activity:{event_type:'negotiation_response_outcome',outcome:input.seller_accepted===true||outcome==='seller_accepted'?'seller_accepted':failed?'delivery_failed':'awaiting_response',deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-149:response-outcome:'+(input.message_id??input.external_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "149-controller",
+      "name": "Evaluate Negotiation Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "seller_accepted",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "149-accepted",
+      "name": "Seller Accepted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,delivery:$json.delivery,seller_outcome:$json.seller_outcome,routing:$json.routing,authorization:$json.authorization,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "149-crm",
+      "name": "Persist Negotiation Outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Evaluate Negotiation Outcome').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,next_workflow:original.routing.next_workflow,seller_outcome:original.seller_outcome}}}];"
+      },
+      "id": "149-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Negotiation Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Negotiation Outcome": {
+      "main": [
+        [
+          {
+            "node": "Seller Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seller Accepted?": {
+      "main": [
+        [
+          {
+            "node": "Persist Negotiation Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Negotiation Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Negotiation Outcome": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-149-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

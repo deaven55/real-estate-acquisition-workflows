@@ -1,0 +1,42 @@
+{
+  "name": "WF-045 Portfolio Performance & Acquisition/Disposition Analytics Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-045-portfolio-performance-analytics", "responseMode": "responseNode", "options": {} },
+      "id": "wf045-webhook",
+      "name": "Portfolio Analytics Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf045-portfolio-performance-analytics"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const records=Array.isArray(input.transaction_records)?input.transaction_records:Array.isArray(input.records)?input.records:[]; const safeNum=v=>{const n=Number(v);return Number.isFinite(n)?n:null}; const date=v=>{const d=v?new Date(v):null;return d&&Number.isFinite(d.getTime())?d:null}; const identity=r=>({candidate_key:r.candidate_key??null,normalized_identity_key:r.normalized_identity_key??null,lead_id:r.lead_id??r.leadId??null,deal_id:r.deal_id??r.dealId??null,property_id:r.property_id??r.propertyId??null,parcel_id:r.parcel_id??null}); const closed=records.filter(r=>['closed_out','reported','crm_synced','complete'].includes(String(r.closeout_status??r.status??'').toLowerCase())); const realized=closed.map(r=>safeNum(r.realized_profit??r.net_profit)).filter(v=>v!==null); const calculated=closed.map(r=>safeNum(r.calculated_profit??r.profit_or_loss)).filter(v=>v!==null); const profits=closed.map(r=>safeNum(r.realized_profit??r.net_profit??r.calculated_profit??r.profit_or_loss)).filter(v=>v!==null); const fees=closed.map(r=>safeNum(r.assignment_fee)).filter(v=>v!==null); const spreads=closed.map(r=>safeNum(r.gross_spread??r.estimated_gross_spread)).filter(v=>v!==null); const count=(arr,p)=>arr.filter(p).length; const pct=(a,b)=>b?Math.round(a/b*10000)/100:null; const avg=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length*100)/100:null; const days=(a,b)=>{const x=date(a),y=date(b);return x&&y?Math.round((y-x)/86400000*100)/100:null}; const stageTimes={}; const addStage=(name,vals)=>{const v=vals.filter(x=>x!==null);if(v.length)stageTimes[name]={average_days:avg(v),count:v.length};}; addStage('acquisition_to_offer',closed.map(r=>days(r.acquired_at,r.offer_at??r.offer_date))); addStage('offer_to_contract',closed.map(r=>days(r.offer_at??r.offer_date,r.contract_executed_at??r.contract_date))); addStage('contract_to_close',closed.map(r=>days(r.contract_executed_at??r.contract_date,r.closed_date??r.closing_date))); const sourceMap={},marketMap={},criterionMap={}; const bump=(map,key,r)=>{if(!key)return; const k=String(key); if(!map[k])map[k]={records:0,closed:0,profit:0,profit_records:0}; map[k].records++; if(closed.includes(r))map[k].closed++; const p=safeNum(r.realized_profit??r.net_profit??r.calculated_profit??r.profit_or_loss); if(p!==null){map[k].profit+=p;map[k].profit_records++;}}; closed.forEach(r=>{bump(sourceMap,r.source??r.lead_source??r.source_type,r); bump(marketMap,r.county??r.market??r.city,r); const cs=Array.isArray(r.matched_criteria)?r.matched_criteria:Array.isArray(r.criteria)?r.criteria:[]; cs.forEach(c=>bump(criterionMap,c,r));}); const compact=map=>Object.fromEntries(Object.entries(map).map(([k,v])=>[k,{records:v.records,closed:v.closed,close_rate_pct:pct(v.closed,v.records),profit_records:v.profit_records,total_profit:v.profit_records?Math.round(v.profit*100)/100:null,average_profit:v.profit_records?Math.round(v.profit/v.profit_records*100)/100:null}])); const offers=count(records,r=>['sent','seller_countered','accepted','rejected','expired','withdrawn'].includes(String(r.offer_status??'').toLowerCase())); const contracts=count(records,r=>r.executed_contract_id||['contract_pending','assignment_executed','novation_executed','double_close_ready'].includes(String(r.transaction_status??'').toLowerCase())); const buyers=count(records,r=>r.selected_buyer||['selected','backup'].includes(String(r.buyer_status??'').toLowerCase())); const complete=closed.filter(r=>String(r.closeout_status??r.status??'').toLowerCase()==='complete').length; const losses=profits.filter(v=>v<0).length; const positive=profits.filter(v=>v>0).length; const dq={records_received:records.length,records_with_identity:records.filter(r=>identity(r).candidate_key||identity(r).normalized_identity_key||identity(r).property_id||identity(r).parcel_id).length,records_with_profit:profits.length,records_with_closed_date:records.filter(r=>date(r.closed_date??r.closing_date)).length,records_without_identity:count(records,r=>{const i=identity(r);return !i.candidate_key&&!i.normalized_identity_key&&!i.property_id&&!i.parcel_id})}; const missing_data=[]; if(!records.length)missing_data.push('transaction_records'); if(records.length&&!dq.records_with_identity)missing_data.push('property_identity'); if(records.length&&!dq.records_with_profit)missing_data.push('profit_or_loss'); const funnel={records_received:records.length,offer_records:offers,offer_rate_pct:pct(offers,records.length),contract_records:contracts,contract_rate_pct:pct(contracts,records.length),selected_buyer_records:buyers,buyer_match_rate_pct:pct(buyers,records.length),closed_records:closed.length,close_rate_pct:pct(closed.length,records.length),complete_records:complete,complete_rate_pct:pct(complete,records.length),profit_records:profits.length,profitable_deals:positive,loss_deals:losses,fallout_records:records.length-closed.length}; const performance={deals_closed:closed.length,total_profit:profits.length?Math.round(profits.reduce((a,b)=>a+b,0)*100)/100:null,realized_profit:realized.length?Math.round(realized.reduce((a,b)=>a+b,0)*100)/100:null,calculated_profit:calculated.length?Math.round(calculated.reduce((a,b)=>a+b,0)*100)/100:null,average_profit:avg(profits),average_assignment_fee:avg(fees),average_spread:avg(spreads),profitable_deals:positive,loss_deals:losses}; const next=missing_data.length?'Collect the missing analytics inputs before treating this portfolio snapshot as complete.':records.length?'Use the normalized funnel, source, market, criterion, and stage-time metrics for operating review and optimization.':'Provide transaction records from WF-044 or the reporting store to generate portfolio analytics.'; return[{json:{ok:missing_data.length===0,analytics_status:missing_data.length?'needs_data':'ready',as_of:input.as_of??new Date().toISOString(),performance_summary:performance,funnel_metrics:funnel,stage_cycle_times:stageTimes,source_performance:compact(sourceMap),market_performance:compact(marketMap),criterion_performance:compact(criterionMap),data_quality:dq,missing_data,record_count:records.length,identity_provenance:records.slice(0,100).map(identity),next_action:next,policy:{only_supplied_records_are_aggregated:true,no_fabricated_metrics:true,no_tax_advice:true,no_legal_validation:true,no_financial_verification_claim:true,analytics_and_reporting_only:true}}}];"
+      },
+      "id": "wf045-normalize",
+      "name": "Normalize Portfolio Performance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf045-response",
+      "name": "Respond Portfolio Analytics",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Portfolio Analytics Webhook": { "main": [[{ "node": "Normalize Portfolio Performance", "type": "main", "index": 0 }]] },
+    "Normalize Portfolio Performance": { "main": [[{ "node": "Respond Portfolio Analytics", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf045-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

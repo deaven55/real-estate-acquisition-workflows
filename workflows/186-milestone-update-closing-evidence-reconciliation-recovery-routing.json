@@ -1,0 +1,163 @@
+{
+  "name": "WF-186 — Milestone Update → Closing Evidence Reconciliation & Recovery Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-186-closing-evidence-reconciliation",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Milestone Evidence Update",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-186-closing-evidence-reconciliation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const ms=Array.isArray(x.milestones)?x.milestones:(Array.isArray(x.monitoring?.milestones)?x.monitoring.milestones:[]);const evidence=Array.isArray(x.closing_evidence)?x.closing_evidence:(Array.isArray(x.evidence)?x.evidence:[]);const required=Array.isArray(x.required_evidence)?x.required_evidence:[];const blockers=Array.isArray(x.blockers)?x.blockers.filter(Boolean):[];const verified=new Set(evidence.filter(e=>e.verified===true||e.status==='verified').map(e=>String(e.type??e.name??'').trim()).filter(Boolean));const missing=required.map(v=>String(typeof v==='string'?v:(v.type??v.name??'')).trim()).filter(Boolean).filter(v=>!verified.has(v));const incomplete=ms.filter(m=>m.status!=='completed'&&m.completed!==true);const failed=ms.filter(m=>m.status==='failed'||m.status==='blocked');let status=blockers.length?'blocked':failed.length?'recovery_required':missing.length?'evidence_gap':incomplete.length?'milestones_incomplete':'reconciled';const route=status==='reconciled'?'WF-187':status==='blocked'?'WF-126':status==='recovery_required'||status==='evidence_gap'?'WF-174':'WF-155';return[{json:{...x,workflow:'WF-186',reconciliation:{status,verified_evidence_count:verified.size,missing_required_evidence:missing,incomplete_milestones:incomplete.map(m=>m.id??m.name??m.sequence),failed_milestones:failed.map(m=>m.id??m.name??m.sequence),blockers},routing:{next_workflow:route,requires_human_review:status==='blocked'||status==='recovery_required'},audit:{event:'closing_evidence_reconciliation_evaluated',status}}}];"
+      },
+      "name": "Code — Evidence Reconciliation Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "reconciled",
+              "leftValue": "={{$json.reconciliation.status}}",
+              "rightValue": "reconciled",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Reconciliation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-186:'+($json.deal_id||$json.property_id||'unknown')+':'+($json.reconciliation?.status||'unknown'),external_source:'wholesale-os',activity_type:'closing_evidence_reconciliation',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.reconciliation?.status||'unknown',notes:JSON.stringify({workflow:'WF-186',reconciliation:$json.reconciliation,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Reconciliation Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-186',status:$json.reconciliation?.status??'unknown',next_workflow:$json.routing?.next_workflow??'WF-155',requires_human_review:Boolean($json.routing?.requires_human_review),reconciliation:$json.reconciliation??null}}}];"
+      },
+      "name": "Code — Reconciliation Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Milestone Evidence Update": {
+      "main": [
+        [
+          {
+            "node": "Code — Evidence Reconciliation Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Evidence Reconciliation Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Reconciliation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Reconciliation Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Reconciliation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Reconciliation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Reconciliation Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Reconciliation Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-186-v1"
+}

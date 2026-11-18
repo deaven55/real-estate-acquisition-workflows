@@ -1,0 +1,156 @@
+{
+  "name": "WF-269 Contract Package / Revised Offer Execution & Signature Launch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-269-contract-package-revised-offer-signature-launch",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "wf269-webhook",
+      "name": "WF-269 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;const decision=String(input.decision??input.action??'').toLowerCase();const state=String(input.state??'').toLowerCase();const mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao);const price=Number(input.contract_price??input.offer_price??input.revised_offer_price);const dealId=input.deal_id??null,leadId=input.lead_id??null,propertyId=input.property_id??null;const sellerName=input.seller_name??input.seller?.name??null;const sellerEmail=input.seller_email??input.seller?.email??null;const sellerPhone=input.seller_phone??input.seller?.phone??null;const agreementType=String(input.agreement_type??'purchase_agreement').toLowerCase();const blockers=Array.isArray(input.blockers)?input.blockers:[];const identityOk=Boolean(dealId&&leadId&&propertyId);const sellerOk=Boolean(sellerName&&(sellerEmail||sellerPhone));const priceOk=Number.isFinite(price)&&price>0;const maoOk=Number.isFinite(mao)&&priceOk&&price<=mao;const signatureRequired=input.signature_required!==false;let status='blocked',action='human_review',next='WF-126',human=true;if(identityOk&&!blockers.length&&sellerOk&&priceOk&&maoOk&&signatureRequired){if(decision.includes('revised')){status='revised_offer_signature_ready';action='launch_revised_offer_signature';next='WF-270';}else{status='contract_signature_ready';action='launch_contract_signature';next='WF-270';}}else if(identityOk&&!blockers.length&&sellerOk&&priceOk&&!Number.isFinite(mao)){status='mao_missing';action='human_review';}else if(identityOk&&!blockers.length&&sellerOk&&priceOk&&Number.isFinite(mao)&&price>mao){status='above_mao_blocked';action='walk_away_or_reprice';next='WF-261';}return[{json:{...input,workflow_id:'WF-269',workflow_name:'Contract Package / Revised Offer Execution & Signature Launch Controller',status,action,next_workflow:next,human_review_required:human,identity_valid:identityOk,seller_identity_valid:sellerOk,guardrail:{dynamic_mao_protected:true,contract_price:priceOk?price:null,dynamic_mao:Number.isFinite(mao)?mao:null,within_mao:maoOk,above_mao:Number.isFinite(mao)&&priceOk&&price>mao},signature_launch:{ready:status==='contract_signature_ready'||status==='revised_offer_signature_ready',signature_required:signatureRequired,agreement_type:agreementType,seller:{name:sellerName,email:sellerEmail,phone:sellerPhone}},crm_activity:{activity_type:'contract_signature_launch_decision',workflow_id:'WF-269',status,action,next_workflow:next,human_review_required:human}}}];"
+      },
+      "id": "wf269-controller",
+      "name": "WF-269 Signature Launch Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "operation": "in",
+              "value2": "contract_signature_ready,revised_offer_signature_ready"
+            }
+          ]
+        }
+      },
+      "id": "wf269-gate",
+      "name": "WF-269 Signature Launch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({lead_id:$json.lead_id,property_id:$json.property_id,deal_id:$json.deal_id,activity_type:'contract_signature_launch_decision',subject:'WF-269 contract/revised offer signature launch decision',body:JSON.stringify({workflow_id:$json.workflow_id,status:$json.status,action:$json.action,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,guardrail:$json.guardrail,signature_launch:$json.signature_launch}),source:'wholesaling-os',external_id:'WF-269:'+($json.deal_id??$json.lead_id??'unknown')+':'+($json.dispatch_id??$execution.id)})}})"
+      },
+      "id": "wf269-crm",
+      "name": "WF-269 Persist CRM Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf269-response",
+      "name": "WF-269 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-269 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-269 Signature Launch Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-269 Signature Launch Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-269 Signature Launch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-269 Signature Launch Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-269 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-269 Persist CRM Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-269 Persist CRM Activity": {
+      "main": [
+        [
+          {
+            "node": "WF-269 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

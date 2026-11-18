@@ -1,0 +1,132 @@
+{
+  "name": "WF-101 Seller Re-Engagement Message Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-101-seller-reengagement-message",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf101-webhook",
+      "name": "Seller Re-Engagement Message Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??\"\").trim();\nconst silence=input.silence??input.reengagement??input;\nconst strategy=input.strategy??{};\nconst intent=s(input.intent??strategy.intent).toLowerCase();\nconst action=s(input.next_action??silence.action?.next_action??silence.action).toLowerCase();\nconst channel=s(input.channel??silence.action?.next_channel??input.last_channel).toLowerCase()||\"sms\";\nconst sellerName=s(input.seller_name??input.first_name??input.lead?.first_name);\nconst propertyAddress=s(input.property_address??input.address??input.property?.address);\nconst motivation=s(input.motivation??strategy.motivation).toLowerCase();\nconst days=Number(input.days_since_last_contact??silence.evidence?.days_since_last_contact??0);\nconst attempts=Number(input.contact_attempts??silence.evidence?.contact_attempts??0);\nconst dnc=input.dnc===true||input.dnc_suppressed===true||intent===\"opt_out\"||action===\"suppress\";\nconst leadId=s(input.lead_id??input.identity?.lead_id), dealId=s(input.deal_id??input.identity?.deal_id), threadId=s(input.thread_id??input.identity?.thread_id);\nconst missing=[]; if(!leadId&&!dealId)missing.push(\"lead_id_or_deal_id\"); if(!threadId)missing.push(\"thread_id\"); if(!sellerName)missing.push(\"seller_name\");\nlet purpose=\"check_in\", tone=\"low_pressure\", body=\"\";\nconst subjectMap={nurture_recycle:\"Closing the loop\",fresh_value_proposition:\"Checking back in\",soft_check_in:\"Quick check-in\",light_follow_up:\"Quick follow-up\"};\nif(dnc){body=\"\";}\nelse if(action===\"stop_active_pursuit\"){purpose=\"nurture_recycle\"; tone=\"respectful\"; body=(sellerName?\"Hi \"+sellerName+\", I wanted to close the loop for now. I know timing can change, so if selling becomes a priority later, feel free to reach back out. Wishing you the best.\":\"I wanted to close the loop for now. I know timing can change, so if selling becomes a priority later, feel free to reach back out. Wishing you the best.\");}\nelse if(action===\"reengage_with_new_angle\"||action===\"change_channel_and_message\"){purpose=\"fresh_value_proposition\"; tone=\"helpful\"; body=(sellerName?\"Hi \"+sellerName+\", just checking back in. I know things can change, so I wanted to see if selling \"+(propertyAddress?\"the property at \"+propertyAddress:\"your property\")+\" is still something you may consider. If it is, I can give you a straightforward idea of what the options look like—no pressure.\":\"Just checking back in. I know things can change, so I wanted to see if selling \"+(propertyAddress?\"the property at \"+propertyAddress:\"your property\")+\" is still something you may consider. If it is, I can give you a straightforward idea of what the options look like—no pressure.\");}\nelse if(action===\"soft_reengage\"){purpose=\"soft_check_in\"; tone=\"casual\"; body=(sellerName?\"Hi \"+sellerName+\", just wanted to check in and see if selling \"+(propertyAddress?\"the property at \"+propertyAddress:\"your property\")+\" is still on your radar. No rush—just let me know either way.\":\"Just wanted to check in and see if selling \"+(propertyAddress?\"the property at \"+propertyAddress:\"your property\")+\" is still on your radar. No rush—just let me know either way.\");}\nelse {purpose=\"light_follow_up\"; tone=\"low_pressure\"; body=(sellerName?\"Hi \"+sellerName+\", just checking in to see if you had any questions or if there is anything I can help with regarding \"+(propertyAddress?\"the property at \"+propertyAddress:\"your property\")+\".\":\"Just checking in to see if you had any questions or if there is anything I can help with regarding \"+(propertyAddress?\"the property at \"+propertyAddress:\"your property\")+\".\");}\nif(/foreclosure|tax|urgent|moving/.test(motivation))tone=\"time_sensitive_but_non_pressure\";\nconst subject=subjectMap[purpose]||\"Quick follow-up\";\nconst actionId=\"seller-reengagement-message:\"+((threadId||leadId||dealId||\"unknown\"))+\":\"+(input.request_id||input.action_id||\"event\")+\":v1\";\nreturn[{json:{ok:missing.length===0&&!dnc,blocked:dnc,reason:dnc?\"DNC/opt-out active\":missing.length?\"required identity/context missing\":\"message generated from grounded seller context\",message:{action_id:actionId,channel,subject,body,purpose,tone,personalized:sellerName!==\"\"&&propertyAddress!==\"\",deterministic:true},identity:{lead_id:leadId||null,deal_id:dealId||null,thread_id:threadId||null},evidence:{days_since_last_contact:days,contact_attempts:attempts,source_action:action||null},routing:{next_workflow:dnc?null:\"wf-082-autonomous-communication-dispatch\",dispatch_mode:dnc?\"blocked\":\"approval_or_authorized_dispatch\"},missing_requirements:missing}}];"
+      },
+      "id": "wf101-generator",
+      "name": "Generate Grounded Re-Engagement Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf101-valid",
+      "name": "Message Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [560, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf101-response",
+      "name": "Respond Re-Engagement Message",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [820, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf101-invalid",
+      "name": "Respond Invalid Message Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [820, 480]
+    }
+  ],
+  "connections": {
+    "Seller Re-Engagement Message Webhook": {
+      "main": [
+        [
+          {
+            "node": "Generate Grounded Re-Engagement Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Grounded Re-Engagement Message": {
+      "main": [
+        [
+          {
+            "node": "Message Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Re-Engagement Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Message Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-101-v1"
+}

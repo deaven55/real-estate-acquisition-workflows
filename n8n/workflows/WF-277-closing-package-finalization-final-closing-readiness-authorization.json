@@ -1,0 +1,158 @@
+{
+  "name": "WF-277 — Closing Package Finalization → Final Closing Readiness & Authorization Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-277-final-closing-readiness",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf277-webhook",
+      "name": "WF-277 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-277-final-closing-readiness"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst arr=v=>Array.isArray(v)?v:[];\nconst truthy=v=>v===true||v===\"true\"||v===1||v===\"1\";\nconst blockers=arr(input.blockers);\nconst requiredDocs=arr(input.required_documents);\nconst suppliedDocs=arr(input.supplied_documents);\nconst requiredMilestones=arr(input.required_milestones);\nconst completedMilestones=arr(input.completed_milestones);\nconst parties=arr(input.parties);\nconst packageState=input.closing_package??{};\nconst auth=input.authorization??{};\nconst identityComplete=Boolean(input.deal_id&&input.lead_id&&input.property_id);\nconst packageFinalized=truthy(packageState.finalized)||[\"finalized\",\"ready\",\"complete\"].includes(String(packageState.status||\"\").toLowerCase());\nconst docsComplete=requiredDocs.length===0||requiredDocs.every(r=>suppliedDocs.some(s=>String(s.id??s)===String(r.id??r)));\nconst milestonesComplete=requiredMilestones.length===0||requiredMilestones.every(r=>arr(completedMilestones).some(s=>String(s.id??s)===String(r.id??r)));\nconst partiesComplete=parties.length>=2||Boolean(input.seller&&(input.buyer||input.assignee));\nconst executedAgreement=truthy(input.executed_agreement)||[\"executed\",\"signed\",\"fully_executed\"].includes(String(input.agreement_status||\"\").toLowerCase());\nconst closingDateValid=Boolean(input.closing_date)&&!Number.isNaN(new Date(input.closing_date).getTime());\nconst closingDateFuture=closingDateValid&&new Date(input.closing_date)>=new Date();\nconst price=Number(input.contract_price??input.agreed_price??input.purchase_price);\nconst mao=Number(input.dynamic_mao??input.mao);\nconst maoProtected=!Number.isFinite(price)||!Number.isFinite(mao)||price<=mao;\nconst blockersClear=blockers.length===0;\nconst authorizationConfirmed=truthy(auth.confirmed)||[\"confirmed\",\"authorized\",\"approved\"].includes(String(auth.status||\"\").toLowerCase());\nconst authorizationType=String(auth.type||auth.authorization_type||\"\").trim();\nconst launchKey=String(input.launch_idempotency_key||input.execution_idempotency_key||\"\").trim();\nconst ready=identityComplete&&packageFinalized&&docsComplete&&milestonesComplete&&partiesComplete&&executedAgreement&&closingDateValid&&closingDateFuture&&maoProtected&&blockersClear&&authorizationConfirmed&&authorizationType&&launchKey;\n\nlet status=\"authorization_required\",nextWorkflow=\"WF-277\",humanReview=true;\nif(!identityComplete){status=\"blocked_missing_identity\";nextWorkflow=\"WF-126\";}\nelse if(!packageFinalized){status=\"package_not_finalized\";nextWorkflow=\"WF-276\";}\nelse if(!docsComplete||!milestonesComplete||!partiesComplete||!executedAgreement){status=\"final_readiness_evidence_incomplete\";nextWorkflow=\"WF-276\";}\nelse if(!closingDateValid||!closingDateFuture||!blockersClear||!maoProtected){status=\"blocked\";nextWorkflow=\"WF-126\";}\nelse if(!authorizationConfirmed||!authorizationType||!launchKey){status=\"authorization_required\";nextWorkflow=\"WF-277\";}\nelse {status=\"final_closing_ready\";nextWorkflow=\"WF-278\";}\n\nreturn [{json:{...input,workflow:\"WF-277\",workflow_name:\"Closing Package Finalization → Final Closing Readiness & Authorization Controller\",status,final_readiness:{identity_complete:identityComplete,package_finalized:packageFinalized,documents_complete:docsComplete,milestones_complete:milestonesComplete,parties_complete:partiesComplete,executed_agreement:executedAgreement,closing_date_valid:closingDateValid,closing_date_future:closingDateFuture,mao_protected:maoProtected,blockers_clear:blockersClear,authorization_confirmed:authorizationConfirmed,authorization_type_present:Boolean(authorizationType),launch_idempotency_key_present:Boolean(launchKey),ready},next_workflow:nextWorkflow,human_review_required:humanReview,routing_reason:status,audit:{event_type:\"final_closing_readiness_authorization\",idempotency_key:input.idempotency_key||`wf-277:${input.deal_id||\"unknown\"}:${launchKey||\"none\"}:${input.version||1}`}}}];"
+      },
+      "id": "wf277-controller",
+      "name": "WF-277 Final Readiness Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'final_closing_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf277-if",
+      "name": "WF-277 Authorization Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-277 final closing readiness authorization',description:$json.routing_reason,metadata:{workflow:'WF-277',status:$json.status,final_readiness:$json.final_readiness,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf277-crm",
+      "name": "WF-277 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,final_closing_ready:$json.final_readiness?.ready,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf277-response",
+      "name": "WF-277 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-277 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-277 Final Readiness Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-277 Final Readiness Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-277 Authorization Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-277 Authorization Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-277 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-277 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-277 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-277 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-277-v1"
+}

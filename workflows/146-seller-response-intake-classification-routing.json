@@ -1,0 +1,171 @@
+{
+  "name": "WF-146 Seller Response Intake → Offer/Counteroffer Classification & Negotiation Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-146-seller-response-intake-classification",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "146-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-146-seller-response-intake-classification"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const text=String(input.message??input.body??input.text??'').trim(); const lower=text.toLowerCase(); const deal=input.deal??input; const seller=input.seller??{}; const offer=input.offer??{}; const max=Number(offer.maximum_offer??offer.negotiation_ceiling??input.effective_mao??0); const proposed=Number(String(input.counteroffer??input.counter_offer??'').replace(/[$,]/g,''))||null; let classification='ambiguous'; if(/\\b(no|no thanks|not interested|pass|decline)\\b/.test(lower)) classification='decline'; else if(/\\b(yes|accept|deal|sounds good|agreed|okay)\\b/.test(lower)) classification='accept'; else if(proposed!==null||/\\b(counter|counteroffer|counter offer|can you do|would you do|need|want)\\b/.test(lower)) classification='counteroffer'; else if(/\\b(call|talk|discuss|question|how|why)\\b/.test(lower)) classification='clarification'; const counter=proposed!==null?proposed:null; let route='human_review'; if(classification==='accept') route='WF-122 contract readiness'; else if(classification==='counteroffer') route=counter!==null&&max>0&&counter<=max?'WF-119 counteroffer evaluation':'WF-119 counteroffer evaluation'; else if(classification==='decline') route='WF-099 seller follow-up cadence'; else if(classification==='clarification') route='WF-120 negotiation response generator'; const dnc=input.dnc===true||input.dnc_requested===true; if(dnc) route='DNC/stop communication'; return [{json:{workflow_id:'WF-146',workflow_name:'Seller Response Intake → Offer/Counteroffer Classification & Negotiation Routing',status:dnc?'dnc_stop':classification==='ambiguous'?'human_review_required':'classified',classification,message:text,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,seller,offer,counteroffer:{amount:counter,within_maximum:counter!==null&&max>0?counter<=max:null},routing:{next_workflow:route},guardrails:{never_treat_ambiguous_as_acceptance:true,never_exceed_maximum_offer:true,dnc_overrides_all_outbound:true,no_binding_commitment_without_executed_agreement:true},crm_activity:{event_type:'seller_response_classified',outcome:classification,route,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-146:seller-response:'+(input.message_id??input.external_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "146-classify",
+      "name": "Classify Seller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "dnc_stop",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "146-dnc",
+      "name": "DNC Stop?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,classification:$json.classification,counteroffer:$json.counteroffer,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "146-crm",
+      "name": "Persist Seller Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Classify Seller Response').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{classification:original.classification,next_workflow:original.routing.next_workflow,status:original.status}}}];"
+      },
+      "id": "146-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Classify Seller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Seller Response": {
+      "main": [
+        [
+          {
+            "node": "DNC Stop?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DNC Stop?": {
+      "main": [
+        [
+          {
+            "node": "Persist Seller Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Seller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Seller Response": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-146-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

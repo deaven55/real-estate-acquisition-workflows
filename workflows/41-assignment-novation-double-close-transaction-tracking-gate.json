@@ -1,0 +1,109 @@
+{
+  "name": "WF-041 Assignment / Novation / Double-Close Transaction Tracking Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-041-transaction-tracking",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf041-webhook",
+      "name": "Transaction Tracking Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "wf041-transaction-tracking"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst source = input.transaction ?? input;\nconst strategy = String(source.exit_strategy ?? source.disposition_strategy ?? '').toLowerCase().trim();\nconst allowedStrategies = ['assignment','novation','double_close','wholetail','resale','hold','review'];\nconst status = String(source.transaction_status ?? source.status ?? 'transaction_pending').toLowerCase().trim();\nconst allowedStatuses = ['transaction_pending','title_review','disclosures_pending','assignment_prepared','assignment_executed','novation_pending','novation_executed','double_close_funding_pending','double_close_ready','closing_scheduled','closed','failed','cancelled'];\nconst identity = { candidate_key: source.candidate_key ?? null, normalized_identity_key: source.normalized_identity_key ?? null, lead_id: source.leadId ?? source.lead_id ?? null, deal_id: source.dealId ?? source.deal_id ?? null, property_id: source.propertyId ?? source.property_id ?? null, external_id: source.external_id ?? null, parcel_id: source.parcel_id ?? null };\nconst selectedBuyer = source.selected_buyer ?? source.selectedBuyer ?? null;\nconst contract = { contract_id: source.executed_contract_id ?? source.contract_id ?? null, contract_price: Number(source.contract_price ?? source.purchase_price ?? NaN) };\nconst economics = { assignment_fee: Number(source.assignment_fee ?? NaN), buyer_purchase_price: Number(source.buyer_purchase_price ?? source.buyer_price ?? NaN) };\nconst validStrategy = allowedStrategies.includes(strategy);\nconst validStatus = allowedStatuses.includes(status);\nconst requiresBuyer = ['assignment','novation','double_close'].includes(strategy);\nconst missing = [];\nif (!identity.candidate_key && !identity.normalized_identity_key && !identity.parcel_id && !identity.property_id) missing.push('property_identity');\nif (!contract.contract_id) missing.push('executed_contract_id');\nif (!Number.isFinite(contract.contract_price)) missing.push('contract_price');\nif (!validStrategy) missing.push('supported_exit_strategy');\nif (!validStatus) missing.push('supported_transaction_status');\nif (requiresBuyer && !selectedBuyer) missing.push('selected_buyer');\nif (strategy === 'assignment' && !Number.isFinite(economics.assignment_fee)) missing.push('assignment_fee');\nif (strategy === 'assignment' && !Number.isFinite(economics.buyer_purchase_price)) missing.push('buyer_purchase_price');\nconst transitionMap = { transaction_pending:['title_review','disclosures_pending','assignment_prepared','novation_pending','double_close_funding_pending','closing_scheduled','failed','cancelled'], title_review:['disclosures_pending','assignment_prepared','novation_pending','double_close_funding_pending','failed','cancelled'], disclosures_pending:['assignment_prepared','novation_pending','double_close_funding_pending','closing_scheduled','failed','cancelled'], assignment_prepared:['assignment_executed','failed','cancelled'], assignment_executed:['closing_scheduled','closed','failed','cancelled'], novation_pending:['novation_executed','failed','cancelled'], novation_executed:['closing_scheduled','closed','failed','cancelled'], double_close_funding_pending:['double_close_ready','failed','cancelled'], double_close_ready:['closing_scheduled','failed','cancelled'], closing_scheduled:['closed','failed','cancelled'], closed:[], failed:[], cancelled:[] };\nconst prior = String(source.prior_transaction_status ?? '').toLowerCase().trim();\nconst transitionValid = !prior || (transitionMap[prior] ?? []).includes(status) || prior === status;\nconst readiness = missing.length ? 'needs_data' : (!transitionValid ? 'invalid_transition' : (status === 'closed' ? 'closed' : 'ready'));\nconst nextAction = readiness === 'needs_data' ? 'Collect missing transaction data before advancing.' : readiness === 'invalid_transition' ? 'Review the prior transaction state and use a supported transition.' : status === 'closed' ? 'Record closing outcome and move to post-close reporting.' : status === 'assignment_executed' || status === 'novation_executed' || status === 'double_close_ready' || status === 'closing_scheduled' ? 'Coordinate closing through the authorized closing/title process.' : status === 'transaction_pending' ? 'Begin title/disclosure and transaction readiness review.' : 'Advance the transaction through the next authorized state.';\nconst transactionPackage = { identity, exit_strategy: strategy, transaction_status: status, prior_transaction_status: prior || null, selected_buyer: selectedBuyer, backup_buyer: source.backup_buyer ?? null, contract, economics, missing_requirements: missing, transition_valid: transitionValid };\nreturn [{ json: { ok: readiness === 'ready' || readiness === 'closed', readiness, transaction_status: status, exit_strategy: strategy, identity, selected_buyer: selectedBuyer, backup_buyer: source.backup_buyer ?? null, contract, economics, missing_requirements: missing, transition_valid: transitionValid, transaction_package: transactionPackage, closing_ready: ['closing_scheduled','closed'].includes(status) && missing.length === 0 && transitionValid, next_action: nextAction, policy: { no_legal_validation: true, no_title_clearance_claim: true, no_funding_verification: true, no_closing_execution: true } } }];"
+      },
+      "id": "wf041-normalize",
+      "name": "Normalize Transaction State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf041-response",
+      "name": "Respond Transaction Readiness",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "id": "insula-transaction-tracking-activity",
+      "name": "Sync Transaction tracking state updated to InsulaCRM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        480
+      ],
+      "parameters": {
+        "jsCode": "const input=$input.first().json;\ntry {\n  const base=$env.INSULA_CRM_BASE_URL, apiKey=$env.INSULA_CRM_API_KEY;\n  const leadId=Number(input.insulaLeadId||input.leadId||input.lead_id||input.property_identity?.lead_id||input.identity?.lead_id||input.transaction_ids?.lead_id||input.crm_update?.lead_id||0);\n  if(base&&apiKey&&leadId){\n    const payload=input.transaction_tracking||input.buyer_matching||input.buyer_disposition||input.exit_strategy_gate||input;\n    await this.helpers.httpRequest({\n      method:'POST',url:base+'/api/v1/activities',\n      headers:{'X-API-Key':apiKey,'Content-Type':'application/json',\n        'Idempotency-Key':'acquisition:transaction-tracking:'+leadId+':'+String(input.candidate_key||input.normalized_identity_key||input.external_id||input.dealId||input.deal_id||'record')+':v1'},\n      body:{lead_id:leadId,type:'stage_change',\n        subject:\"Transaction tracking state updated\",\n        body:'Workflow event: transaction-tracking. Status/readiness: '+String(payload.status||payload.readiness||payload.current_status||payload.closeout_status||payload.post_close_status||payload.transaction_status||'updated')+'. Next action: '+String(payload.next_action||input.next_action||'review').slice(0,500)},\n      json:true\n    });\n  }\n}catch(error){ console.log('InsulaCRM activity sync failed:',error.message); }\nreturn [{json:input}];"
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Transaction Tracking Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Transaction State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Transaction State": {
+      "main": [
+        [
+          {
+            "node": "insula-transaction-tracking-activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "insula-transaction-tracking-activity": {
+      "main": [
+        [
+          {
+            "node": "Respond Transaction Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf041-1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

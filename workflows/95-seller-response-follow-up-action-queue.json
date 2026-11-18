@@ -1,0 +1,147 @@
+{
+  "name": "WF-095 Seller Response to Follow-Up Action Queue",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-095-seller-response-follow-up-queue",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf095-webhook",
+      "name": "Seller Response Follow-Up Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const c=input.feedback??input.case??input; const s=v=>String(v??'').trim(); const event=s(c.event_type??c.outcome?.event_type??'').toLowerCase(); const direction=s(c.direction??c.outcome?.direction??'').toLowerCase(); const status=s(c.status??c.outcome?.status??'').toLowerCase(); const leadId=s(c.lead_id??input.lead_id); const propertyId=s(c.property_id??input.property_id); const dealId=s(c.deal_id??input.deal_id); const threadId=s(c.thread_id??input.thread_id); const requestId=s(c.request_id??input.request_id); const auditId=s(c.audit_id??input.audit_id); const dnc=c.dnc_suppressed===true||input.dnc===true; const reply=direction==='inbound'||event.includes('reply')||event.includes('inbound'); const deliveryFailure=['failed','error','timeout','transport_error'].includes(status); let queueState='recorded',priority='normal',action='record_only',reason='No seller-response action required.'; if(dnc){queueState='suppressed';priority='critical';action='suppress_outbound';reason='DNC/opt-out is active; no autonomous seller outreach is permitted.';} else if(deliveryFailure){queueState='delivery_attention';priority='high';action='reconcile_delivery';reason='Outbound communication failed and requires delivery reconciliation before another attempt.';} else if(reply){queueState='seller_reply_pending';priority='high';action='analyze_seller_response';reason='Inbound seller response requires conversation analysis and follow-up planning.';} else if(['sent','delivered'].includes(status)){queueState='awaiting_response';priority='normal';action='monitor_for_response';reason='Outbound communication succeeded; monitor the thread for a seller response.';} const missing=[]; if(!leadId&&!dealId)missing.push('lead_id_or_deal_id'); if(!threadId)missing.push('thread_id'); if(!requestId&&!auditId)missing.push('request_id_or_audit_id'); const queueId='seller-follow-up:'+((threadId||leadId||dealId||'unknown'))+':'+(requestId||auditId||event||status||'event')+':v1'; return[{json:{ok:missing.length===0,queue:{queue_id:queueId,state:queueState,priority,action,reason,lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,thread_id:threadId||null,request_id:requestId||null,audit_id:auditId||null,autonomous_outbound_allowed:!dnc&&!deliveryFailure&&action!=='analyze_seller_response',requires_human_review:queueState==='suppressed'||queueState==='delivery_attention',deterministic:true},routing:{next_workflow:reply&&!dnc?'wf-078-ai-seller-conversation-response-intelligence':deliveryFailure?'wf-089-communication-delivery-reconciliation-safe-retry-gate':null,dispatch_mode:reply&&!dnc?'internal_follow_up_analysis':deliveryFailure?'delivery_reconciliation':'queue_only'},missing_requirements:missing,next_action:missing.length?'Resolve identity before mutating seller/deal state.':reason}}}];"
+      },
+      "id": "wf095-normalize",
+      "name": "Build Seller Follow-Up Queue Item",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf095-valid",
+      "name": "Follow-Up Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf095-response",
+      "name": "Respond Follow-Up Queue",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf095-invalid",
+      "name": "Respond Invalid Follow-Up Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Seller Response Follow-Up Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Seller Follow-Up Queue Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Seller Follow-Up Queue Item": {
+      "main": [
+        [
+          {
+            "node": "Follow-Up Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-Up Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Follow-Up Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Follow-Up Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-095-v1"
+}

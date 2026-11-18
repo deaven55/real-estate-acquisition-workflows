@@ -1,0 +1,165 @@
+{
+  "name": "WF-245 — Closing Coordination → Critical Dates & Milestone Monitoring",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-245-critical-dates-milestones",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const coordination_status=String(d.coordination_status??d.status??\"\").toLowerCase();const closing_date=d.closing_date??null;const milestones=Array.isArray(d.milestones)?d.milestones:[];const blockers=Array.isArray(d.blockers)?d.blockers:[];const now=d.now?new Date(d.now):new Date();const close=new Date(closing_date);let days_to_closing=null;if(closing_date&&!Number.isNaN(close.getTime()))days_to_closing=Math.ceil((close.getTime()-now.getTime())/86400000);const overdue=milestones.filter(m=>m&&m.due_date&&m.status!==\"completed\"&&new Date(m.due_date)<now);const critical_overdue=overdue.filter(m=>m.critical===true||String(m.priority??\"\").toLowerCase()===\"critical\");const completed=milestones.length>0&&milestones.every(m=>m&&m.status===\"completed\");let status=\"needs_review\",reason=\"Milestone monitoring requires review.\",next=\"WF-126\";if(!lead_id||!deal_id||!property_id){status=\"blocked\";reason=\"Missing lead, deal, or property identity.\";}else if(blockers.length){status=\"blocked\";reason=\"Unresolved closing blockers are present.\";}else if(coordination_status!==\"coordination_ready\"){status=\"coordination_not_ready\";reason=\"Closing coordination is not confirmed.\";}else if(!closing_date||Number.isNaN(close.getTime())){status=\"incomplete\";reason=\"A valid closing date is required.\";}else if(critical_overdue.length){status=\"critical_overdue\";reason=\"Critical closing milestones are overdue.\";next=\"WF-246\";}else if(overdue.length){status=\"attention_required\";reason=\"One or more closing milestones are overdue.\";next=\"WF-246\";}else if(completed){status=\"milestones_completed\";reason=\"All tracked closing milestones are complete.\";next=\"WF-247\";}else if(days_to_closing!==null&&days_to_closing<=3){status=\"closing_due_soon\";reason=\"Closing is within three days; milestone monitoring requires heightened attention.\";next=\"WF-246\";}else{status=\"on_track\";reason=\"Closing coordination is ready and tracked milestones are currently on schedule.\";next=\"WF-246\";}return[{json:{workflow:\"WF-245\",lead_id,deal_id,property_id,coordination_status,closing_date,days_to_closing,milestones,overdue_milestones:overdue,critical_overdue_milestones:critical_overdue,milestone_count:milestones.length,completed_milestones:milestones.filter(m=>m&&m.status===\"completed\").length,monitoring_status:status,reason,requires_human_review:[\"blocked\",\"critical_overdue\",\"attention_required\",\"closing_due_soon\",\"incomplete\",\"needs_review\"].includes(status),next_workflow:next}}];"
+      },
+      "name": "Critical Date & Milestone Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.monitoring_status }}",
+              "rightValue": "on_track",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Milestone Monitoring Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'closing_milestone_monitoring',notes:'WF-245 status='+$json.monitoring_status+' next='+$json.next_workflow+' days_to_closing='+$json.days_to_closing+' overdue='+$json.overdue_milestones.length+' critical_overdue='+$json.critical_overdue_milestones.length,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Milestone Monitoring",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,monitoring_active:true,next_workflow:$json.next_workflow}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Critical Date & Milestone Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critical Date & Milestone Controller": {
+      "main": [
+        [
+          {
+            "node": "Milestone Monitoring Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Milestone Monitoring Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Milestone Monitoring",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Milestone Monitoring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Milestone Monitoring": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-245-critical-dates-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

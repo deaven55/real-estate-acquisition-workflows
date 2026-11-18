@@ -1,0 +1,163 @@
+{
+  "name": "WF-215 — Seller Offer Package → Offer Dispatch, Delivery Receipt & Negotiation State",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-215-seller-offer-package-offer-dispatch-delivery-receipt-negotiation-state",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Seller Offer Package",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-215-seller-offer-package-offer-dispatch-delivery-receipt-negotiation-state"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const p=x.seller_offer_package??{};const missing=[];if(p.status!=='offer_package_ready')missing.push('offer_package_ready_status');if(!x.lead_id)missing.push('lead_id');if(!x.deal_id)missing.push('deal_id');if(!x.property_id)missing.push('property_id');if(!Number.isFinite(Number(p.offer_price)))missing.push('offer_price');const channel=String(x.channel??x.preferred_channel??'').toLowerCase();if(!['sms','email'].includes(channel))missing.push('supported_channel');const dispatchId=missing.length?null:'offer-'+x.deal_id+'-'+Date.now();const idempotencyKey=missing.length?null:'wf-215:'+x.deal_id+':'+channel+':'+String(p.offer_price);const status=missing.length?'blocked':'dispatch_ready';return[{json:{...x,workflow:'WF-215',offer_dispatch:{status,dispatch_id:dispatchId,idempotency_key:idempotencyKey,channel,offer_price:Number(p.offer_price),delivery_receipt_required:true,provider_runtime:'configured_provider_adapter'},routing:{next_workflow:status==='dispatch_ready'?'WF-216':'WF-126',requires_human_review:true},audit:{event:'seller_offer_package_offer_dispatch_delivery_receipt_negotiation_state_evaluated',status}}}];"
+      },
+      "name": "Code — Offer Dispatch Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.offer_dispatch.status}}",
+              "rightValue": "dispatch_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Offer Dispatch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-215:'+($json.deal_id||'unknown')+':'+($json.offer_dispatch?.idempotency_key||'blocked'),external_source:'wholesale-os',activity_type:'seller_offer_dispatch_delivery_receipt_negotiation_state',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.offer_dispatch?.status||'blocked',notes:JSON.stringify({workflow:'WF-215',offer_dispatch:$json.offer_dispatch,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Offer Dispatch Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-215',status:$json.offer_dispatch?.status??'blocked',dispatch_id:$json.offer_dispatch?.dispatch_id??null,idempotency_key:$json.offer_dispatch?.idempotency_key??null,next_workflow:$json.routing?.next_workflow??'WF-126',delivery_receipt_required:true}}}];"
+      },
+      "name": "Code — Offer Dispatch Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Seller Offer Package": {
+      "main": [
+        [
+          {
+            "node": "Code — Offer Dispatch Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Offer Dispatch Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Offer Dispatch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Offer Dispatch Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Offer Dispatch Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Offer Dispatch Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Offer Dispatch Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Offer Dispatch Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-215-v1"
+}

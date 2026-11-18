@@ -1,0 +1,171 @@
+{
+  "name": "WF-156 Closing Milestone Updates → Critical-Date & Escalation Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-156-closing-milestone-update",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "156-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-156-closing-milestone-update"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const execution=input.execution??{}; const contract=input.contract??input.agreement??{}; const type=String(contract.agreement_type??input.agreement_type??'').toLowerCase(); const executed=execution.executed===true||contract.execution_state==='executed'; const identity=Boolean(deal.property_id??input.property_id)&&Boolean(deal.lead_id??input.lead_id??input.seller_id); const price=Number(contract.agreed_price??input.agreed_price??0); const milestones=input.milestones??{}; const dates=input.critical_dates??milestones.critical_dates??{}; const blockers=Array.isArray(input.blockers)?input.blockers:[]; const now=Date.now(); const parseDate=v=>{const t=Date.parse(v);return Number.isNaN(t)?null:t}; const dateChecks=Object.entries(dates).map(([k,v])=>{const t=parseDate(v);return {name:k,value:v,valid:t!==null,overdue:t!==null&&t<now}}); const overdue=dateChecks.filter(x=>x.overdue).map(x=>x.name); const required=['title','attorney','funding']; if(['assignment','novation'].includes(type)) required.push('buyer'); const missing=required.filter(k=>milestones[k]?.required!==false&&!milestones[k]?.ready); let status='on_track',route='WF-126 closing coordination & critical date controller',severity='normal'; if(!executed||!identity||!price){status='readiness_blocked';route='human_review';severity='critical';} else if(overdue.length||blockers.length){status='attention_required';route='WF-126 closing coordination & critical date controller';severity=overdue.length?'urgent':'high';} else if(missing.length){status='milestones_incomplete';route='WF-155 closing milestone orchestration';severity='high';} return [{json:{workflow_id:'WF-156',workflow_name:'Closing Milestone Updates → Critical-Date & Escalation Controller',status,severity,deal_id:deal.id??deal.deal_id??input.deal_id??null,lead_id:deal.lead_id??input.lead_id??null,property_id:deal.property_id??input.property_id??null,execution:{executed},contract:{agreement_type:type,agreed_price:price,execution_state:executed?'executed':'not_executed'},milestones,critical_date_analysis:{dates:dateChecks,overdue},blockers,missing_milestones:missing,routing:{next_route:route,next_workflow:route==='WF-155 closing milestone orchestration'?'WF-155':route==='WF-126 closing coordination & critical date controller'?'WF-126':null},guardrails:{no_closed_status_claim:true,overdue_dates_escalate:true,blockers_escalate:true,readiness_requirements_preserved:true,human_review_for_invalid_identity_or_execution:true},crm_activity:{event_type:'closing_milestone_update',outcome:status,severity,deal_id:deal.id??deal.deal_id??input.deal_id??null},idempotency_key:'wf-156:milestone-update:'+(input.event_id??deal.id??deal.deal_id??'unknown')}}}];"
+      },
+      "id": "156-controller",
+      "name": "Evaluate Milestones & Critical Dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "on_track",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "156-route",
+      "name": "On Track?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,severity:$json.severity,workflow_id:$json.workflow_id,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,execution:$json.execution,contract:$json.contract,milestones:$json.milestones,critical_date_analysis:$json.critical_date_analysis,blockers:$json.blockers,missing_milestones:$json.missing_milestones,routing:$json.routing,guardrails:$json.guardrails,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "156-crm",
+      "name": "Persist Escalation Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Evaluate Milestones & Critical Dates').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,severity:original.severity,next_route:original.routing.next_route,next_workflow:original.routing.next_workflow}}}];"
+      },
+      "id": "156-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Milestones & Critical Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Milestones & Critical Dates": {
+      "main": [
+        [
+          {
+            "node": "On Track?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On Track?": {
+      "main": [
+        [
+          {
+            "node": "Persist Escalation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Escalation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Escalation Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-156-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

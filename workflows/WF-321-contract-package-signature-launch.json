@@ -1,0 +1,220 @@
+{
+  "name": "WF-321 — Contract Trigger → Contract Package Validation & Signature Launch Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-321-contract-package-signature-launch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf321-webhook",
+      "name": "Webhook — Contract Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst route=String(input.route??input.status??'').toLowerCase();\nconst contractPrice=Number(input.proposed_contract_price??input.contract_price??input.accepted_price??0);\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao??0);\nconst leadId=input.lead_id, dealId=input.deal_id, propertyId=input.property_id;\nconst sellerName=String(input.seller_name??input.owner_name??'').trim();\nconst sellerContact=String(input.seller_phone??input.seller_email??input.recipient??'').trim();\nconst agreementType=String(input.agreement_type??'purchase_agreement').trim();\nconst signatureProvider=String(input.signature_provider??'').trim();\nconst dnc=input.dnc===true||route==='blocked_dnc';\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nlet status='needs_review',next='WF-126',reason='contract package requires review';\nconst identityReady=Boolean(leadId&&dealId&&propertyId&&sellerName&&sellerContact);\nconst priceProtected=mao>0&&contractPrice>0&&contractPrice<=mao;\nif(dnc){status='blocked_dnc';next='WF-126';reason='DNC/contact restriction';}\nelse if(blockers.length){status='blocked';next='WF-126';reason='active blockers prevent contract launch';}\nelse if(!identityReady){status='incomplete_identity';next='WF-126';reason='seller/deal/property identity incomplete';}\nelse if(!contractPrice){status='missing_contract_price';next='WF-126';reason='contract price missing';}\nelse if(!priceProtected){status='above_mao';next='WF-126';reason='contract price exceeds protected dynamic MAO';}\nelse if(!signatureProvider){status='signature_provider_required';next='WF-126';reason='signature provider/runtime configuration required';}\nelse if(route==='contract_trigger'){status='signature_ready';next='WF-322';reason='contract package validated and ready for signature launch';}\nelse if(route==='revised_offer_followup'){status='revised_offer_not_contract_ready';next='WF-315';reason='revised offer must be dispatched before contract launch';}\nelse {status='needs_review';next='WF-126';reason='route is not contract-ready';}\nreturn [{json:{...input,workflow_id:'WF-321',workflow_name:'Contract Trigger → Contract Package Validation & Signature Launch Controller',status,reason,contract_price:contractPrice||null,dynamic_mao:mao||null,agreement_type:agreementType,seller:{name:sellerName,contact:sellerContact},signature_provider:signatureProvider||null,identity_ready:identityReady,price_protected:priceProtected,next_workflow:next,human_review_required:true,crm_activity:{activity_type:'contract_package_validation',deal_id:dealId,lead_id:leadId,property_id:propertyId,status,contract_price:contractPrice||null,agreement_type:agreementType,reason}}}];"
+      },
+      "id": "wf321-controller",
+      "name": "Controller — Contract Package Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready-gate",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "signature_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "price-gate",
+              "leftValue": "={{ $json.price_protected }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf321-gate",
+      "name": "IF — Signature Launch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "contract_price",
+              "value": "={{ $json.crm_activity.contract_price }}"
+            },
+            {
+              "name": "agreement_type",
+              "value": "={{ $json.crm_activity.agreement_type }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf321-crm",
+      "name": "InsulaCRM — Contract Package Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, status: $json.status, reason: $json.reason, contract_price: $json.contract_price, dynamic_mao: $json.dynamic_mao, agreement_type: $json.agreement_type, signature_provider: $json.signature_provider, identity_ready: $json.identity_ready, price_protected: $json.price_protected, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf321-response",
+      "name": "Response — Contract Package Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Contract Trigger": {
+      "main": [
+        [
+          {
+            "node": "Controller — Contract Package Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Contract Package Validation": {
+      "main": [
+        [
+          {
+            "node": "IF — Signature Launch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Signature Launch Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Contract Package Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Contract Package Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Contract Package Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Contract Package Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-321-v1",
+  "meta": {
+    "workflow_id": "WF-321",
+    "description": "Validates contract trigger identity, contract price, dynamic MAO protection, agreement type, seller contact, blockers, and signature-provider readiness before signature launch.",
+    "safety": {
+      "dnc_protection": true,
+      "dynamic_mao_protection": true,
+      "human_review_required": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

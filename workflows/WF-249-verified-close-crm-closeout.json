@@ -1,0 +1,165 @@
+{
+  "name": "WF-249 — Verified Close → Final CRM Closeout, Assignment Profit Record & Portfolio Feedback",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-249-final-crm-closeout",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const close_status=String(d.close_status??d.status??\"\").toLowerCase();const closing_date=d.closing_date??null;const gross=Number(d.gross_profit??NaN),costs=Number(d.closing_costs??0),net=Number(d.net_profit??(Number.isFinite(gross)?gross-costs:NaN));const exit_strategy=String(d.exit_strategy??\"assignment\").toLowerCase();const blockers=Array.isArray(d.blockers)?d.blockers:[];let status=\"needs_review\",reason=\"CRM closeout requires review.\",next=\"WF-126\";if(!lead_id||!deal_id||!property_id){status=\"blocked\";reason=\"Missing lead, deal, or property identity.\";}else if(blockers.length){status=\"blocked\";reason=\"Unresolved closing blockers remain.\";}else if(close_status!==\"verified_close\"){status=\"close_not_verified\";reason=\"Verified close status is required.\";next=\"WF-248\";}else if(!closing_date){status=\"incomplete\";reason=\"Closing date is required.\";next=\"WF-248\";}else if(!Number.isFinite(gross)||!Number.isFinite(costs)||!Number.isFinite(net)){status=\"profit_inputs_invalid\";reason=\"Profit inputs are invalid.\";next=\"WF-248\";}else{status=net<0?\"negative_profit_review\":\"closeout_ready\";reason=net<0?\"Verified close has negative net profit and requires review.\":\"Verified close is ready for CRM closeout and portfolio feedback.\";next=\"WF-250\";}return[{json:{workflow:\"WF-249\",lead_id,deal_id,property_id,close_status,closing_date,gross_profit:Number.isFinite(gross)?gross:null,closing_costs:Number.isFinite(costs)?costs:null,net_profit:Number.isFinite(net)?net:null,exit_strategy,assignment_profit_record:{deal_id,closing_date,gross_profit:gross,closing_costs:costs,net_profit:net,exit_strategy},portfolio_feedback:{net_profit:Number.isFinite(net)?net:null,profitability_signal:net>0?\"positive\":net===0?\"break_even\":\"negative\"},crm_closeout_status:status,reason,requires_human_review:status!==\"closeout_ready\",next_workflow:next}}];"
+      },
+      "name": "Final CRM Closeout Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.crm_closeout_status }}",
+              "rightValue": "closeout_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "CRM Closeout Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'final_crm_closeout',notes:'WF-249 status='+$json.crm_closeout_status+' next='+$json.next_workflow+' gross_profit='+$json.gross_profit+' closing_costs='+$json.closing_costs+' net_profit='+$json.net_profit,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist CRM Closeout",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,crm_closeout_ready:$json.crm_closeout_status===\"closeout_ready\",portfolio_feedback_ready:$json.crm_closeout_status===\"closeout_ready\",next_workflow:$json.next_workflow}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Final CRM Closeout Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final CRM Closeout Controller": {
+      "main": [
+        [
+          {
+            "node": "CRM Closeout Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM Closeout Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist CRM Closeout",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist CRM Closeout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist CRM Closeout": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-249-final-crm-closeout-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

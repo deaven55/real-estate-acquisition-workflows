@@ -1,0 +1,215 @@
+{
+  "name": "WF-326 — Milestone Update → Closing Evidence Reconciliation & Recovery Routing Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-326-closing-evidence-reconciliation",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf326-webhook",
+      "name": "Webhook — Milestone Update",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst status=String(input.milestone_status??input.status??'').toLowerCase();\nconst dealId=input.deal_id,leadId=input.lead_id,propertyId=input.property_id;\nconst closingDate=String(input.closing_date??'').trim();\nconst milestones=Array.isArray(input.milestones)?input.milestones:[];\nconst requiredEvidence=Array.isArray(input.required_evidence)?input.required_evidence:[];\nconst verifiedEvidence=Array.isArray(input.verified_evidence)?input.verified_evidence:[];\nconst failedEvidence=Array.isArray(input.failed_evidence)?input.failed_evidence:[];\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst identityReady=Boolean(dealId&&leadId&&propertyId);\nconst evidenceComplete=requiredEvidence.length===0||requiredEvidence.every(req=>verifiedEvidence.some(v=>String(v.id??v.type??v).toLowerCase()===String(req.id??req.type??req).toLowerCase()));\nconst failed=failedEvidence.length>0;\nconst incompleteMilestones=milestones.filter(m=>!['completed','verified'].includes(String(m.status??'').toLowerCase()));\nlet evidence_status='needs_review',next='WF-126',reason='closing evidence reconciliation requires review';\nif(input.dnc===true){evidence_status='blocked_dnc';reason='DNC/contact restriction';}\nelse if(blockers.length){evidence_status='blocked';reason='active closing blockers';}\nelse if(!identityReady){evidence_status='incomplete_identity';reason='deal/property/lead identity incomplete';}\nelse if(!closingDate){evidence_status='closing_date_missing';reason='closing date missing';}\nelse if(failed){evidence_status='evidence_failed';next='WF-327';reason='one or more required closing evidence items failed';}\nelse if(!evidenceComplete){evidence_status='evidence_gap';next='WF-327';reason='required closing evidence is not fully verified';}\nelse if(incompleteMilestones.length){evidence_status='milestones_incomplete';next='WF-325';reason='closing milestones remain incomplete';}\nelse if(status==='overdue'||status==='critical_due_soon'){evidence_status='recovery_required';next='WF-327';reason='critical timing requires evidence/recovery routing';}\nelse{evidence_status='reconciled';next='WF-327';reason='required closing evidence and supplied milestones reconcile successfully';}\nreturn [{json:{...input,workflow_id:'WF-326',workflow_name:'Milestone Update → Closing Evidence Reconciliation & Recovery Routing Controller',evidence_status,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,closing_date:closingDate||null,required_evidence_count:requiredEvidence.length,verified_evidence_count:verifiedEvidence.length,failed_evidence_count:failedEvidence.length,incomplete_milestone_count:incompleteMilestones.length,next_workflow:next,human_review_required:!['reconciled','evidence_gap','evidence_failed','recovery_required'].includes(evidence_status),crm_activity:{activity_type:'closing_evidence_reconciliation',deal_id:dealId,lead_id:leadId,property_id:propertyId,status:evidence_status,closing_date:closingDate||null,reason}}}];"
+      },
+      "id": "wf326-controller",
+      "name": "Controller — Closing Evidence Reconciliation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "status-gate",
+              "leftValue": "={{ $json.evidence_status }}",
+              "rightValue": "reconciled",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "identity-gate",
+              "leftValue": "={{ $json.deal_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf326-gate",
+      "name": "IF — Evidence Reconciliation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "closing_date",
+              "value": "={{ $json.crm_activity.closing_date }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf326-crm",
+      "name": "InsulaCRM — Evidence Reconciliation Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, evidence_status: $json.evidence_status, reason: $json.reason, required_evidence_count: $json.required_evidence_count, verified_evidence_count: $json.verified_evidence_count, failed_evidence_count: $json.failed_evidence_count, incomplete_milestone_count: $json.incomplete_milestone_count, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf326-response",
+      "name": "Response — Evidence Reconciliation Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Milestone Update": {
+      "main": [
+        [
+          {
+            "node": "Controller — Closing Evidence Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Closing Evidence Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "IF — Evidence Reconciliation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Evidence Reconciliation Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Evidence Reconciliation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Evidence Reconciliation Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Evidence Reconciliation Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Evidence Reconciliation Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-326-v1",
+  "meta": {
+    "workflow_id": "WF-326",
+    "description": "Reconciles closing evidence and milestone state, routing evidence gaps and recovery needs safely.",
+    "safety": {
+      "dnc_protection": true,
+      "evidence_failure_escalation": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "name": "WF-098 Seller Conversation Strategy Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-098-seller-conversation-strategy-engine",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf098-webhook",
+      "name": "Seller Strategy Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const a=input.analysis??input.seller_analysis??input; const s=v=>String(v??\"\").trim(); const intent=s(a.intent).toLowerCase(); const urgency=s(a.urgency).toLowerCase()||\"normal\"; const posture=s(a.negotiation_posture).toLowerCase()||\"neutral\"; const dnc=input.dnc===true||input.dnc_suppressed===true||intent===\"opt_out\"; const leadId=s(input.lead_id??a.lead_id), dealId=s(input.deal_id??a.deal_id), threadId=s(input.thread_id??a.thread_id); const missing=[]; if(!leadId&&!dealId)missing.push(\"lead_id_or_deal_id\"); if(!threadId)missing.push(\"thread_id\"); if(!s(a.intent))missing.push(\"seller_intent\"); let strategy=\"observe\",goal=\"preserve_relationship\",timing=\"standard_follow_up\"; let escalation=\"none\"; let outbound=false; if(dnc){strategy=\"suppress\";goal=\"honor_opt_out\";timing=\"none\";escalation=\"dnc\";} else if(intent===\"positive_interest\"){strategy=\"advance_to_next_step\";goal=\"confirm_property_and_transaction_details\";timing=urgency===\"high\"?\"immediate\":\"same_day\";outbound=true;} else if(intent===\"negotiation\"){strategy=\"clarify_price_expectation\";goal=\"identify_acceptable_price_without_overcommitting\";timing=\"same_day\";outbound=true;} else if(intent===\"uncertain\"){strategy=\"reduce_friction\";goal=\"identify_blocker_and_next_decision_point\";timing=\"24_hours\";outbound=true;} else if(intent===\"negative_interest\"){strategy=\"close_loop_gracefully\";goal=\"preserve_future_reengagement\";timing=\"30_days\";outbound=true;} else if(intent===\"opt_out\"){strategy=\"suppress\";goal=\"honor_opt_out\";timing=\"none\";escalation=\"dnc\";} else {strategy=\"request_context\";goal=\"obtain_missing_or_ambiguous_seller_context\";timing=\"human_review\";escalation=\"ambiguous_intent\";} if(urgency===\"high\"&&escalation===\"none\"&&intent!==\"negative_interest\")timing=\"immediate\"; const guardrails=[\"Do not invent property facts, offers, comps, repairs, closing dates, or buyer commitments.\",\"Do not promise a price or transaction outcome without approved deal economics.\",\"Do not bypass DNC, authorization, or communication delivery controls.\",\"Preserve the existing seller thread and deterministic request identity.\"]; const nextWorkflow=dnc?null:(outbound?\"wf-082-autonomous-communication-authorization-dispatch\":\"wf-078-ai-seller-conversation-response-intelligence\"); const strategyId=\"seller-strategy:\"+((threadId||leadId||dealId||\"unknown\"))+\":\"+(input.request_id||input.audit_id||\"event\")+\":v1\"; return[{json:{ok:missing.length===0,strategy:{strategy_id:strategyId,conversation_strategy:strategy,primary_goal:goal,follow_up_timing:timing,negotiation_posture:posture,escalation,autonomous_outbound_candidate:outbound&&!dnc,recommended_next_workflow:nextWorkflow,guardrails},identity:{lead_id:leadId||null,deal_id:dealId||null,thread_id:threadId||null},missing_requirements:missing,decision:{deterministic:true,requires_human_review:missing.length>0||escalation!==\"none\",dispatch_mode:outbound&&!dnc?\"authorization_gate\":\"internal_strategy\"}}}];"
+      },
+      "id": "wf098-strategy",
+      "name": "Determine Conversation Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf098-valid",
+      "name": "Strategy Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf098-response",
+      "name": "Respond Conversation Strategy",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf098-invalid",
+      "name": "Respond Invalid Strategy Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Seller Strategy Webhook": {
+      "main": [
+        [
+          {
+            "node": "Determine Conversation Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Conversation Strategy": {
+      "main": [
+        [
+          {
+            "node": "Strategy Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Strategy Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Conversation Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Strategy Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-098-v1"
+}

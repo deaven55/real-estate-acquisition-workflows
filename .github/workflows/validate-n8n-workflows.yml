@@ -3,7 +3,9 @@ name: Validate n8n integration workflows
 on:
   pull_request:
   push:
-    branches: ["main"]
+    branches:
+      - "main"
+      - "feature/insula-crm-integration"
   workflow_dispatch:
 
 jobs:
@@ -21,7 +23,7 @@ jobs:
           const path = require('path');
 
           const files = fs.readdirSync('workflows')
-            .filter(name => /^(2[0-9]|30)-.*\.json$/.test(name))
+            .filter(name => /^(2[0-9]|30|31)-.*\.json$/.test(name))
             .map(name => path.join('workflows', name));
 
           const failures = [];
@@ -86,7 +88,8 @@ jobs:
             throw new Error('WF-030 fan-in fixture execution failed: ' + err.message);
           }
 
-          const fixtureOutput = fixtureResult?.[0]?.json;\n          if (!fixtureOutput?.success) throw new Error('WF-030 fixture did not return success=true');
+          const fixtureOutput = fixtureResult?.[0]?.json;
+          if (!fixtureOutput?.success) throw new Error('WF-030 fixture did not return success=true');
           if (fixtureOutput.candidate_count !== 1) throw new Error(`WF-030 fixture expected 1 deduped candidate, got ${fixtureOutput.candidate_count}`);
           const candidate = fixtureOutput.candidate_records?.[0];
           if (!candidate) throw new Error('WF-030 fixture returned no candidate');

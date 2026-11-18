@@ -1,0 +1,184 @@
+{
+  "name": "WF-349 — Delivery Receipt / Provider Callback → Seller Response Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-349-delivery-receipt-seller-response-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf349-webhook",
+      "name": "WF-349 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-349-delivery-receipt-seller-response-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst dealId=input.deal_id??null; const leadId=input.lead_id??null; const propertyId=input.property_id??null;\nconst eventType=String(input.event_type??input.callback_type??input.receipt_type??'').toLowerCase();\nconst deliveryStatus=String(input.delivery_status??input.status??'').toLowerCase();\nconst providerMessageId=String(input.provider_message_id??input.message_id??input.external_message_id??'').trim();\nconst idempotencyKey=String(input.idempotency_key??'').trim();\nconst dnc=Boolean(input.dnc??input.do_not_contact??false); const blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst sellerResponse=String(input.seller_response??input.inbound_message??'').trim();\nlet route='needs_review'; let nextWorkflow='WF-348'; let reason='Provider receipt requires review.';\nif(dnc){route='blocked';nextWorkflow='WF-126';reason='DNC protection blocks further seller communication.';}\nelse if(blockers.length){route='blocked';nextWorkflow='WF-126';reason='Active blocker prevents response routing.';}\nelse if(!dealId||!leadId||!propertyId){route='incomplete';reason='Deal identity is incomplete.';}\nelse if(!idempotencyKey||!providerMessageId){route='invalid_receipt';reason='Provider receipt is missing idempotency or provider message identity.';}\nelse if(['delivered','delivery_success','sent','accepted'].includes(deliveryStatus)&&!sellerResponse){route='delivered_waiting_response';nextWorkflow='WF-350';reason='Outbound message was accepted/delivered; await seller response or timeout.';}\nelse if(['failed','undelivered','rejected','bounced'].includes(deliveryStatus)){route='delivery_failed';nextWorkflow='WF-350';reason='Provider reports delivery failure; controlled retry/fallback review required.';}\nelse if(sellerResponse){route='seller_response_received';nextWorkflow='WF-342';reason='Seller response detected; route to AI classification and negotiation routing.';}\nelse if(eventType==='inbound_message'||eventType==='seller_response'){route='seller_response_received';nextWorkflow='WF-342';reason='Inbound seller response event detected.';}\nelse{route='needs_review';nextWorkflow='WF-348';reason='Receipt/callback event is not recognized.';}\nconst receipt={provider_message_id:providerMessageId,idempotency_key:idempotencyKey,event_type:eventType,delivery_status:deliveryStatus,seller_response:sellerResponse,deal_id:dealId,lead_id:leadId,property_id:propertyId};\nconst activity={activity_type:'provider_delivery_receipt_callback',subject:'WF-349 '+(dealId??'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,route,next_workflow:nextWorkflow,provider_message_id:providerMessageId,idempotency_key:idempotencyKey,event_type:eventType,delivery_status:deliveryStatus,seller_response_received:Boolean(sellerResponse),dnc,blockers,receipt,reason};\nreturn [{json:{...input,wf_id:'WF-349',route,next_workflow:nextWorkflow,receipt,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf349-controller",
+      "name": "WF-349 Receipt Callback Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "response",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "seller_response_received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "delivered",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "delivered_waiting_response",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf349-gate",
+      "name": "Receipt / Response Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf349-crm",
+      "name": "Persist WF-349 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf349-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-349 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-349 Receipt Callback Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-349 Receipt Callback Controller": {
+      "main": [
+        [
+          {
+            "node": "Receipt / Response Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receipt / Response Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-349 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-349 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-349 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf349-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

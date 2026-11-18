@@ -1,0 +1,178 @@
+{
+  "name": "WF-371 — AI Seller Response Classification → Negotiation Strategy & Dynamic MAO Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-371-ai-response-negotiation-strategy",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst classification=String(input.classification??'').toLowerCase();\nconst dealId=input.deal_id??input.dealId,leadId=input.lead_id??input.leadId,propertyId=input.property_id??input.propertyId;\nconst baseMao=Number(input.mao??input.base_mao??0);\nconst sellerAsk=Number(input.seller_ask??input.counteroffer_amount??0);\nconst dnc=Boolean(input.dnc||input.do_not_contact||input.opted_out);\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst sourceKey=input.classification_idempotency_key??input.idempotency_key;\nconst valid=Boolean(dealId&&leadId&&propertyId&&sourceKey);\nlet factor=1,strategy='continue_negotiation',route='WF-365',reason='Continue negotiation using the current protected MAO.';\nif(classification==='counteroffer'&&baseMao>0&&sellerAsk>0){\n const ratio=sellerAsk/baseMao;\n if(ratio<=1.02){factor=1.02;strategy='evaluate_near_mao_counter';reason='Counteroffer is at or near MAO; allow a tightly bounded tactical adjustment.'}\n else if(ratio<=1.15){factor=1.0;strategy='hold_mao';reason='Counteroffer is above MAO but within the evaluation band; protect current MAO.'}\n else {factor=.97;strategy='reduce_exposure';reason='Counteroffer is materially above MAO; reduce exposure and protect walk-away economics.'}\n}else if(classification==='positive'){strategy='prepare_acceptance_or_contract';reason='Positive seller response; evaluate acceptance and contract readiness against protected MAO.'}\nelse if(classification==='rejection'){strategy='reengage';route='WF-345';reason='Seller rejected the current position; route to controlled re-engagement.'}\nelse if(classification==='opt_out'){strategy='stop';route='WF-126';reason='Seller opted out; automated communication must stop.'}\nelse if(classification==='question'||classification==='call_request'){strategy='respond_and_continue';reason='Seller needs clarification or a call; continue negotiation with protected economics.'}\nelse if(!classification){strategy='reconcile';route='WF-360';reason='Missing AI classification; reconcile upstream event.'}\nconst adjustedMao=baseMao>0?Math.round(baseMao*factor*100)/100:0;\nconst protectedMao=baseMao>0?Math.min(adjustedMao,baseMao*1.02):0;\nif(dnc){strategy='stop';route='WF-126';reason='DNC/opt-out state overrides negotiation automation.'}\nelse if(blockers.length){strategy='blocked';route='WF-126';reason='Operational blockers require controlled human handling.'}\nelse if(!valid&&route!=='WF-126'){strategy='reconcile';route='WF-360';reason='Required identity/idempotency fields are missing.'}\nconst decisionKey=sourceKey?\\`${sourceKey}:strategy:${strategy}:mao:${protectedMao}\\`:null;\nreturn [{json:{workflow:'WF-371',classification,strategy,route,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,base_mao:baseMao,seller_ask:sellerAsk,adjustment_factor:factor,adjusted_mao:adjustedMao,protected_mao:protectedMao,mao_protected:baseMao>0&&protectedMao<=baseMao*1.02,dnc,blockers,source_classification_key:sourceKey,decision_idempotency_key:decisionKey,identity_valid:valid,next_action:route==='WF-365'?'revised_offer_or_walkaway_decision':route==='WF-345'?'controlled_reengagement':route==='WF-126'?'human_control':'reconcile_upstream_classification',audit_event:'negotiation_strategy_dynamic_mao_evaluation'}}];"
+      },
+      "name": "Negotiation Strategy Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchWholeWord": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.strategy}}",
+              "rightValue": "stop",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "leftValue": "={{$json.strategy}}",
+              "rightValue": "blocked",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Automation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({activity_type:'negotiation_strategy_dynamic_mao',deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,classification:$json.classification,strategy:$json.strategy,base_mao:$json.base_mao,seller_ask:$json.seller_ask,adjustment_factor:$json.adjustment_factor,protected_mao:$json.protected_mao,route:$json.route,idempotency_key:$json.decision_idempotency_key,metadata:{workflow:'WF-371',reason:$json.reason}})}}",
+        "options": {}
+      },
+      "name": "InsulaCRM Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({ok:true,workflow:'WF-371',strategy:$json.strategy,route:$json.route,protected_mao:$json.protected_mao,reason:$json.reason,decision_idempotency_key:$json.decision_idempotency_key})}}",
+        "options": {}
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Negotiation Strategy Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Negotiation Strategy Controller": {
+      "main": [
+        [
+          {
+            "node": "Automation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Automation Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM Audit": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-371-v1",
+  "meta": {
+    "workflow_id": "WF-371",
+    "purpose": "Convert AI seller response classification into protected negotiation strategy and dynamic MAO evaluation",
+    "provider_agnostic": true,
+    "secrets_source": "n8n environment variables only",
+    "economics_note": "Asset-specific economics remain primary; 70-percent rule is secondary reference only."
+  }
+}

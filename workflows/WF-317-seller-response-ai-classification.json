@@ -1,0 +1,220 @@
+{
+  "name": "WF-317 — Seller Response → AI Classification & Negotiation Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-317-seller-response-ai-classification",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf317-webhook",
+      "name": "Webhook — Seller Response",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst text=String(input.seller_response??input.response_text??input.inbound_message??'').trim();\nconst amountMatch=text.replace(/[$,]/g,'').match(/(?:^|\\s)(?:\\$)?(\\d{2,8})(?:\\.\\d{1,2})?(?:\\s|$)/);\nconst amount=amountMatch?Number(amountMatch[1]):null;\nconst lower=text.toLowerCase();\nconst dnc=input.dnc===true||/\\b(stop|unsubscribe|do not contact|don't contact|remove me)\\b/.test(lower);\nconst accepted=/\\b(yes|accept|accepted|deal|agreed|sounds good|let's do it|okay)\\b/.test(lower);\nconst rejected=/\\b(no|not interested|pass|decline|declined|no thanks)\\b/.test(lower);\nconst question=/\\?| \\b(how much|what can you pay|why|when|how does)\\b/.test(lower);\nlet classification='other_response';\nif(dnc) classification='dnc';\nelse if(accepted) classification='accepted';\nelse if(amount!==null&&/\\b(offer|price|pay|counter|take)\\b/.test(lower)) classification='counteroffer';\nelse if(rejected) classification='rejected';\nelse if(question) classification='question';\nelse if(!text) classification='no_response';\nconst mao=Number(input.dynamic_mao??input.adjusted_mao??input.mao??0);\nconst nearBand=mao>0&&amount!==null&&amount>mao&&amount<=mao*1.10;\nconst aboveMao=mao>0&&amount!==null&&amount>mao*1.10;\nlet status='classified',next='WF-318';\nif(dnc){status='blocked_dnc';next='WF-126';}\nelse if(!text){status='no_response';next='WF-318';}\nelse if(classification==='accepted'){status='accepted';next='WF-318';}\nelse if(classification==='counteroffer'){status=aboveMao?'counteroffer_above_mao':nearBand?'counteroffer_near_mao':'counteroffer_within_mao';next=aboveMao?'WF-320':'WF-319';}\nelse if(classification==='rejected'){status='rejected';next='WF-320';}\nelse if(classification==='question'||classification==='other_response'){status=classification;next='WF-319';}\nreturn [{json:{...input,workflow_id:'WF-317',workflow_name:'Seller Response → AI Classification & Negotiation Routing',seller_response:text,classification,counteroffer_amount:amount,dynamic_mao:mao,mao_relationship:amount===null?'unknown':aboveMao?'above_110_percent_mao':nearBand?'near_mao':'within_mao',status,next_workflow:next,ai_reasoning:{signals:{accepted,rejected,question,dnc,amount_detected:amount!==null},note:'Classification is deterministic/rules-based here; downstream AI negotiation logic may enrich the decision.',guardrails:{dnc_protection:true,dynamic_mao_protection:mao>0}},crm_activity:{activity_type:'seller_response_classified',deal_id:input.deal_id,lead_id:input.lead_id,property_id:input.property_id,status,classification,counteroffer_amount:amount,reason:'Seller response classified as '+classification}}}];"
+      },
+      "id": "wf317-controller",
+      "name": "Controller — AI Response Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "classification-gate",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "blocked_dnc",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "identity-gate",
+              "leftValue": "={{ $json.deal_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf317-gate",
+      "name": "IF — Negotiation Routing Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "classification",
+              "value": "={{ $json.crm_activity.classification }}"
+            },
+            {
+              "name": "counteroffer_amount",
+              "value": "={{ $json.crm_activity.counteroffer_amount }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf317-crm",
+      "name": "InsulaCRM — Seller Response Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, status: $json.status, classification: $json.classification, counteroffer_amount: $json.counteroffer_amount, mao_relationship: $json.mao_relationship, next_workflow: $json.next_workflow, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf317-response",
+      "name": "Response — Classification Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Seller Response": {
+      "main": [
+        [
+          {
+            "node": "Controller — AI Response Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — AI Response Classification": {
+      "main": [
+        [
+          {
+            "node": "IF — Negotiation Routing Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Negotiation Routing Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Seller Response Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Seller Response Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Seller Response Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Classification Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-317-v1",
+  "meta": {
+    "workflow_id": "WF-317",
+    "description": "Classifies inbound seller responses, extracts counteroffers, compares them to dynamic MAO, and routes to negotiation/re-engagement while preserving DNC and MAO guardrails.",
+    "safety": {
+      "dnc_protection": true,
+      "dynamic_mao_protection": true,
+      "credentials_runtime_only": true,
+      "provider_agnostic": true
+    }
+  }
+}

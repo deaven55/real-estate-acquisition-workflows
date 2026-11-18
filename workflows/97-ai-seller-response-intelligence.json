@@ -1,0 +1,147 @@
+{
+  "name": "WF-097 AI Seller Response Intelligence",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-097-ai-seller-response-intelligence",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf097-webhook",
+      "name": "Seller Response Intelligence Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst s=v=>String(v??\"\").trim();\nconst msg=s(input.message??input.seller_message??input.text);\nconst leadId=s(input.lead_id), dealId=s(input.deal_id), propertyId=s(input.property_id), threadId=s(input.thread_id);\nconst dnc=input.dnc===true||input.dnc_suppressed===true;\nconst missing=[];\nif(!msg) missing.push(\"seller_message\");\nif(!leadId&&!dealId) missing.push(\"lead_id_or_deal_id\");\nif(!threadId) missing.push(\"thread_id\");\nlet intent=\"unknown\", motivation=\"unknown\", objections=[], urgency=\"normal\", posture=\"neutral\";\nconst t=msg.toLowerCase();\nif(/stop|remove me|do not (text|call)|dont (text|call)/.test(t)){intent=\"opt_out\";urgency=\"critical\";}\nelse if(/yes|interested|sounds good|lets do|send (it|me)|how much/.test(t)){intent=\"positive_interest\";posture=\"cooperative\";}\nelse if(/no|not interested|pass|decline|dont want|do not want/.test(t)){intent=\"negative_interest\";posture=\"resistant\";}\nelse if(/maybe|think about|not sure|later|call me back/.test(t)){intent=\"uncertain\";posture=\"cautious\";}\nelse if(/price|offer|too low|more money|higher/.test(t)){intent=\"negotiation\";posture=\"negotiating\";}\nif(/move|moving|foreclosure|behind|tax|need to sell|divorce|inherited|estate|vacant|tenant/.test(t)) motivation=\"distress_or_timing\";\nif(/asap|today|tomorrow|this week|urgent|quickly/.test(t)) urgency=\"high\";\nif(/price|offer|too low|more money|higher/.test(t)) objections.push(\"price\");\nif(/condition|repair|needs work|fix/.test(t)) objections.push(\"property_condition\");\nif(/agent|realtor|commission|listing/.test(t)) objections.push(\"agent_or_listing\");\nif(/think|talk to|spouse|partner/.test(t)) objections.push(\"decision_process\");\nif(dnc||intent===\"opt_out\") intent=\"opt_out\";\nconst autonomousCandidate=!dnc&&missing.length===0&&intent!==\"opt_out\"&&intent!==\"unknown\";\nlet reply=\"Thanks for the update. I want to make sure I understand what you need before suggesting anything.\";\nif(intent===\"positive_interest\") reply=\"Thanks for getting back to me. I can help with the next step. What works best for you—quick call or text?\";\nif(intent===\"negotiation\") reply=\"I hear you on the price. I want to make sure the numbers make sense for you and the property. What price were you hoping to get?\";\nif(intent===\"uncertain\") reply=\"No problem. What would you need to feel comfortable moving forward?\";\nif(intent===\"negative_interest\") reply=\"Understood. I appreciate you letting me know. If anything changes, you can reach back out.\";\nconst actionId=\"seller-intelligence:\"+((threadId||leadId||dealId||\"unknown\"))+\":\"+(input.request_id||input.audit_id||\"message\")+\":v1\";\nreturn [{json:{ok:missing.length===0,analysis:{action_id:actionId,intent,motivation,objections,urgency,negotiation_posture:posture,summary:msg.slice(0,500),recommended_reply:reply,autonomous_response_candidate:autonomousCandidate,requires_human_review:dnc||missing.length>0||intent===\"unknown\"},identity:{lead_id:leadId||null,property_id:propertyId||null,deal_id:dealId||null,thread_id:threadId||null},routing:{next_workflow:autonomousCandidate?\"wf-082-autonomous-communication-authorization-dispatch\":intent===\"opt_out\"?null:\"wf-078-ai-seller-conversation-response-intelligence\",dispatch_mode:autonomousCandidate?\"authorization_gate\":\"internal_analysis\"},missing_requirements:missing}}];"
+      },
+      "id": "wf097-analyze",
+      "name": "Analyze Seller Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf097-valid",
+      "name": "Seller Context Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "wf097-response",
+      "name": "Respond Seller Intelligence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "wf097-invalid",
+      "name": "Respond Missing Seller Context",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        820,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Seller Response Intelligence Webhook": {
+      "main": [
+        [
+          {
+            "node": "Analyze Seller Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Seller Message": {
+      "main": [
+        [
+          {
+            "node": "Seller Context Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seller Context Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Seller Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Missing Seller Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-097-v1"
+}

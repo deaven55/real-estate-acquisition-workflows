@@ -1,0 +1,163 @@
+{
+  "name": "WF-194 — Property-Level Offer Strategy → Seller Offer Package & Negotiation Launch",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-194-seller-offer-package-negotiation-launch",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Property Offer Strategy",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-194-seller-offer-package-negotiation-launch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const s=x.property_offer_strategy?.strategy??x.strategy??{};const decision=String(s.decision??'').toLowerCase();const seller=x.seller??{};const leadId=String(x.lead_id??seller.lead_id??'').trim();const propertyId=String(x.property_id??'').trim();const dealId=String(x.deal_id??'').trim();const offer=Number(x.offer_price??s.adjusted_mao??0);const ask=Number(s.asking_price??x.asking_price??0);const motivation=Number(x.motivation_score??seller.motivation_score??0);const blockers=Array.isArray(x.blockers)?x.blockers.filter(Boolean):[];const missing=[];if(!['pursue','negotiate'].includes(decision))missing.push('negotiation_eligible_decision');if(!leadId)missing.push('lead_id');if(!propertyId)missing.push('property_id');if(!dealId)missing.push('deal_id');if(!Number.isFinite(offer)||offer<=0)missing.push('offer_price');let status=blockers.length?'blocked':missing.length?'offer_package_incomplete':'offer_ready';const packageData={offer_price:offer||null,asking_price:ask||null,offer_vs_ask:Number.isFinite(offer)&&Number.isFinite(ask)?offer-ask:null,motivation_score:motivation,decision,lead_id:leadId,property_id:propertyId,deal_id:dealId,message_strategy:decision==='negotiate'?'anchored_negotiation':'direct_offer',seller_review_required:true};const route=status==='offer_ready'?'WF-195':status==='blocked'?'WF-126':'WF-193';return[{json:{...x,workflow:'WF-194',seller_offer_package:{status,missing_requirements:missing,package:packageData},routing:{next_workflow:route,requires_human_review:true},audit:{event:'seller_offer_package_negotiation_launch_evaluated',status}}}];"
+      },
+      "name": "Code — Seller Offer Package Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.seller_offer_package.status}}",
+              "rightValue": "offer_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Offer Readiness Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-194:'+($json.deal_id||$json.property_id||'unknown')+':offer-package',external_source:'wholesale-os',activity_type:'seller_offer_package_negotiation_launch',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.seller_offer_package?.status||'unknown',notes:JSON.stringify({workflow:'WF-194',seller_offer_package:$json.seller_offer_package,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Offer Package Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-194',status:$json.seller_offer_package?.status??'unknown',next_workflow:$json.routing?.next_workflow??'WF-193',requires_human_review:Boolean($json.routing?.requires_human_review),seller_offer_package:$json.seller_offer_package??null}}}];"
+      },
+      "name": "Code — Offer Package Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Property Offer Strategy": {
+      "main": [
+        [
+          {
+            "node": "Code — Seller Offer Package Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Seller Offer Package Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Offer Readiness Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Offer Readiness Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Offer Package Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Offer Package Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Offer Package Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Offer Package Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-194-v1"
+}

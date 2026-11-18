@@ -1,0 +1,198 @@
+{
+  "name": "WF-313 — Dynamic MAO → Property-Level Offer Strategy & Acquisition Decision",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-313-dynamic-mao-property-offer-strategy",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf313-webhook",
+      "name": "Webhook — Dynamic MAO",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const dynamic=input.dynamic_mao??deal.dynamic_mao??{}; const mao=Number(dynamic.adjusted_mao??deal.adjusted_mao??deal.dynamic_mao); const asking=Number(deal.asking_price??deal.list_price??deal.current_price); const projectedProfit=Number(deal.projected_assignment_profit??deal.assignment_profit??deal.projected_net_profit??0); const motivation=String(deal.motivation_level??deal.motivation??'unknown').toLowerCase(); const assetType=String(dynamic.asset_type??deal.asset_type??deal.property_type??'unknown').toLowerCase(); const blockers=Array.isArray(deal.blockers)?deal.blockers:[]; const evidenceReady=deal.evidence_complete!==false; const identityReady=Boolean(deal.deal_id??deal.id); const validNumbers=Number.isFinite(mao)&&Number.isFinite(asking)&&Number.isFinite(projectedProfit); let decision='needs_evidence'; let reason='insufficient evidence'; if(blockers.length){decision='blocked';reason='active blockers';}else if(!identityReady||!evidenceReady){decision='needs_evidence';reason='identity or evidence incomplete';}else if(!validNumbers||mao<=0){decision='needs_evidence';reason='invalid underwriting inputs';}else if(asking<=mao&&projectedProfit>0){decision='pursue';reason='asking price is at or below dynamic MAO with positive projected profit';}else if(asking>mao&&asking<=mao*1.10&&projectedProfit>0&&motivation!=='low'){decision='negotiate';reason='asking price is within controlled negotiation band';}else if(projectedProfit<=0||asking>mao*1.10){decision='pass';reason=projectedProfit<=0?'projected profit is not positive':'asking price exceeds controlled negotiation band';} const strategy=assetType.includes('land')?'land-specific economics':assetType.includes('multi')?'multifamily-specific economics':'residential wholesale economics'; const status=decision==='blocked'?'blocked':decision==='needs_evidence'?'evidence_required':'decision_ready'; const offerStrategy={decision,reason,asking_price:asking,dynamic_mao:mao,projected_assignment_profit:projectedProfit,motivation,asset_type:assetType,strategy,ma_rule:'secondary_reference_only',economics_priority:'asset_specific_first',negotiation_ceiling:mao}; return [{json:{...deal,workflow_id:'WF-313',workflow_name:'Dynamic MAO → Property-Level Offer Strategy & Acquisition Decision',status,acquisition_decision:decision,offer_strategy:offerStrategy,next_workflow:decision==='pursue'||decision==='negotiate'?'WF-314':decision==='pass'?'WF-315':decision==='blocked'?'WF-126':'WF-312',crm_activity:{activity_type:'property_level_offer_strategy',deal_id:deal.deal_id??deal.id,status,offer_strategy:offerStrategy}}}];"
+      },
+      "id": "wf313-controller",
+      "name": "Controller — Offer Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "decision-ready",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "decision_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf313-gate",
+      "name": "IF — Acquisition Decision Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "acquisition_decision",
+              "value": "={{ $json.acquisition_decision }}"
+            },
+            {
+              "name": "offer_strategy",
+              "value": "={{ JSON.stringify($json.crm_activity.offer_strategy) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf313-crm",
+      "name": "InsulaCRM — Offer Strategy Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, status: $json.status, acquisition_decision: $json.acquisition_decision, next_workflow: $json.next_workflow, offer_strategy: $json.offer_strategy, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf313-response",
+      "name": "Response — Acquisition Decision",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Dynamic MAO": {
+      "main": [
+        [
+          {
+            "node": "Controller — Offer Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Offer Strategy": {
+      "main": [
+        [
+          {
+            "node": "IF — Acquisition Decision Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Acquisition Decision Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Offer Strategy Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Offer Strategy Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Offer Strategy Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Acquisition Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-313-v1",
+  "meta": {
+    "workflow_id": "WF-313",
+    "description": "Converts dynamic MAO and deal evidence into a property-level acquisition decision and offer strategy.",
+    "safety": {
+      "ma_rule_secondary_reference_only": true,
+      "hard_mao_ceiling": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

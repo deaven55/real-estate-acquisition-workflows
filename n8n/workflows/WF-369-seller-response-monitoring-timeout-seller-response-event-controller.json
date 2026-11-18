@@ -1,0 +1,177 @@
+{
+  "name": "WF-369 — Seller Response Monitoring → Timeout / Seller Response Event Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-369-seller-response-monitoring-event",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst dealId=input.deal_id??input.dealId, leadId=input.lead_id??input.leadId, propertyId=input.property_id??input.propertyId;\nconst providerMessageId=input.provider_message_id??input.providerMessageId;\nconst monitoringKey=input.monitoring_idempotency_key??input.delivery_idempotency_key??input.idempotency_key;\nconst eventType=String(input.event_type??input.eventType??'').toLowerCase();\nconst response= input.seller_response??input.inbound_seller_response??input.inbound_message??null;\nconst responseText=String(typeof response==='string'?response:(response?.text??'' )).trim();\nconst timeout=Boolean(input.response_timeout||eventType==='timeout');\nconst deliveryFailed=['failed','bounced','rejected','undeliverable'].includes(String(input.provider_status??input.delivery_status??'').toLowerCase());\nconst dnc=Boolean(input.dnc||input.do_not_contact||input.opted_out);\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst attempts=Number(input.attempts??0), maxAttempts=Number(input.max_attempts??5);\nconst identityValid=Boolean(dealId&&leadId&&propertyId&&providerMessageId&&monitoringKey);\nconst eventKey=monitoringKey&&providerMessageId&&eventType?\\`${monitoringKey}:event:${providerMessageId}:${eventType}\\`:null;\nlet decision='monitor',route='WF-361',reason='Seller response monitoring remains active.';\nif(dnc){decision='hard_stop';route='WF-126';reason='DNC/opt-out detected; stop automated seller outreach.'}\nelse if(blockers.length){decision='blocked';route='WF-126';reason='Operational blockers require controlled human handling.'}\nelse if(!identityValid){decision='reconcile';route='WF-360';reason='Required monitoring/provider identity is missing; reconcile before continuation.'}\nelse if(responseText){decision='seller_response';route='WF-342';reason='Seller response event received; classify and route the response.'}\nelse if(timeout){decision=attempts<maxAttempts?'timeout_followup':'max_attempts';route=attempts<maxAttempts?'WF-352':'WF-126';reason=attempts<maxAttempts?'Response window expired; evaluate controlled follow-up.':'Maximum outreach attempts reached; require human control.'}\nelse if(deliveryFailed){decision='delivery_failure';route='WF-350';reason='Delivery failure detected; route to controlled retry/re-engagement.'}\nelse {decision='monitor';route='WF-361';reason='No actionable seller event; continue monitoring.'}\nreturn [{json:{workflow:'WF-369',decision,route,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,provider_message_id:providerMessageId,event_type:eventType,response_text:responseText,response_timeout:timeout,delivery_failed:deliveryFailed,attempts,max_attempts:maxAttempts,dnc,blockers,monitoring_idempotency_key:monitoringKey,event_idempotency_key:eventKey,identity_valid:identityValid,next_action:route==='WF-342'?'classify_seller_response':route==='WF-352'?'evaluate_follow_up':route==='WF-350'?'controlled_retry_or_reengagement':route==='WF-361'?'continue_response_monitoring':'human_control',audit_event:'seller_response_monitoring_timeout_or_response_event'}}];"
+      },
+      "name": "Seller Event Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchWholeWord": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.decision}}",
+              "rightValue": "hard_stop",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "leftValue": "={{$json.decision}}",
+              "rightValue": "blocked",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Automation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({activity_type:'seller_response_monitoring_event',deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,provider_message_id:$json.provider_message_id,event_type:$json.event_type,response_timeout:$json.response_timeout,decision:$json.decision,route:$json.route,idempotency_key:$json.event_idempotency_key,metadata:{workflow:'WF-369',reason:$json.reason,attempts:$json.attempts,max_attempts:$json.max_attempts}})}}",
+        "options": {}
+      },
+      "name": "InsulaCRM Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({ok:true,workflow:'WF-369',decision:$json.decision,route:$json.route,reason:$json.reason,event_idempotency_key:$json.event_idempotency_key})}}",
+        "options": {}
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Seller Event Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seller Event Controller": {
+      "main": [
+        [
+          {
+            "node": "Automation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Automation Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM Audit": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-369-v1",
+  "meta": {
+    "workflow_id": "WF-369",
+    "purpose": "Seller response monitoring timeout and seller response event controller",
+    "provider_agnostic": true,
+    "secrets_source": "n8n environment variables only"
+  }
+}

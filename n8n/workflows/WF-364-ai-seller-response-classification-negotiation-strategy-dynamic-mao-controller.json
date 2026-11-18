@@ -1,0 +1,208 @@
+{
+  "name": "WF-364 — AI Seller Response Classification → Negotiation Strategy & Dynamic MAO Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-364-ai-classification-negotiation-strategy",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "364-webhook",
+      "name": "Webhook — AI Seller Classification",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const i=$input.first().json||{};const now=new Date().toISOString();const dealId=i.deal_id||i.dealId;const leadId=i.lead_id||i.leadId;const propertyId=i.property_id||i.propertyId;const classification=String(i.classification||i.ai_classification?.label||'unknown').toLowerCase();const response=String(i.seller_response||i.inbound_message||'').trim();const baseMao=Number(i.current_mao??i.mao??i.dynamic_mao??0);const ask=Number(i.seller_ask??i.counteroffer_amount??i.asking_price??0);const dnc=Boolean(i.dnc||i.do_not_contact);const blockers=Array.isArray(i.blockers)?i.blockers:[];let route='human_control',decision='review_required',factor=1,reason='insufficient_strategy_context';if(dnc){route='human_control';decision='stop';reason='dnc';}else if(blockers.length){route='human_control';decision='blocked';reason='deal_blocker';}else if(!dealId||!leadId||!propertyId){route='reconciliation';reason='missing_identity';}else if(classification==='rejection_or_optout'){route='reengagement';decision='reengage_or_close';reason='seller_rejected';}else if(classification==='positive'){route='negotiation';decision='advance_negotiation';reason='seller_positive';}else if(classification==='counteroffer'){if(baseMao>0&&ask>0){const ratio=ask/baseMao;if(ratio<=1.05){factor=1.02;decision='evaluate_counteroffer';reason='counteroffer_near_mao';}else if(ratio<=1.15){factor=1;decision='negotiate_within_mao';reason='counteroffer_above_mao';}else{factor=.97;decision='protect_mao_or_walk';reason='counteroffer_far_above_mao';}}else{decision='request_underwriting';reason='missing_mao_or_ask';}route='negotiation';}else if(classification==='call_request'){route='negotiation';decision='schedule_or_human_call';reason='seller_requested_call';}else if(classification==='question_or_neutral'){route='negotiation';decision='clarify_and_continue';reason='neutral_response';}const adjustedMao=baseMao>0?Number((baseMao*factor).toFixed(2)):0;const key=(i.event_idempotency_key||[dealId,leadId,propertyId,classification,response].filter(Boolean).join(':'))+':strategy';return[{json:{...i,workflow_id:'WF-364',status:'strategy_ready',route,decision,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,classification,seller_response:response,base_mao:baseMao,seller_ask:ask,mao_adjustment_factor:factor,adjusted_mao:adjustedMao,negotiation_strategy:{decision,reason,classification,base_mao:baseMao,adjusted_mao:adjustedMao,seller_ask:ask,protect_mao:true,walk_away_if_exceeded:adjustedMao>0&&ask>adjustedMao},strategy_idempotency_key:key,processed_at:now,crm_activity:{type:'negotiation_strategy_dynamic_mao',workflow_id:'WF-364',decision,reason,classification,base_mao:baseMao,adjusted_mao:adjustedMao,seller_ask:ask}}}];"
+      },
+      "id": "364-controller",
+      "name": "Controller — Build Negotiation Strategy & Dynamic MAO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchWholeWord": false,
+            "operator": "or",
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.route}}",
+              "rightValue": "negotiation",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{$json.route}}",
+              "rightValue": "reengagement",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "364-gate",
+      "name": "IF — Strategy Routing",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{$json.lead_id}}"
+            },
+            {
+              "name": "activity_type",
+              "value": "={{$json.crm_activity.type}}"
+            },
+            {
+              "name": "notes",
+              "value": "={{JSON.stringify($json.crm_activity)}}"
+            },
+            {
+              "name": "external_id",
+              "value": "={{$json.strategy_idempotency_key}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "364-crm",
+      "name": "InsulaCRM — Persist Negotiation Strategy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "364-response",
+      "name": "Respond — Strategy State",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — AI Seller Classification": {
+      "main": [
+        [
+          {
+            "node": "Controller — Build Negotiation Strategy & Dynamic MAO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Build Negotiation Strategy & Dynamic MAO": {
+      "main": [
+        [
+          {
+            "node": "IF — Strategy Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Strategy Routing": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Persist Negotiation Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Persist Negotiation Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Persist Negotiation Strategy": {
+      "main": [
+        [
+          {
+            "node": "Respond — Strategy State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-364-v1",
+  "meta": {
+    "workflow_id": "WF-364",
+    "purpose": "Convert AI seller response classification into negotiation strategy and dynamic MAO evaluation",
+    "routes": {
+      "negotiation": "WF-343",
+      "reengagement": "WF-345",
+      "reconciliation": "WF-360",
+      "human_control": "WF-126"
+    }
+  }
+}

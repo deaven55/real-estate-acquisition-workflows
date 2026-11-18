@@ -1,0 +1,165 @@
+{
+  "name": "WF-255 — Seller Offer Package → Offer Dispatch, Delivery Receipt & Negotiation State",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-255-offer-dispatch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$json.body??$json;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const status=String(d.status??\"\").toLowerCase();const channel=String(d.channel??d.offer_channel??\"\").toLowerCase();const offer=d.offer_package??{};const offer_price=Number(offer.offer_price??d.offer_price??NaN),mao=Number(offer.mao_ceiling??d.dynamic_mao??NaN);const recipient=String(d.recipient??d.seller_contact??\"\").trim();const dispatch_id=d.dispatch_id??`offer:${deal_id??\"unknown\"}:${offer_price}`;let state=\"needs_review\",reason=\"Offer dispatch requires review.\",next=\"WF-126\";if(!lead_id||!deal_id||!property_id){state=\"blocked\";reason=\"Missing lead, deal, or property identity.\";}else if(status!==\"offer_package_ready\"){state=\"package_not_ready\";reason=\"Seller offer package is not ready.\";next=\"WF-254\";}else if(![\"sms\",\"email\"].includes(channel)){state=\"channel_required\";reason=\"A supported seller communication channel is required.\";next=\"WF-254\";}else if(!recipient){state=\"recipient_missing\";reason=\"Seller recipient is required.\";next=\"WF-254\";}else if(!Number.isFinite(offer_price)||!Number.isFinite(mao)||offer_price<=0||offer_price>mao){state=\"maO_guardrail_failed\";reason=\"Offer price is invalid or exceeds dynamic MAO.\";next=\"WF-254\";}else{state=\"dispatch_ready\";reason=\"Offer dispatch is authorized for controlled outbound execution.\";next=\"WF-256\";}return[{json:{workflow:\"WF-255\",lead_id,deal_id,property_id,channel,recipient,offer_price,mao_ceiling:mao,dispatch_id,idempotency_key:`wf255:${dispatch_id}`,dispatch_state:state,reason,requires_human_review:true,next_workflow:next,delivery_receipt_required:true,provider_execution:\"external_provider_required\"}}];"
+      },
+      "name": "Offer Dispatch Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.dispatch_state }}",
+              "rightValue": "dispatch_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Dispatch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'offer_dispatch',notes:'WF-255 state='+$json.dispatch_state+' channel='+$json.channel+' dispatch_id='+$json.dispatch_id+' next='+$json.next_workflow,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Offer Dispatch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,dispatch_ready:$json.dispatch_state===\"dispatch_ready\",delivery_receipt_required:true,next_workflow:$json.next_workflow}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Offer Dispatch Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offer Dispatch Controller": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Offer Dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Offer Dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Offer Dispatch": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-255-offer-dispatch-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

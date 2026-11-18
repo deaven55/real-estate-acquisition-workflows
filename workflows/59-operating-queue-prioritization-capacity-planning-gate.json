@@ -1,0 +1,42 @@
+{
+  "name": "WF-059 Operating Queue Prioritization & Capacity Planning Gate",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wf-059-operating-queue-capacity", "responseMode": "responseNode", "options": {} },
+      "id": "wf059-webhook",
+      "name": "Operating Queue Capacity Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "wf-059-operating-queue-capacity"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const records=Array.isArray(input.records)?input.records:Array.isArray(input.operating_queue)?input.operating_queue:[]; const norm=v=>String(v??'').trim(); const lower=v=>norm(v).toLowerCase(); const num=v=>{const n=Number(v);return Number.isFinite(n)?n:null}; const weights={critical:100,high:75,medium:50,low:25}; const capacity=Math.max(1,num(input.capacity_per_cycle??input.capacity??10)??10); const queue=[]; const issues=[]; records.forEach((r,i)=>{const priority=lower(r.priority??r.severity??'medium'); const stage=lower(r.stage??r.status??''); const age=num(r.age_hours??r.overdue_hours??0)??0; const sla=Boolean(r.sla_breached??(num(r.overdue_hours)>0)); const blocked=Boolean(r.blocked??r.blocking); const next=norm(r.next_action); const identity=norm(r.normalized_identity_key??r.candidate_key??r.parcel_id??r.property_id); let score=weights[priority]??50; if(blocked)score+=25; if(sla)score+=20; score+=Math.min(20,Math.floor(age/24)*5); if(!identity){score+=10;issues.push({record_index:i,type:'missing_canonical_identity',severity:'blocking'});} if(!next)issues.push({record_index:i,type:'missing_next_action',severity:'review'}); queue.push({record_index:i,record_id:norm(r.record_id??r.deal_id??r.lead_id??r.id)||null,stage,priority,blocked,sla_breached:sla,age_hours:age,priority_score:score,next_action:next||'Assign next operational action.',identity_present:Boolean(identity)});}); queue.sort((a,b)=>b.priority_score-a.priority_score); const assigned=queue.slice(0,capacity); const deferred=queue.slice(capacity); const health=issues.some(x=>x.severity==='blocking')?'blocked':issues.length?'needs_review':queue.length?'ready':'needs_review'; return[{json:{ok:health==='ready',queue_health:health,record_count:queue.length,capacity_per_cycle:capacity,prioritized_queue:queue,dispatch_queue:assigned,deferred_queue:deferred,queue_summary:{critical:queue.filter(x=>x.priority==='critical').length,high:queue.filter(x=>x.priority==='high').length,blocked:queue.filter(x=>x.blocked).length,sla_breached:queue.filter(x=>x.sla_breached).length,dispatch_count:assigned.length,deferred_count:deferred.length},quality_issues:issues,next_action:health==='ready'?'Work the dispatch queue in priority order and re-evaluate capacity after each operating cycle.':health==='blocked'?'Resolve missing canonical identity before assigning consequential work.':'Repair queue data-quality issues while using the prioritized list for operational review.',policy:{prioritization_only:true,no_external_side_effects:true,no_automatic_assignment_execution:true,no_automatic_outreach:true,no_legal_validation:true,no_title_clearance_claim:true,no_funding_verification_claim:true}}}];"
+      },
+      "id": "wf059-queue",
+      "name": "Prioritize Operating Queue & Capacity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": {} },
+      "id": "wf059-response",
+      "name": "Respond Operating Queue",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Operating Queue Capacity Webhook": { "main": [[{ "node": "Prioritize Operating Queue & Capacity", "type": "main", "index": 0 }]] },
+    "Prioritize Operating Queue & Capacity": { "main": [[{ "node": "Respond Operating Queue", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "wf059-1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

@@ -1,0 +1,171 @@
+{
+  "name": "WF-138 Post-Close Completion → Assignment Profit & Performance Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-138-post-close-profit-performance-controller",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "138-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "wf-138-post-close-profit-performance-controller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json; const deal=input.deal??input; const close=input.closing??input; const financial=input.financial??{}; const gross=Number(financial.assignment_fee??deal.assignment_fee??0); const purchase=Number(financial.purchase_price??deal.purchase_price??0); const buyer=Number(financial.buyer_price??deal.buyer_price??0); const closingCosts=Number(financial.closing_costs??0); const marketing=Number(financial.marketing_costs??0); const other=Number(financial.other_costs??0); const net=gross-closingCosts-marketing-other; const spread=buyer-purchase; const outcome=String(input.post_close_outcome??input.outcome??close.outcome??'').toLowerCase(); const closed=['closed','funded','recorded','completed'].includes(outcome); const disputed=['disputed','failed','reversed'].includes(outcome); const economics={assignment_fee:gross,purchase_price:purchase,buyer_price:buyer,closing_costs:closingCosts,marketing_costs:marketing,other_costs:other,net_profit:net,buyer_seller_spread:spread}; const status=disputed?'performance_exception':closed?'profit_calculated': 'post_close_pending'; const route=disputed?'human_review':closed?'WF-044 CRM closeout/performance reporting':'WF-137 closing milestone completion outcome controller'; return [{json:{workflow_id:'WF-138',workflow_name:'Post-Close Completion → Assignment Profit & Performance Controller',status,route,deal_id:deal.id??deal.deal_id??null,lead_id:deal.lead_id??null,property_id:deal.property_id??null,buyer_id:deal.buyer_id??null,closing_outcome:outcome,economics,profitability:{net_profit:net,profit_positive:net>0,spread_positive:spread>0},performance:{closed,disputed},next_workflow:route,crm_activity:{event_type:'post_close_profit_performance',outcome:status,route,deal_id:deal.id??deal.deal_id??null},idempotency_key:'wf-138:post-close:'+(deal.id??deal.deal_id??input.event_id??'unknown')}}}];"
+      },
+      "id": "138-controller",
+      "name": "Calculate Post-Close Performance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -650,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status}}",
+              "rightValue": "profit_calculated",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "138-complete",
+      "name": "Post-Close Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.INSULA_CRM_BASE_URL||'')+'/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY||''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{JSON.stringify({event_type:$json.crm_activity.event_type,outcome:$json.crm_activity.outcome,route:$json.route,deal_id:$json.deal_id,lead_id:$json.lead_id,property_id:$json.property_id,buyer_id:$json.buyer_id,workflow_id:$json.workflow_id,economics:$json.economics,profitability:$json.profitability,idempotency_key:$json.idempotency_key})}}",
+        "options": {}
+      },
+      "id": "138-crm",
+      "name": "Persist CRM Performance Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const original=$('Calculate Post-Close Performance').first().json; return [{json:{...original,crm_persistence:'attempted',controller_result:{status:original.status,route:original.route,economics:original.economics,profitability:original.profitability,next_workflow:original.next_workflow}}}];"
+      },
+      "id": "138-response",
+      "name": "Controller Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Calculate Post-Close Performance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Post-Close Performance": {
+      "main": [
+        [
+          {
+            "node": "Post-Close Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post-Close Complete?": {
+      "main": [
+        [
+          {
+            "node": "Persist CRM Performance Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist CRM Performance Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist CRM Performance Activity": {
+      "main": [
+        [
+          {
+            "node": "Controller Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-138-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

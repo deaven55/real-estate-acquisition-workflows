@@ -1,0 +1,163 @@
+{
+  "name": "WF-214 — Property-Level Offer Strategy → Seller Offer Package & Negotiation Launch",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf-214-property-offer-strategy-seller-offer-package-negotiation-launch",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook — Offer Strategy",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-214-property-offer-strategy-seller-offer-package-negotiation-launch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json??{};const s=x.property_offer_strategy??{};const missing=[];if(s.status!=='decision_ready')missing.push('decision_ready_status');if(!x.lead_id)missing.push('lead_id');if(!x.deal_id)missing.push('deal_id');if(!x.property_id)missing.push('property_id');if(!Number.isFinite(Number(s.adjusted_mao)))missing.push('adjusted_mao');const decision=s.decision;const offer=Number(x.offer_price??(decision==='pursue'?s.adjusted_mao:(s.negotiation_band?.target??s.adjusted_mao)));const status=missing.length?'blocked':(decision==='pursue'||decision==='negotiate')?'offer_package_ready':'not_offer_ready';const strategy=decision==='negotiate'?'negotiate_near_mao':decision==='pursue'?'pursue_at_or_below_mao':'pass';const next=status==='offer_package_ready'?'WF-215':'WF-126';return[{json:{...x,workflow:'WF-214',seller_offer_package:{status,strategy,offer_price:Number.isFinite(offer)?Math.round(offer*100)/100:null,maO_ceiling:Number(s.adjusted_mao),decision,negotiation_target:s.negotiation_band?.target??null,seller_review_required:true,missing},routing:{next_workflow:next,requires_human_review:true},audit:{event:'property_offer_strategy_seller_offer_package_negotiation_launch_evaluated',status}}}];"
+      },
+      "name": "Code — Seller Offer Package Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{$json.seller_offer_package.status}}",
+              "rightValue": "offer_package_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "IF — Offer Package Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL + '/api/v1/activities'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({external_id:'wf-214:'+($json.deal_id||'unknown')+':seller-offer-package',external_source:'wholesale-os',activity_type:'property_offer_strategy_seller_offer_package_negotiation_launch',lead_id:$json.lead_id||null,property_id:$json.property_id||null,deal_id:$json.deal_id||null,status:$json.seller_offer_package?.status||'blocked',notes:JSON.stringify({workflow:'WF-214',seller_offer_package:$json.seller_offer_package,routing:$json.routing,audit:$json.audit})})}}"
+      },
+      "name": "HTTP — Persist Seller Offer Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,response:{ok:true,workflow:'WF-214',status:$json.seller_offer_package?.status??'blocked',offer_price:$json.seller_offer_package?.offer_price??null,next_workflow:$json.routing?.next_workflow??'WF-126',seller_review_required:true}}}];"
+      },
+      "name": "Code — Seller Offer Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Offer Strategy": {
+      "main": [
+        [
+          {
+            "node": "Code — Seller Offer Package Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Seller Offer Package Controller": {
+      "main": [
+        [
+          {
+            "node": "IF — Offer Package Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Offer Package Gate": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Persist Seller Offer Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Persist Seller Offer Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Persist Seller Offer Activity": {
+      "main": [
+        [
+          {
+            "node": "Code — Seller Offer Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-214-v1"
+}

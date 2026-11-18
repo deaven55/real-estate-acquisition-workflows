@@ -1,0 +1,165 @@
+{
+  "name": "WF-225 — Closing Coordination → Critical Dates & Milestone Monitoring",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-225-critical-dates-milestones",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;const d=input.deal??input;const lead_id=d.lead_id??null,deal_id=d.deal_id??null,property_id=d.property_id??null;const closing_date=d.closing_date??d.target_closing_date??null;const now=d.as_of??new Date().toISOString();const milestones=Array.isArray(d.milestones)?d.milestones:[];const blockers=Array.isArray(d.blockers)?d.blockers:[];const critical=milestones.filter(m=>m.critical===true||String(m.priority??\"\").toLowerCase()===\"critical\");const overdue=milestones.filter(m=>{if(!m.due_at)return false;return new Date(m.due_at).getTime()<new Date(now).getTime()&&![\"completed\",\"verified\",\"closed\"].includes(String(m.status??\"\").toLowerCase());});const critical_overdue=overdue.filter(m=>critical.some(c=>(c.id&&c.id===m.id)||c.name===m.name));let state=\"blocked\",route=\"WF-126\",reason=\"Milestone monitoring cannot proceed.\";if(!lead_id||!deal_id||!property_id||!closing_date){reason=\"Missing transaction identity or closing date.\";}else if(blockers.length){reason=\"Unresolved blockers require escalation.\";}else if(critical_overdue.length){state=\"critical_overdue\";route=\"WF-207\";reason=\"Critical closing milestones are overdue.\";}else if(overdue.length){state=\"attention_required\";route=\"WF-207\";reason=\"One or more closing milestones are overdue.\";}else if(milestones.length&&milestones.every(m=>[\"completed\",\"verified\",\"closed\"].includes(String(m.status??\"\").toLowerCase()))){state=\"milestones_completed\";route=\"WF-206\";reason=\"All tracked closing milestones are complete.\";}else{state=\"on_track\";route=\"WF-206\";reason=\"Closing milestones are on track; continue evidence monitoring.\";}return[{json:{workflow:\"WF-225\",lead_id,deal_id,property_id,closing_date,as_of:now,milestones,critical_milestones:critical,overdue_milestones:overdue,critical_overdue_milestones:critical_overdue,blockers,state,route,reason,requires_human_review:state!==\"on_track\"}}];"
+      },
+      "name": "Critical Date & Milestone Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchType": "all",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "on_track",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Milestone Monitoring Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({lead_id:$json.lead_id,activity_type:'closing_milestone_monitor',notes:'WF-225 state='+$json.state+' route='+$json.route+' reason='+$json.reason,metadata:$json}) }}",
+        "options": {}
+      },
+      "name": "Persist Milestone Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{...$json,persisted:true,next_workflow:$json.route,milestone_monitoring_active:true}}];"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Critical Date & Milestone Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critical Date & Milestone Controller": {
+      "main": [
+        [
+          {
+            "node": "Milestone Monitoring Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Milestone Monitoring Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist Milestone Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist Milestone Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Milestone Status": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-225-critical-dates-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

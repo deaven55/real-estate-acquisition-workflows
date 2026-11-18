@@ -1,0 +1,169 @@
+{
+  "name": "WF-354 — Follow-Up Re-engagement Dispatch → Delivery Receipt / Response Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-354-followup-reengagement-dispatch",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf354-webhook",
+      "name": "Webhook — Follow-Up Re-engagement Dispatch",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{}; const event=input.event??input;\nconst dealId=event.deal_id??event.dealId, leadId=event.lead_id??event.leadId, propertyId=event.property_id??event.propertyId;\nconst channel=String(event.channel??event.preferred_channel??'sms').toLowerCase();\nconst phone=event.phone??event.seller?.phone, email=event.email??event.seller?.email;\nconst message=String(event.message??event.body??'').trim();\nconst dnc=Boolean(event.dnc??event.do_not_contact), blockers=Array.isArray(event.blockers)?event.blockers:[];\nconst attempts=Number(event.attempts??0), maxAttempts=Number(event.max_attempts??3);\nconst baseKey=event.idempotency_key??[dealId,leadId,propertyId,'seller-followup'].filter(Boolean).join(':');\nconst idempotencyKey=baseKey+':dispatch:'+attempts;\nlet route='WF-347', decision='dispatch_ready';\nif(dnc){route='WF-126';decision='dnc_hard_stop';}\nelse if(blockers.length){route='WF-126';decision='blocked';}\nelse if(!dealId||!leadId||!propertyId||!baseKey){route='WF-353';decision='identity_or_idempotency_missing';}\nelse if(attempts>=maxAttempts){route='WF-126';decision='human_review_max_attempts';}\nelse if(!message){route='WF-346';decision='message_missing';}\nelse if(channel==='sms'&&!phone){route=email?'WF-347':'WF-352';decision='sms_contact_missing';}\nelse if(channel==='email'&&!email){route=phone?'WF-347':'WF-352';decision='email_contact_missing';}\nreturn [{json:{...event,workflow:'WF-354',decision,route,deal_id:dealId,lead_id:leadId,property_id:propertyId,channel,phone,email,message,attempts,max_attempts:maxAttempts,idempotency_key:idempotencyKey,audit_event:'seller_followup_reengagement_dispatch_controller'}}];"
+      },
+      "id": "wf354-controller",
+      "name": "Controller — Dispatch Safety & Routing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchers": [],
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "dispatch_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf354-gate",
+      "name": "IF — Dispatch Ready",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY || '' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({lead_id:$json.lead_id,deal_id:$json.deal_id,property_id:$json.property_id,activity_type:'seller_followup_reengagement_dispatch',status:$json.decision,route:$json.route,channel:$json.channel,idempotency_key:$json.idempotency_key,attempts:$json.attempts,created_by:'WF-354'}) }}",
+        "options": {}
+      },
+      "id": "wf354-crm",
+      "name": "InsulaCRM — Audit Dispatch Decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ok:true,workflow:'WF-354',decision:$json.decision,route:$json.route,channel:$json.channel,idempotency_key:$json.idempotency_key,next_action:$json.route==='WF-347'?'provider_dispatch':$json.route}) }}",
+        "options": {}
+      },
+      "id": "wf354-response",
+      "name": "Respond — Dispatch Routing",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Follow-Up Re-engagement Dispatch": {
+      "main": [
+        [
+          {
+            "node": "Controller — Dispatch Safety & Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Dispatch Safety & Routing": {
+      "main": [
+        [
+          {
+            "node": "IF — Dispatch Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Dispatch Ready": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Audit Dispatch Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Audit Dispatch Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Audit Dispatch Decision": {
+      "main": [
+        [
+          {
+            "node": "Respond — Dispatch Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-354-v1"
+}

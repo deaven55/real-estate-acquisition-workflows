@@ -1,0 +1,169 @@
+{
+  "name": "WF-357 — Seller Response / Timeout → Final Follow-Up Eligibility & Re-engagement Decision Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-357-final-followup-eligibility",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf357-webhook",
+      "name": "Webhook — Response / Timeout Eligibility",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{}; const event=input.event??input;\nconst dealId=event.deal_id??event.dealId, leadId=event.lead_id??event.leadId, propertyId=event.property_id??event.propertyId;\nconst response=event.seller_response??event.inbound_response??event.response;\nconst responseType=String(event.response_type??event.classification??'').toLowerCase();\nconst status=String(event.status??'').toLowerCase();\nconst dnc=Boolean(event.dnc??event.do_not_contact), blockers=Array.isArray(event.blockers)?event.blockers:[];\nconst attempts=Number(event.attempts??event.outreach_attempts??0), maxAttempts=Number(event.max_attempts??3);\nconst consent=event.followup_consent===false?false:true;\nconst sellerOptOut=Boolean(event.opt_out||event.unsubscribe||event.stop);\nconst baseKey=event.idempotency_key??[dealId,leadId,propertyId,'seller-followup'].filter(Boolean).join(':');\nconst decisionKey=baseKey+':eligibility:'+attempts;\nlet route='WF-352',decision='followup_not_eligible',reason='unclassified';\nif(dnc||sellerOptOut){route='WF-126';decision='dnc_hard_stop';reason='seller_opt_out_or_dnc';}\nelse if(blockers.length){route='WF-126';decision='blocked';reason='operational_blocker';}\nelse if(!dealId||!leadId||!propertyId||!baseKey){route='WF-356';decision='missing_identity_or_idempotency';reason='required_identity_missing';}\nelse if(response){route='WF-342';decision='seller_response_received';reason='inbound_response_priority';}\nelse if(responseType==='not_interested'||responseType==='rejected'){route='WF-345';decision='reengagement_eligible';reason='seller_rejection';}\nelse if(attempts>=maxAttempts){route='WF-126';decision='human_review_max_attempts';reason='outreach_limit_reached';}\nelse if(consent&&['followup_due','timeout','no_response',''].includes(status)){route='WF-346';decision='reengagement_eligible';reason='followup_due_or_timeout';}\nelse {route='WF-352';decision='followup_not_eligible';reason='waiting_or_unresolved_state';}\nreturn [{json:{...event,workflow:'WF-357',decision,reason,route,deal_id:dealId,lead_id:leadId,property_id:propertyId,attempts,max_attempts:maxAttempts,followup_consent:consent,idempotency_key:baseKey,decision_idempotency_key:decisionKey,audit_event:'final_followup_eligibility_reengagement_decision'}}];"
+      },
+      "id": "wf357-controller",
+      "name": "Controller — Final Follow-Up Eligibility & Routing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "matchers": [],
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "reengagement_eligible",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf357-gate",
+      "name": "IF — Re-engagement Eligible",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.INSULA_CRM_BASE_URL || '') + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY || '' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({lead_id:$json.lead_id,deal_id:$json.deal_id,property_id:$json.property_id,activity_type:'final_followup_eligibility_decision',status:$json.decision,reason:$json.reason,route:$json.route,attempts:$json.attempts,max_attempts:$json.max_attempts,idempotency_key:$json.decision_idempotency_key,created_by:'WF-357'}) }}",
+        "options": {}
+      },
+      "id": "wf357-crm",
+      "name": "InsulaCRM — Audit Final Follow-Up Decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ok:true,workflow:'WF-357',decision:$json.decision,reason:$json.reason,route:$json.route,attempts:$json.attempts,idempotency_key:$json.decision_idempotency_key,next_action:$json.route}) }}",
+        "options": {}
+      },
+      "id": "wf357-response",
+      "name": "Respond — Final Follow-Up Routing",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Response / Timeout Eligibility": {
+      "main": [
+        [
+          {
+            "node": "Controller — Final Follow-Up Eligibility & Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Final Follow-Up Eligibility & Routing": {
+      "main": [
+        [
+          {
+            "node": "IF — Re-engagement Eligible",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Re-engagement Eligible": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Audit Final Follow-Up Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Audit Final Follow-Up Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Audit Final Follow-Up Decision": {
+      "main": [
+        [
+          {
+            "node": "Respond — Final Follow-Up Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-357-v1"
+}

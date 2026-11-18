@@ -1,0 +1,219 @@
+{
+  "name": "WF-331 — Portfolio Performance → Underwriting Calibration & Dynamic MAO Feedback Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-331-underwriting-calibration",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf331-webhook",
+      "name": "Webhook — Portfolio Performance",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst status=String(input.performance_status??input.status??'').toLowerCase();\nconst dealId=input.deal_id,leadId=input.lead_id,propertyId=input.property_id;\nconst net=Number(input.net_profit??0);\nconst margin=Number(input.profit_margin??0);\nconst sample=Number(input.historical_sample_size??input.sample_size??0);\nconst netDelta=Number(input.net_profit_delta??0);\nconst marginDelta=Number(input.margin_delta??0);\nlet calibration_status='needs_review',next='WF-126',reason='underwriting calibration requires review',factor=1,confidence='low';\nif(input.dnc===true){calibration_status='blocked_dnc';reason='DNC/contact restriction';}\nelse if(!dealId||!leadId||!propertyId){calibration_status='incomplete_identity';reason='deal/property/lead identity incomplete';}\nelse if(status!=='performance_record_ready'){calibration_status='performance_not_ready';next='WF-330';reason='portfolio performance record is not ready';}\nelse if(!Number.isFinite(net)||!Number.isFinite(margin)){calibration_status='performance_inputs_invalid';reason='realized performance inputs are invalid';}\nelse{\n  if(sample>=20){confidence='high';if(marginDelta<-0.10||netDelta<0)factor=0.95;else if(marginDelta>0.10&&netDelta>0)factor=1.03;}\n  else if(sample>=10){confidence='medium';if(marginDelta<-0.15)factor=0.97;else if(marginDelta>0.15&&netDelta>0)factor=1.02;}\n  else{confidence='low';}\n  calibration_status=confidence==='low'?'low_confidence_review':'calibration_ready';\n  next=confidence==='low'?'WF-126':'WF-332';\n  reason=confidence==='low'?'insufficient realized sample for autonomous MAO calibration':'confidence-weighted underwriting calibration completed';\n}\nreturn [{json:{...input,workflow_id:'WF-331',workflow_name:'Portfolio Performance → Underwriting Calibration & Dynamic MAO Feedback Controller',calibration_status,reason,deal_id:dealId,lead_id:leadId,property_id:propertyId,net_profit:net,profit_margin:margin,historical_sample_size:sample,net_profit_delta:netDelta,margin_delta:marginDelta,calibration_factor:factor,confidence,next_workflow:next,human_review_required:calibration_status!=='calibration_ready',calibration_policy:{sample_20_plus:'high confidence: 0.95 underperformance / 1.03 outperformance',sample_10_to_19:'medium confidence: 0.97 underperformance / 1.02 outperformance',sample_under_10:'low confidence: human review',asset_economics_primary:true,rule_70_secondary:true},crm_activity:{activity_type:'underwriting_calibration',deal_id:dealId,lead_id:leadId,property_id:propertyId,status:calibration_status,calibration_factor:factor,confidence,reason}}}];"
+      },
+      "id": "wf331-controller",
+      "name": "Controller — Underwriting Calibration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "matchType": "all",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "calibration-gate",
+              "leftValue": "={{ $json.calibration_status }}",
+              "rightValue": "calibration_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "identity-gate",
+              "leftValue": "={{ $json.deal_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf331-gate",
+      "name": "IF — Calibration Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "activity_type",
+              "value": "={{ $json.crm_activity.activity_type }}"
+            },
+            {
+              "name": "deal_id",
+              "value": "={{ $json.crm_activity.deal_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.crm_activity.lead_id }}"
+            },
+            {
+              "name": "property_id",
+              "value": "={{ $json.crm_activity.property_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.crm_activity.status }}"
+            },
+            {
+              "name": "calibration_factor",
+              "value": "={{ $json.crm_activity.calibration_factor }}"
+            },
+            {
+              "name": "confidence",
+              "value": "={{ $json.crm_activity.confidence }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.crm_activity.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf331-crm",
+      "name": "InsulaCRM — Underwriting Calibration Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { workflow_id: $json.workflow_id, calibration_status: $json.calibration_status, reason: $json.reason, calibration_factor: $json.calibration_factor, confidence: $json.confidence, calibration_policy: $json.calibration_policy, next_workflow: $json.next_workflow, human_review_required: $json.human_review_required, crm_persisted: true } }}",
+        "options": {}
+      },
+      "id": "wf331-response",
+      "name": "Response — Underwriting Calibration Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Portfolio Performance": {
+      "main": [
+        [
+          {
+            "node": "Controller — Underwriting Calibration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controller — Underwriting Calibration": {
+      "main": [
+        [
+          {
+            "node": "IF — Calibration Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Calibration Gate": {
+      "main": [
+        [
+          {
+            "node": "InsulaCRM — Underwriting Calibration Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "InsulaCRM — Underwriting Calibration Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsulaCRM — Underwriting Calibration Activity": {
+      "main": [
+        [
+          {
+            "node": "Response — Underwriting Calibration Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-331-v1",
+  "meta": {
+    "workflow_id": "WF-331",
+    "description": "Applies confidence-weighted realized performance calibration to underwriting strategy; asset-specific economics remain primary and the 70% rule is secondary.",
+    "safety": {
+      "dnc_protection": true,
+      "low_sample_human_review": true,
+      "credentials_runtime_only": true
+    }
+  }
+}

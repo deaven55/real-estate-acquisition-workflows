@@ -1,0 +1,184 @@
+{
+  "name": "WF-342 — Delivery Receipt / Seller Response → AI Classification & Negotiation Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-342-delivery-receipt-seller-response-classification",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf342-webhook",
+      "name": "WF-342 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-342-delivery-receipt-seller-response-classification"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json??{};\nconst event=String(input.provider_event??input.delivery_status??input.status??'').toLowerCase();\nconst sellerResponse=String(input.seller_response??input.inbound_message??input.message??'').trim();\nconst dealId=input.deal_id??null; const leadId=input.lead_id??null; const propertyId=input.property_id??null;\nconst dispatchId=String(input.dispatch_id??'').trim(); const idempotencyKey=String(input.idempotency_key??'').trim();\nconst dynamicMao=Number(input.dynamic_mao??input.adjusted_mao??input.mao);\nconst dnc=Boolean(input.dnc??input.do_not_contact??false); const blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst identityComplete=Boolean(dealId&&leadId&&propertyId); const hardBlock=dnc||blockers.length>0;\nlet status='pending'; let nextWorkflow='WF-341'; let route='awaiting_receipt'; let classification='no_response'; let counterofferAmount=null; let reason='Awaiting provider receipt or seller response.';\nif(hardBlock){status=dnc?'dnc_blocked':'blocked';route='blocked';nextWorkflow='WF-126';reason=dnc?'Seller is on DNC; inbound/outbound action requires blocking.' :'Active blocker prevents communication processing.';}\nelse if(!identityComplete||!dispatchId||!idempotencyKey){status='incomplete';route='incomplete';nextWorkflow='WF-341';reason='Missing deal identity or dispatch idempotency evidence.';}\nelse if(['delivered','sent','accepted'].includes(event)&&!sellerResponse){status='delivered_awaiting_response';route='awaiting_seller_response';nextWorkflow='WF-343';reason='Provider confirms delivery; awaiting seller response.';}\nelse if(['failed','bounced','rejected','undelivered'].includes(event)){status='delivery_failed';route='retry_or_review';nextWorkflow='WF-341';reason='Provider reports delivery failure; retry/review is required.';}\nelse if(sellerResponse){\n const normalized=sellerResponse.toLowerCase();\n const nums=sellerResponse.replace(/[$,]/g,'').match(/\\b\\d+(?:\\.\\d+)?\\b/g)||[];\n const parsed=nums.map(Number).filter(Number.isFinite); counterofferAmount=parsed.length?Math.max(...parsed):null;\n if(/\\b(don't|do not)\\s*(contact|call|text|message)|stop\\s*(contacting|texting|calling)|remove me|unsubscribe/.test(normalized)){classification='dnc';status='dnc_received';route='dnc';nextWorkflow='WF-126';reason='Seller requested no further contact.';}\n else if(/\\b(yes|accept|accepted|deal|let's do it|sounds good|agreed)\\b/.test(normalized)){classification='accepted';status='response_received';route='accepted';nextWorkflow='WF-344';reason='Seller response indicates acceptance; negotiation/contract decision required.';}\n else if(counterofferAmount!==null&&(/\\$|offer|take|would you|can you|price|counter|need/.test(normalized))){classification='counteroffer';status='response_received';route='counteroffer';nextWorkflow='WF-344';reason='Seller response contains a likely price/counteroffer signal.';}\n else if(/\\b(no|not interested|pass|decline|declined|too low|can't|cannot)\\b/.test(normalized)){classification='rejected';status='response_received';route='rejected';nextWorkflow='WF-345';reason='Seller response indicates rejection or unwillingness.';}\n else if(/\\?|what|why|how|when|where|explain|tell me/.test(normalized)){classification='question';status='response_received';route='question';nextWorkflow='WF-344';reason='Seller response requires clarification or negotiation handling.';}\n else {classification='other_response';status='response_received';route='other';nextWorkflow='WF-344';reason='Seller response received but requires AI negotiation classification.';}\n}\nconst activity={activity_type:'delivery_receipt_seller_response_ai_classification',subject:'WF-342 '+(dealId??'unknown-deal'),deal_id:dealId,lead_id:leadId,property_id:propertyId,status,event,classification,route,next_workflow:nextWorkflow,dispatch_id:dispatchId,idempotency_key:idempotencyKey,counteroffer_amount:counterofferAmount,dynamic_mao:dynamicMao,dnc,blockers,reason};\nreturn [{json:{...input,wf_id:'WF-342',status,route,classification,counteroffer_amount:counterofferAmount,next_workflow:nextWorkflow,dynamic_mao:dynamicMao,reason,crm_activity:activity,evaluated_at:new Date().toISOString()}}];"
+      },
+      "id": "wf342-controller",
+      "name": "WF-342 AI Response Classification Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "checkStronglyTypedComparison": false,
+            "looseTypeValidation": false
+          },
+          "conditions": [
+            {
+              "id": "response",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "response_received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "dnc",
+              "leftValue": "={{ $json.classification }}",
+              "rightValue": "dnc",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "wf342-gate",
+      "name": "Response / DNC Routing Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.INSULA_CRM_BASE_URL + '/api/v1/activities' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.INSULA_CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json.crm_activity) }}",
+        "options": {}
+      },
+      "id": "wf342-crm",
+      "name": "Persist WF-342 Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf342-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-342 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-342 AI Response Classification Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-342 AI Response Classification Controller": {
+      "main": [
+        [
+          {
+            "node": "Response / DNC Routing Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Response / DNC Routing Gate": {
+      "main": [
+        [
+          {
+            "node": "Persist WF-342 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persist WF-342 Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist WF-342 Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf342-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

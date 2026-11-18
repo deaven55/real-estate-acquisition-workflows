@@ -1,0 +1,158 @@
+{
+  "name": "WF-304 — Transaction Readiness → Title/Attorney/Funding/Broker Closing Coordination Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-304-closing-coordination",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf304-webhook",
+      "name": "WF-304 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "wf-304-closing-coordination"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input=$json.body??$json;\nconst blockers=Array.isArray(input.blockers)?input.blockers:[];\nconst dealId=input.deal_id,leadId=input.lead_id,propertyId=input.property_id;\nconst closingDate=String(input.closing_date??\"\").trim();\nconst sellerReady=Boolean(input.seller_id||input.seller_name);\nconst buyerReady=Boolean(input.buyer_id||input.buyer_name);\nconst titleReady=Boolean(input.title_company||input.title_contact||input.title_status);\nconst attorneyReady=Boolean(input.attorney||input.attorney_contact||input.attorney_status);\nconst fundingReady=Boolean(input.funding_source||input.funding_contact||input.funding_status);\nconst brokerReady=Boolean(input.broker||input.broker_contact||input.broker_status);\nconst identityReady=Boolean(dealId&&leadId&&propertyId);\nconst coordinationReady=identityReady&&Boolean(closingDate)&&sellerReady&&buyerReady&&!blockers.length;\nconst missing=[];\nif(!dealId)missing.push(\"deal_id\");if(!leadId)missing.push(\"lead_id\");if(!propertyId)missing.push(\"property_id\");\nif(!closingDate)missing.push(\"closing_date\");if(!sellerReady)missing.push(\"seller\");if(!buyerReady)missing.push(\"buyer\");\nif(!titleReady)missing.push(\"title\");if(!attorneyReady)missing.push(\"attorney\");if(!fundingReady)missing.push(\"funding\");if(!brokerReady)missing.push(\"broker\");\nlet status=coordinationReady?\"coordination_ready\":\"coordination_incomplete\";\nlet nextWorkflow=coordinationReady?\"WF-305\":\"WF-126\";\nlet reason=coordinationReady?\"transaction is ready for closing-party coordination\":\"closing coordination prerequisites are incomplete\";\nreturn [{json:{...input,workflow:\"WF-304\",workflow_name:\"Transaction Readiness → Title/Attorney/Funding/Broker Closing Coordination Controller\",status,closing_coordination:{identity_ready:identityReady,closing_date:closingDate||null,seller_ready:sellerReady,buyer_ready:buyerReady,parties:{title_ready:titleReady,attorney_ready:attorneyReady,funding_ready:fundingReady,broker_ready:brokerReady},missing,blockers},next_workflow:nextWorkflow,human_review_required:true,audit:{event_type:\"closing_coordination_readiness\",idempotency_key:input.idempotency_key||`wf-304:${dealId||\"unknown\"}:${input.version||1}`,reason}}}];"
+      },
+      "id": "wf304-controller",
+      "name": "WF-304 Closing Coordination Controller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.status === 'coordination_ready'}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "wf304-if",
+      "name": "WF-304 Coordination Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.INSULA_CRM_BASE_URL}}/api/v1/activities",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.INSULA_CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParametersJson": "={{JSON.stringify({external_id:$json.deal_id||$json.lead_id||$json.property_id,external_source:'wholesale-os',activity_type:'workflow_event',subject:'WF-304 closing coordination readiness',description:$json.audit.reason,metadata:{workflow:'WF-304',status:$json.status,closing_coordination:$json.closing_coordination,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,idempotency_key:$json.audit?.idempotency_key}})}}"
+      },
+      "id": "wf304-crm",
+      "name": "WF-304 CRM Activity Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify({workflow:$json.workflow,status:$json.status,closing_coordination:$json.closing_coordination,next_workflow:$json.next_workflow,human_review_required:$json.human_review_required,audit:$json.audit})}}",
+        "options": {}
+      },
+      "id": "wf304-response",
+      "name": "WF-304 Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "WF-304 Webhook": {
+      "main": [
+        [
+          {
+            "node": "WF-304 Closing Coordination Controller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-304 Closing Coordination Controller": {
+      "main": [
+        [
+          {
+            "node": "WF-304 Coordination Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-304 Coordination Gate": {
+      "main": [
+        [
+          {
+            "node": "WF-304 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WF-304 CRM Activity Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-304 CRM Activity Audit": {
+      "main": [
+        [
+          {
+            "node": "WF-304 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "wf-304-v1"
+}
